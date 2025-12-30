@@ -11,13 +11,14 @@ import (
 	"github.com/openai/openai-go/v2/option"
 	"github.com/openai/openai-go/v2/shared"
 	log "github.com/sirupsen/logrus"
+	"github.com/tinfoilsh/tinfoil-go"
 
 	"github.com/tinfoilsh/confidential-websearch/search"
 )
 
 // Agent handles the tool-calling loop with the small model
 type Agent struct {
-	client   *openai.Client
+	client   *tinfoil.Client
 	model    string
 	searcher search.Provider
 }
@@ -36,8 +37,8 @@ type Result struct {
 	AgentReasoning string     // Reasoning content from the agent (e.g., reasoning_content field)
 }
 
-// New creates a new agent
-func New(client *openai.Client, model string, searcher search.Provider) *Agent {
+// New creates a new agent with a secure Tinfoil client
+func New(client *tinfoil.Client, model string, searcher search.Provider) *Agent {
 	return &Agent{
 		client:   client,
 		model:    model,

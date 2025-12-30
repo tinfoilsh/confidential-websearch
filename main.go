@@ -24,11 +24,10 @@ import (
 )
 
 var (
-	verbose        = flag.Bool("v", false, "enable verbose logging")
-	cfg            *config.Config
-	client         *openai.Client
-	ag             *agent.Agent
-	tinfoilEnclave string
+	verbose = flag.Bool("v", false, "enable verbose logging")
+	cfg     *config.Config
+	client  *tinfoil.Client
+	ag      *agent.Agent
 )
 
 func jsonError(w http.ResponseWriter, message string, code int) {
@@ -315,12 +314,12 @@ func main() {
 	cfg = config.Load()
 
 	// Initialize Tinfoil client (no API key needed - forwarded from requests)
-	tinfoilClient, err := tinfoil.NewClient()
+	// The Tinfoil client provides secure, attested communication with Tinfoil enclaves
+	var err error
+	client, err = tinfoil.NewClient()
 	if err != nil {
 		log.Fatalf("Failed to create Tinfoil client: %v", err)
 	}
-	client = tinfoilClient.Client
-	tinfoilEnclave = tinfoilClient.Enclave()
 
 	// Initialize search provider (uses Exa or Bing based on available API key)
 	searcher, err := search.NewProvider(search.Config{
@@ -364,7 +363,7 @@ func main() {
 		log.Infof("Agent model: %s", cfg.AgentModel)
 		log.Infof("Responder model: from request")
 		log.Infof("Search provider: %s", searcher.Name())
-		log.Infof("Using Tinfoil enclave: %s", tinfoilEnclave)
+		log.Infof("Using Tinfoil enclave: %s", client.Enclave())
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
