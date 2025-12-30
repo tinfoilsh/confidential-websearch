@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 )
 
@@ -19,14 +20,19 @@ func (p *ExaProvider) Name() string {
 }
 
 // exaRequest represents the Exa API request body
+// See: https://docs.exa.ai/reference/search
 type exaRequest struct {
-	Query      string      `json:"query"`
-	NumResults int         `json:"numResults"`
-	Contents   exaContents `json:"contents"`
+	Query      string            `json:"query"`
+	NumResults int               `json:"numResults,omitempty"`
+	Contents   *exaContentsParam `json:"contents,omitempty"`
 }
 
-type exaContents struct {
-	Text bool `json:"text"`
+type exaContentsParam struct {
+	Text *exaTextParam `json:"text,omitempty"`
+}
+
+type exaTextParam struct {
+	MaxCharacters int `json:"maxCharacters,omitempty"`
 }
 
 // exaResponse represents the Exa API response structure
@@ -36,6 +42,7 @@ type exaResponse struct {
 		URL   string `json:"url"`
 		Text  string `json:"text"`
 	} `json:"results"`
+	Error string `json:"error,omitempty"`
 }
 
 // Search performs an Exa web search
@@ -43,7 +50,9 @@ func (p *ExaProvider) Search(ctx context.Context, query string, maxResults int) 
 	reqBody := exaRequest{
 		Query:      query,
 		NumResults: maxResults,
-		Contents:   exaContents{Text: true},
+		Contents: &exaContentsParam{
+			Text: &exaTextParam{},
+		},
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -65,13 +74,22 @@ func (p *ExaProvider) Search(ctx context.Context, query string, maxResults int) 
 	}
 	defer resp.Body.Close()
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("exa API returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("exa API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var data exaResponse
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, err
+	if err := json.Unmarshal(body, &data); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if data.Error != "" {
+		return nil, fmt.Errorf("exa API error: %s", data.Error)
 	}
 
 	results := make([]Result, 0, len(data.Results))

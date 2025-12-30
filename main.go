@@ -136,10 +136,19 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-		// Add assistant message with tool calls
+		// Add assistant message with tool calls AND reasoning content
 		assistantMsg := openai.ChatCompletionAssistantMessageParam{
 			ToolCalls: toolCalls,
 		}
+
+		// Include agent's reasoning if available (provides context for why search was done)
+		if agentResult.AgentReasoning != "" {
+			assistantMsg.Content = openai.ChatCompletionAssistantMessageParamContentUnion{
+				OfString: openai.Opt(agentResult.AgentReasoning),
+			}
+			log.Debugf("Including agent reasoning in responder context: %s", agentResult.AgentReasoning)
+		}
+
 		messages = append(messages, openai.ChatCompletionMessageParamUnion{
 			OfAssistant: &assistantMsg,
 		})
@@ -165,11 +174,27 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Debug: print messages being sent to responder
+	debugJSON, _ := json.MarshalIndent(messages, "", "  ")
+	log.Debugf("Messages to responder:\n%s", string(debugJSON))
+
 	// Step 3: Call responder with model from request (forward auth header)
 	params := openai.ChatCompletionNewParams{
 		Model:    shared.ChatModel(responderModel),
 		Messages: messages,
 	}
+
+	// If we sent tool_calls in the messages, we need to define the tool for the responder
+	// so it understands the context (otherwise it may hallucinate tools) and can call the tool again if needed.
+	if len(agentResult.ToolCalls) > 0 {
+		webSearchTool := openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+			Name:        "web_search",
+			Description: openai.String("Search the web for current information."),
+			Parameters:  agent.WebSearchToolParams,
+		})
+		params.Tools = []openai.ChatCompletionToolUnionParam{webSearchTool}
+	}
+
 	if req.Temperature != nil {
 		params.Temperature = openai.Float(*req.Temperature)
 	}
