@@ -16,6 +16,24 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/search"
 )
 
+// extractReasoningContent extracts reasoning_content or content from raw JSON response.
+func extractReasoningContent(rawJSON string) string {
+	if rawJSON == "" {
+		return ""
+	}
+	var data map[string]interface{}
+	if err := json.Unmarshal([]byte(rawJSON), &data); err != nil {
+		return ""
+	}
+	if rc, ok := data["reasoning_content"].(string); ok && rc != "" {
+		return rc
+	}
+	if content, ok := data["content"].(string); ok {
+		return content
+	}
+	return ""
+}
+
 // Agent handles the tool-calling loop with the small model
 type Agent struct {
 	client   *tinfoil.Client
@@ -23,51 +41,26 @@ type Agent struct {
 	searcher search.Provider
 }
 
-// ToolCall represents a tool call made by the agent
-type ToolCall struct {
-	ID        string `json:"id"`
-	Query     string `json:"query"`
-	ResultIdx int    `json:"result_idx"` // Index into SearchResults for this call's results
-}
-
-// Result contains the search results gathered by the agent
-type Result struct {
-	SearchResults  []search.Result
-	ToolCalls      []ToolCall // Track individual tool calls for proper message construction
-	AgentReasoning string     // Reasoning content from the agent (e.g., reasoning_content field)
-}
-
-// New creates a new agent with a secure Tinfoil client
+// New creates a new agent
 func New(client *tinfoil.Client, model string, searcher search.Provider) *Agent {
-	return &Agent{
-		client:   client,
-		model:    model,
-		searcher: searcher,
-	}
+	return &Agent{client: client, model: model, searcher: searcher}
 }
 
 // Run executes a single-shot tool call to gather search results (non-streaming)
 func (a *Agent) Run(ctx context.Context, userQuery string, reqOpts ...option.RequestOption) (*Result, error) {
-	return a.RunStreaming(ctx, userQuery, nil, nil, reqOpts...)
+	return a.RunStreaming(ctx, userQuery, nil, reqOpts...)
 }
 
-// RunStreaming executes the agent with streaming support
-// - onChunk: called for each streaming chunk from the agent LLM (can be nil)
-// - onStatus: called for status updates like search progress (can be nil)
-func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk ChunkCallback, onStatus StatusCallback, reqOpts ...option.RequestOption) (*Result, error) {
+// RunStreaming executes the agent with optional streaming support
+func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk ChunkCallback, reqOpts ...option.RequestOption) (*Result, error) {
 	messages := []openai.ChatCompletionMessageParamUnion{
-		openai.SystemMessage(`You are a research assistant. Use the search tool for current information or facts you're uncertain about.
-
-You can call search multiple times in parallel for complex queries or comparisons.`),
+		openai.SystemMessage(`You are a research assistant. Use the search tool for current information or facts you're uncertain about. You can call search multiple times in parallel for complex queries.`),
 		openai.UserMessage(userQuery),
 	}
 
-	result := &Result{}
-
-	// Define the search tool - using simple name that gpt-oss recognizes
 	searchTool := openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        "search",
-		Description: openai.String("Search the web for current information. Returns search results with titles, URLs and content snippets. You can call this tool multiple times in parallel for complex queries."),
+		Description: openai.String("Search the web for current information."),
 		Parameters:  SearchToolParams,
 	})
 
@@ -79,68 +72,40 @@ You can call search multiple times in parallel for complex queries or comparison
 		MaxTokens:   openai.Int(1024),
 	}
 
-	// Use streaming if callback provided, otherwise use regular call
 	var toolCalls []openai.ChatCompletionMessageToolCallUnion
 	var reasoning string
 
 	if onChunk != nil {
-		// Streaming mode - forward chunks and accumulate tool calls
 		stream := a.client.Chat.Completions.NewStreaming(ctx, params, reqOpts...)
-
-		// Track tool call deltas by index
-		toolCallBuilders := make(map[int]*struct {
-			id        string
-			name      string
-			arguments strings.Builder
-		})
-
+		toolCallBuilders := make(map[int]*toolCallBuilder)
 		var reasoningBuilder strings.Builder
 
 		for stream.Next() {
 			chunk := stream.Current()
-
-			// Forward the chunk
 			onChunk(chunk)
 
-			// Accumulate from the chunk
 			if len(chunk.Choices) > 0 {
 				delta := chunk.Choices[0].Delta
-
-				// Accumulate content (standard reasoning)
 				if delta.Content != "" {
 					reasoningBuilder.WriteString(delta.Content)
 				}
-
-				// Also check for reasoning_content in raw JSON (gpt-oss style)
-				if rawJSON := delta.RawJSON(); rawJSON != "" {
-					var deltaData map[string]interface{}
-					if err := json.Unmarshal([]byte(rawJSON), &deltaData); err == nil {
-						if rc, ok := deltaData["reasoning_content"].(string); ok && rc != "" {
-							reasoningBuilder.WriteString(rc)
-						}
-					}
+				if rc := extractReasoningContent(delta.RawJSON()); rc != "" {
+					reasoningBuilder.WriteString(rc)
 				}
-
-				// Accumulate tool calls
 				for _, tcDelta := range delta.ToolCalls {
 					idx := int(tcDelta.Index)
-					if _, exists := toolCallBuilders[idx]; !exists {
-						toolCallBuilders[idx] = &struct {
-							id        string
-							name      string
-							arguments strings.Builder
-						}{}
+					if toolCallBuilders[idx] == nil {
+						toolCallBuilders[idx] = &toolCallBuilder{}
 					}
-					builder := toolCallBuilders[idx]
-
+					b := toolCallBuilders[idx]
 					if tcDelta.ID != "" {
-						builder.id = tcDelta.ID
+						b.id = tcDelta.ID
 					}
 					if tcDelta.Function.Name != "" {
-						builder.name = tcDelta.Function.Name
+						b.name = tcDelta.Function.Name
 					}
 					if tcDelta.Function.Arguments != "" {
-						builder.arguments.WriteString(tcDelta.Function.Arguments)
+						b.arguments.WriteString(tcDelta.Function.Arguments)
 					}
 				}
 			}
@@ -150,50 +115,26 @@ You can call search multiple times in parallel for complex queries or comparison
 		}
 
 		reasoning = reasoningBuilder.String()
-
-		// Convert builders to tool calls
-		for _, builder := range toolCallBuilders {
+		for _, b := range toolCallBuilders {
 			toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnion{
-				ID: builder.id,
-				Function: openai.ChatCompletionMessageFunctionToolCallFunction{
-					Name:      builder.name,
-					Arguments: builder.arguments.String(),
-				},
+				ID:       b.id,
+				Function: openai.ChatCompletionMessageFunctionToolCallFunction{Name: b.name, Arguments: b.arguments.String()},
 			})
 		}
 	} else {
-		// Non-streaming mode
 		resp, err := a.client.Chat.Completions.New(ctx, params, reqOpts...)
 		if err != nil {
 			return nil, fmt.Errorf("agent LLM call failed: %w", err)
 		}
-
 		if len(resp.Choices) == 0 {
 			return nil, fmt.Errorf("agent LLM returned no choices")
 		}
-
-		choice := resp.Choices[0]
-		toolCalls = choice.Message.ToolCalls
-
-		// Extract reasoning_content from raw JSON (used by some models like gpt-oss)
-		if rawJSON := choice.Message.RawJSON(); rawJSON != "" {
-			var msgData map[string]interface{}
-			if err := json.Unmarshal([]byte(rawJSON), &msgData); err == nil {
-				if rc, ok := msgData["reasoning_content"].(string); ok && rc != "" {
-					reasoning = rc
-				} else if content, ok := msgData["content"].(string); ok && content != "" {
-					reasoning = content
-				}
-			}
-		}
+		toolCalls = resp.Choices[0].Message.ToolCalls
+		reasoning = extractReasoningContent(resp.Choices[0].Message.RawJSON())
 	}
 
-	result.AgentReasoning = reasoning
-	if reasoning != "" {
-		log.Debugf("Agent reasoning: %s", reasoning)
-	}
+	result := &Result{AgentReasoning: reasoning}
 
-	// No tool calls - model decided no search is needed
 	if len(toolCalls) == 0 {
 		log.Debug("Agent decided no search needed")
 		return result, nil
@@ -201,69 +142,41 @@ You can call search multiple times in parallel for complex queries or comparison
 
 	log.Debugf("Agent requested %d search(es)", len(toolCalls))
 
-	// Helper to emit status
-	emitStatus := func(status string) {
-		if onStatus != nil {
-			onStatus(status)
-		}
-	}
-
-	// Execute all searches in parallel
+	// Execute searches in parallel
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 
-	// Helper function to execute a single search query
-	executeSearch := func(toolCallID, query string) {
-		query = strings.TrimSpace(query)
-		if query == "" {
-			log.Warn("Skipping empty search query")
-			return
-		}
-
-		emitStatus(fmt.Sprintf("🔍 Searching: %s", query))
-		log.Infof("Searching: %s", query)
-
-		searchResults, err := a.searcher.Search(ctx, query, 5)
-		if err != nil {
-			log.Errorf("Search failed: %v", err)
-			emitStatus(fmt.Sprintf("❌ Search failed: %s", query))
-			return
-		}
-
-		emitStatus(fmt.Sprintf("✓ Found %d results for: %s", len(searchResults), query))
-
-		mu.Lock()
-		defer mu.Unlock()
-
-		result.ToolCalls = append(result.ToolCalls, ToolCall{
-			ID:        toolCallID,
-			Query:     query,
-			ResultIdx: len(result.SearchResults),
-		})
-		result.SearchResults = append(result.SearchResults, searchResults...)
-	}
-
 	for _, tc := range toolCalls {
-		toolCallID := tc.ID
-		functionName := tc.Function.Name
-		functionArgs := tc.Function.Arguments
+		if tc.Function.Name != "search" {
+			continue
+		}
 
-		// Handle search tool (accept "search" or legacy "web_search" variants)
-		if functionName == "search" || strings.HasPrefix(functionName, "web_search") {
-			var args SearchArgs
-			if err := json.Unmarshal([]byte(functionArgs), &args); err != nil {
-				log.Errorf("Failed to parse search arguments: %v", err)
-				continue
+		var args SearchArgs
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+			log.Errorf("Failed to parse search arguments: %v", err)
+			continue
+		}
+
+		query := strings.TrimSpace(args.Query)
+		if query == "" {
+			continue
+		}
+
+		wg.Add(1)
+		go func(id, q string) {
+			defer wg.Done()
+			log.Infof("Searching: %s", q)
+
+			searchResults, err := a.searcher.Search(ctx, q, 5)
+			if err != nil {
+				log.Errorf("Search failed: %v", err)
+				return
 			}
 
-			wg.Add(1)
-			go func(q string) {
-				defer wg.Done()
-				executeSearch(toolCallID, q)
-			}(args.Query)
-		} else {
-			log.Warnf("Unknown tool: %s", functionName)
-		}
+			mu.Lock()
+			result.ToolCalls = append(result.ToolCalls, ToolCall{ID: id, Query: q, Results: searchResults})
+			mu.Unlock()
+		}(tc.ID, query)
 	}
 	wg.Wait()
 

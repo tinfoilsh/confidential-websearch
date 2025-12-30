@@ -23,12 +23,47 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/search"
 )
 
-var (
-	verbose = flag.Bool("v", false, "enable verbose logging")
-	cfg     *config.Config
-	client  *tinfoil.Client
-	ag      *agent.Agent
+const (
+	maxRequestBodySize = 200 << 20 // 200 MB
+	requestTimeout     = 2 * time.Minute
 )
+
+var verbose = flag.Bool("v", false, "enable verbose logging")
+
+// Server holds all dependencies for the HTTP handlers
+type Server struct {
+	cfg    *config.Config
+	client *tinfoil.Client
+	agent  *agent.Agent
+}
+
+// recoveryMiddleware catches panics and returns 500 instead of crashing
+func recoveryMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				log.Errorf("panic recovered: %v", err)
+				jsonError(w, "internal server error", http.StatusInternalServerError)
+			}
+		}()
+		next(w, r)
+	}
+}
+
+// IncomingRequest represents the incoming chat request
+type IncomingRequest struct {
+	Model       string    `json:"model"`
+	Messages    []Message `json:"messages"`
+	Stream      bool      `json:"stream"`
+	Temperature *float64  `json:"temperature,omitempty"`
+	MaxTokens   *int64    `json:"max_tokens,omitempty"`
+}
+
+// Message represents a chat message in the incoming request
+type Message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
 
 func jsonError(w http.ResponseWriter, message string, code int) {
 	log.WithField("code", code).Warn(message)
@@ -37,18 +72,19 @@ func jsonError(w http.ResponseWriter, message string, code int) {
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
-// IncomingRequest represents the incoming chat request
-type IncomingRequest struct {
-	Model         string                   `json:"model"`
-	Messages      []map[string]interface{} `json:"messages"`
-	Stream        bool                     `json:"stream"`
-	Temperature   *float64                 `json:"temperature,omitempty"`
-	MaxTokens     *int64                   `json:"max_tokens,omitempty"`
-	StreamOptions map[string]interface{}   `json:"stream_options,omitempty"`
-}
+func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	// Only allow POST
+	if r.Method != http.MethodPost {
+		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
-func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	// Set request timeout
+	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+	defer cancel()
+
+	// Limit request body size to prevent DoS
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 
 	// Forward the Authorization header from the incoming request
 	authHeader := r.Header.Get("Authorization")
@@ -68,10 +104,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, fmt.Sprintf("failed to parse request: %v", err), http.StatusBadRequest)
 		return
 	}
-
-	// Use model from request for the responder
-	responderModel := req.Model
-	if responderModel == "" {
+	if req.Model == "" {
 		jsonError(w, "model parameter is required", http.StatusBadRequest)
 		return
 	}
@@ -79,24 +112,20 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// Extract user query (last user message)
 	var userQuery string
 	for i := len(req.Messages) - 1; i >= 0; i-- {
-		if role, ok := req.Messages[i]["role"].(string); ok && role == "user" {
-			if content, ok := req.Messages[i]["content"].(string); ok {
-				userQuery = content
-				break
-			}
+		if req.Messages[i].Role == "user" && req.Messages[i].Content != "" {
+			userQuery = req.Messages[i].Content
+			break
 		}
 	}
-
 	if userQuery == "" {
 		jsonError(w, "no user message found", http.StatusBadRequest)
 		return
 	}
 
-	log.Infof("Processing query: %s (responder: %s)", truncate(userQuery, 100), responderModel)
+	log.Infof("Processing query (model: %s)", req.Model)
 
-	// For streaming requests, set up SSE headers early
+	// Set up streaming if requested
 	var flusher http.Flusher
-	var streamingStarted bool
 	if req.Stream {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
@@ -108,90 +137,52 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "streaming not supported", http.StatusInternalServerError)
 			return
 		}
-		streamingStarted = true
 	}
 
-	// Helper to write SSE data in standard OpenAI format
-	writeChunk := func(data []byte) {
-		if streamingStarted {
-			fmt.Fprintf(w, "data: %s\n\n", data)
-			flusher.Flush()
-		}
-	}
-
-	// Helper to create a simple content chunk for status messages
-	writeStatus := func(status string) {
-		if !streamingStarted {
-			return
-		}
-		// Create a minimal chunk that looks like OpenAI format
-		chunk := map[string]interface{}{
-			"id":           "agent-status",
-			"object":       "chat.completion.chunk",
-			"model":        cfg.AgentModel,
-			"choices":      []map[string]interface{}{},
-			"agent_status": status, // Custom field for status
-		}
-		data, _ := json.Marshal(chunk)
-		writeChunk(data)
-	}
-
-	// Step 1: Run agent to gather search results (forward auth header)
+	// Step 1: Run agent to gather search results
 	var agentResult *agent.Result
 	var agentErr error
 
 	if req.Stream {
-		// Stream the agent's LLM call and forward chunks
-		agentResult, agentErr = ag.RunStreaming(ctx, userQuery,
+		agentResult, agentErr = s.agent.RunStreaming(ctx, userQuery,
 			func(chunk openai.ChatCompletionChunk) {
-				// Forward agent chunks directly
 				data, _ := json.Marshal(chunk)
-				writeChunk(data)
-			},
-			func(status string) {
-				// Send search status updates
-				writeStatus(status)
+				fmt.Fprintf(w, "data: %s\n\n", data)
+				flusher.Flush()
 			},
 			reqOpts...)
 	} else {
-		agentResult, agentErr = ag.Run(ctx, userQuery, reqOpts...)
+		agentResult, agentErr = s.agent.Run(ctx, userQuery, reqOpts...)
 	}
 
 	if agentErr != nil {
-		if streamingStarted {
-			// Already started streaming, send error in stream
-			errChunk := map[string]interface{}{
-				"error": map[string]string{"message": agentErr.Error()},
-			}
-			data, _ := json.Marshal(errChunk)
-			writeChunk(data)
-			return
+		if req.Stream {
+			errData, _ := json.Marshal(map[string]interface{}{"error": map[string]string{"message": agentErr.Error()}})
+			fmt.Fprintf(w, "data: %s\n\n", errData)
+			flusher.Flush()
+		} else {
+			jsonError(w, fmt.Sprintf("agent failed: %v", agentErr), http.StatusInternalServerError)
 		}
-		jsonError(w, fmt.Sprintf("agent failed: %v", agentErr), http.StatusInternalServerError)
 		return
 	}
-	log.Infof("Agent completed: %d tool calls, %d results", len(agentResult.ToolCalls), len(agentResult.SearchResults))
+	log.Infof("Agent completed: %d tool calls", len(agentResult.ToolCalls))
 
 	// Step 2: Build messages for responder - preserve original context
 	var messages []openai.ChatCompletionMessageParamUnion
 
-	// Convert original messages from the request
 	for _, msg := range req.Messages {
-		role, _ := msg["role"].(string)
-		content, _ := msg["content"].(string)
-		switch role {
+		switch msg.Role {
 		case "system":
-			messages = append(messages, openai.SystemMessage(content))
+			messages = append(messages, openai.SystemMessage(msg.Content))
 		case "user":
-			messages = append(messages, openai.UserMessage(content))
+			messages = append(messages, openai.UserMessage(msg.Content))
 		case "assistant":
-			messages = append(messages, openai.AssistantMessage(content))
+			messages = append(messages, openai.AssistantMessage(msg.Content))
 		}
 	}
 
 	// If we have search results, append tool calls and tool results
 	if len(agentResult.ToolCalls) > 0 {
-		// Build tool calls for the assistant message
 		toolCalls := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(agentResult.ToolCalls))
 		for _, tc := range agentResult.ToolCalls {
 			toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnionParam{
@@ -205,57 +196,31 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-		// Add assistant message with tool calls AND reasoning content
-		assistantMsg := openai.ChatCompletionAssistantMessageParam{
-			ToolCalls: toolCalls,
-		}
-
-		// Include agent's reasoning if available (provides context for why search was done)
+		assistantMsg := openai.ChatCompletionAssistantMessageParam{ToolCalls: toolCalls}
 		if agentResult.AgentReasoning != "" {
 			assistantMsg.Content = openai.ChatCompletionAssistantMessageParamContentUnion{
 				OfString: openai.Opt(agentResult.AgentReasoning),
 			}
-			log.Debugf("Including agent reasoning in responder context: %s", agentResult.AgentReasoning)
 		}
+		messages = append(messages, openai.ChatCompletionMessageParamUnion{OfAssistant: &assistantMsg})
 
-		messages = append(messages, openai.ChatCompletionMessageParamUnion{
-			OfAssistant: &assistantMsg,
-		})
-
-		// Add tool results - format nicely with numbered citations
-		for i, tc := range agentResult.ToolCalls {
+		// Add tool results
+		for _, tc := range agentResult.ToolCalls {
 			var toolContent string
-			// Find results for this tool call
-			endIdx := len(agentResult.SearchResults)
-			if i+1 < len(agentResult.ToolCalls) {
-				endIdx = agentResult.ToolCalls[i+1].ResultIdx
+			for i, sr := range tc.Results {
+				toolContent += fmt.Sprintf("[%d] %s\nURL: %s\n%s\n\n", i+1, sr.Title, sr.URL, sr.Content)
 			}
-
-			resultNum := 1
-			for j := tc.ResultIdx; j < endIdx; j++ {
-				sr := agentResult.SearchResults[j]
-				toolContent += fmt.Sprintf("[%d] %s\nURL: %s\n%s\n\n",
-					resultNum, sr.Title, sr.URL, sr.Content)
-				resultNum++
-			}
-
 			messages = append(messages, openai.ToolMessage(toolContent, tc.ID))
 		}
 
-		// Add instruction to synthesize the search results
 		messages = append(messages, openai.UserMessage("Based on the search results above, please provide a helpful answer to my question. Do not attempt to search again or use other tools."))
 	}
 
-	// Debug: print messages being sent to responder
-	debugJSON, _ := json.MarshalIndent(messages, "", "  ")
-	log.Debugf("Messages to responder:\n%s", string(debugJSON))
-
-	// Step 3: Call responder with model from request (forward auth header)
+	// Step 3: Call responder
 	params := openai.ChatCompletionNewParams{
-		Model:    shared.ChatModel(responderModel),
+		Model:    shared.ChatModel(req.Model),
 		Messages: messages,
 	}
-
 	if req.Temperature != nil {
 		params.Temperature = openai.Float(*req.Temperature)
 	}
@@ -264,12 +229,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Stream {
-		log.Debugf("Streaming response from responder (%s)", responderModel)
-
-		stream := client.Chat.Completions.NewStreaming(ctx, params, reqOpts...)
+		stream := s.client.Chat.Completions.NewStreaming(ctx, params, reqOpts...)
 		for stream.Next() {
-			chunk := stream.Current()
-			data, _ := json.Marshal(chunk)
+			data, _ := json.Marshal(stream.Current())
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		}
@@ -279,7 +241,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "data: [DONE]\n\n")
 		flusher.Flush()
 	} else {
-		resp, err := client.Chat.Completions.New(ctx, params, reqOpts...)
+		resp, err := s.client.Chat.Completions.New(ctx, params, reqOpts...)
 		if err != nil {
 			jsonError(w, fmt.Sprintf("responder failed: %v", err), http.StatusInternalServerError)
 			return
@@ -289,31 +251,19 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
-}
-
 func main() {
 	flag.Parse()
 	if *verbose {
 		log.SetLevel(log.DebugLevel)
 	}
 
-	// Load configuration
-	cfg = config.Load()
+	cfg := config.Load()
 
-	// Initialize Tinfoil client (no API key needed - forwarded from requests)
-	// The Tinfoil client provides secure, attested communication with Tinfoil enclaves
-	var err error
-	client, err = tinfoil.NewClient()
+	client, err := tinfoil.NewClient()
 	if err != nil {
 		log.Fatalf("Failed to create Tinfoil client: %v", err)
 	}
 
-	// Initialize search provider (uses Exa or Bing based on available API key)
 	searcher, err := search.NewProvider(search.Config{
 		ExaAPIKey:  cfg.ExaAPIKey,
 		BingAPIKey: cfg.BingAPIKey,
@@ -322,27 +272,24 @@ func main() {
 		log.Fatalf("Failed to create search provider: %v", err)
 	}
 
-	// Initialize agent (uses same client, configured agent model)
-	ag = agent.New(client, cfg.AgentModel, searcher)
+	srv := &Server{
+		cfg:    cfg,
+		client: client,
+		agent:  agent.New(client, cfg.AgentModel, searcher),
+	}
 
-	// Set up HTTP handlers
-	http.HandleFunc("/v1/chat/completions", handleChatCompletions)
+	http.HandleFunc("/v1/chat/completions", recoveryMiddleware(srv.handleChatCompletions))
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
-			"service": "confidential-websearch",
-			"status":  "ok",
-		})
+		json.NewEncoder(w).Encode(map[string]string{"service": "confidential-websearch", "status": "ok"})
 	})
 
-	// Setup graceful shutdown
 	server := &http.Server{
 		Addr:         cfg.ListenAddr,
-		Handler:      nil,
 		ReadTimeout:  5 * time.Minute,
 		WriteTimeout: 0, // Disabled for streaming
 	}
@@ -351,25 +298,16 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Infof("Starting websearch proxy on %s", cfg.ListenAddr)
-		log.Infof("Agent model: %s", cfg.AgentModel)
-		log.Infof("Responder model: from request")
-		log.Infof("Search provider: %s", searcher.Name())
-		log.Infof("Using Tinfoil enclave: %s", client.Enclave())
+		log.Infof("Starting on %s (agent: %s, search: %s, enclave: %s)",
+			cfg.ListenAddr, cfg.AgentModel, searcher.Name(), client.Enclave())
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
 	}()
 
 	<-sigChan
-	log.Info("Shutting down server...")
-
+	log.Info("Shutting down...")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	if err := server.Shutdown(ctx); err != nil {
-		log.WithError(err).Error("Failed to gracefully shutdown server")
-	}
-
-	log.Info("Server stopped")
+	server.Shutdown(ctx)
 }
