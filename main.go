@@ -95,10 +95,80 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	log.Infof("Processing query: %s (responder: %s)", truncate(userQuery, 100), responderModel)
 
+	// For streaming requests, set up SSE headers early
+	var flusher http.Flusher
+	var streamingStarted bool
+	if req.Stream {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+
+		var ok bool
+		flusher, ok = w.(http.Flusher)
+		if !ok {
+			jsonError(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+		streamingStarted = true
+	}
+
+	// Helper to write SSE data in standard OpenAI format
+	writeChunk := func(data []byte) {
+		if streamingStarted {
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
+
+	// Helper to create a simple content chunk for status messages
+	writeStatus := func(status string) {
+		if !streamingStarted {
+			return
+		}
+		// Create a minimal chunk that looks like OpenAI format
+		chunk := map[string]interface{}{
+			"id":           "agent-status",
+			"object":       "chat.completion.chunk",
+			"model":        cfg.AgentModel,
+			"choices":      []map[string]interface{}{},
+			"agent_status": status, // Custom field for status
+		}
+		data, _ := json.Marshal(chunk)
+		writeChunk(data)
+	}
+
 	// Step 1: Run agent to gather search results (forward auth header)
-	agentResult, err := ag.Run(ctx, userQuery, reqOpts...)
-	if err != nil {
-		jsonError(w, fmt.Sprintf("agent failed: %v", err), http.StatusInternalServerError)
+	var agentResult *agent.Result
+	var agentErr error
+
+	if req.Stream {
+		// Stream the agent's LLM call and forward chunks
+		agentResult, agentErr = ag.RunStreaming(ctx, userQuery,
+			func(chunk openai.ChatCompletionChunk) {
+				// Forward agent chunks directly
+				data, _ := json.Marshal(chunk)
+				writeChunk(data)
+			},
+			func(status string) {
+				// Send search status updates
+				writeStatus(status)
+			},
+			reqOpts...)
+	} else {
+		agentResult, agentErr = ag.Run(ctx, userQuery, reqOpts...)
+	}
+
+	if agentErr != nil {
+		if streamingStarted {
+			// Already started streaming, send error in stream
+			errChunk := map[string]interface{}{
+				"error": map[string]string{"message": agentErr.Error()},
+			}
+			data, _ := json.Marshal(errChunk)
+			writeChunk(data)
+			return
+		}
+		jsonError(w, fmt.Sprintf("agent failed: %v", agentErr), http.StatusInternalServerError)
 		return
 	}
 	log.Infof("Agent completed: %d tool calls, %d results", len(agentResult.ToolCalls), len(agentResult.SearchResults))
@@ -204,17 +274,6 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	if req.Stream {
 		log.Debugf("Streaming response from responder (%s)", responderModel)
-
-		// Set up SSE headers
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			jsonError(w, "streaming not supported", http.StatusInternalServerError)
-			return
-		}
 
 		stream := client.Chat.Completions.NewStreaming(ctx, params, reqOpts...)
 		for stream.Next() {

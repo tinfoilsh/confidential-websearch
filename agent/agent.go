@@ -45,9 +45,15 @@ func New(client *openai.Client, model string, searcher search.Provider) *Agent {
 	}
 }
 
-// Run executes a single-shot tool call to gather search results
-// The agent asks the model once for search queries, executes them, and returns
+// Run executes a single-shot tool call to gather search results (non-streaming)
 func (a *Agent) Run(ctx context.Context, userQuery string, reqOpts ...option.RequestOption) (*Result, error) {
+	return a.RunStreaming(ctx, userQuery, nil, nil, reqOpts...)
+}
+
+// RunStreaming executes the agent with streaming support
+// - onChunk: called for each streaming chunk from the agent LLM (can be nil)
+// - onStatus: called for status updates like search progress (can be nil)
+func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk ChunkCallback, onStatus StatusCallback, reqOpts ...option.RequestOption) (*Result, error) {
 	messages := []openai.ChatCompletionMessageParamUnion{
 		openai.SystemMessage(`You are a research assistant. Decide if you need to search the web to answer the user's question.
 
@@ -67,46 +73,140 @@ Be concise in your search queries. You can call web_search multiple times in par
 		Parameters:  WebSearchToolParams,
 	})
 
-	// Single call to the agent model
-	resp, err := a.client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
+	params := openai.ChatCompletionNewParams{
 		Model:       shared.ChatModel(a.model),
 		Messages:    messages,
 		Tools:       []openai.ChatCompletionToolUnionParam{webSearchTool},
 		Temperature: openai.Float(0.3),
 		MaxTokens:   openai.Int(1024),
-	}, reqOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("agent LLM call failed: %w", err)
 	}
 
-	if len(resp.Choices) == 0 {
-		return nil, fmt.Errorf("agent LLM returned no choices")
+	// Use streaming if callback provided, otherwise use regular call
+	var toolCalls []openai.ChatCompletionMessageToolCallUnion
+	var reasoning string
+
+	if onChunk != nil {
+		// Streaming mode - forward chunks and accumulate tool calls
+		stream := a.client.Chat.Completions.NewStreaming(ctx, params, reqOpts...)
+
+		// Track tool call deltas by index
+		toolCallBuilders := make(map[int]*struct {
+			id        string
+			name      string
+			arguments strings.Builder
+		})
+
+		var reasoningBuilder strings.Builder
+
+		for stream.Next() {
+			chunk := stream.Current()
+
+			// Forward the chunk
+			onChunk(chunk)
+
+			// Accumulate from the chunk
+			if len(chunk.Choices) > 0 {
+				delta := chunk.Choices[0].Delta
+
+				// Accumulate content (standard reasoning)
+				if delta.Content != "" {
+					reasoningBuilder.WriteString(delta.Content)
+				}
+
+				// Also check for reasoning_content in raw JSON (gpt-oss style)
+				if rawJSON := delta.RawJSON(); rawJSON != "" {
+					var deltaData map[string]interface{}
+					if err := json.Unmarshal([]byte(rawJSON), &deltaData); err == nil {
+						if rc, ok := deltaData["reasoning_content"].(string); ok && rc != "" {
+							reasoningBuilder.WriteString(rc)
+						}
+					}
+				}
+
+				// Accumulate tool calls
+				for _, tcDelta := range delta.ToolCalls {
+					idx := int(tcDelta.Index)
+					if _, exists := toolCallBuilders[idx]; !exists {
+						toolCallBuilders[idx] = &struct {
+							id        string
+							name      string
+							arguments strings.Builder
+						}{}
+					}
+					builder := toolCallBuilders[idx]
+
+					if tcDelta.ID != "" {
+						builder.id = tcDelta.ID
+					}
+					if tcDelta.Function.Name != "" {
+						builder.name = tcDelta.Function.Name
+					}
+					if tcDelta.Function.Arguments != "" {
+						builder.arguments.WriteString(tcDelta.Function.Arguments)
+					}
+				}
+			}
+		}
+		if err := stream.Err(); err != nil {
+			return nil, fmt.Errorf("agent streaming failed: %w", err)
+		}
+
+		reasoning = reasoningBuilder.String()
+
+		// Convert builders to tool calls
+		for _, builder := range toolCallBuilders {
+			toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnion{
+				ID: builder.id,
+				Function: openai.ChatCompletionMessageFunctionToolCallFunction{
+					Name:      builder.name,
+					Arguments: builder.arguments.String(),
+				},
+			})
+		}
+	} else {
+		// Non-streaming mode
+		resp, err := a.client.Chat.Completions.New(ctx, params, reqOpts...)
+		if err != nil {
+			return nil, fmt.Errorf("agent LLM call failed: %w", err)
+		}
+
+		if len(resp.Choices) == 0 {
+			return nil, fmt.Errorf("agent LLM returned no choices")
+		}
+
+		choice := resp.Choices[0]
+		toolCalls = choice.Message.ToolCalls
+
+		// Extract reasoning_content from raw JSON (used by some models like gpt-oss)
+		if rawJSON := choice.Message.RawJSON(); rawJSON != "" {
+			var msgData map[string]interface{}
+			if err := json.Unmarshal([]byte(rawJSON), &msgData); err == nil {
+				if rc, ok := msgData["reasoning_content"].(string); ok && rc != "" {
+					reasoning = rc
+				} else if content, ok := msgData["content"].(string); ok && content != "" {
+					reasoning = content
+				}
+			}
+		}
 	}
 
-	choice := resp.Choices[0]
+	result.AgentReasoning = reasoning
+	if reasoning != "" {
+		log.Debugf("Agent reasoning: %s", reasoning)
+	}
 
 	// No tool calls - model decided no search is needed
-	if len(choice.Message.ToolCalls) == 0 {
+	if len(toolCalls) == 0 {
 		log.Debug("Agent decided no search needed")
 		return result, nil
 	}
 
-	log.Debugf("Agent requested %d search(es)", len(choice.Message.ToolCalls))
+	log.Debugf("Agent requested %d search(es)", len(toolCalls))
 
-	// Extract reasoning_content from raw JSON (used by some models like gpt-oss)
-	// The standard content field may be null, but reasoning_content contains the thinking
-	if rawJSON := choice.Message.RawJSON(); rawJSON != "" {
-		var msgData map[string]interface{}
-		if err := json.Unmarshal([]byte(rawJSON), &msgData); err == nil {
-			// Try reasoning_content first (gpt-oss style)
-			if rc, ok := msgData["reasoning_content"].(string); ok && rc != "" {
-				result.AgentReasoning = rc
-				log.Debugf("Agent reasoning: %s", rc)
-			} else if content, ok := msgData["content"].(string); ok && content != "" {
-				// Fall back to standard content field
-				result.AgentReasoning = content
-				log.Debugf("Agent content: %s", content)
-			}
+	// Helper to emit status
+	emitStatus := func(status string) {
+		if onStatus != nil {
+			onStatus(status)
 		}
 	}
 
@@ -114,7 +214,7 @@ Be concise in your search queries. You can call web_search multiple times in par
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 
-	for _, tc := range choice.Message.ToolCalls {
+	for _, tc := range toolCalls {
 		toolCallID := tc.ID
 		functionName := tc.Function.Name
 		functionArgs := tc.Function.Arguments
@@ -141,12 +241,17 @@ Be concise in your search queries. You can call web_search multiple times in par
 				return
 			}
 
+			emitStatus(fmt.Sprintf("🔍 Searching: %s", query))
 			log.Infof("Searching: %s", query)
+
 			searchResults, err := a.searcher.Search(ctx, query, 5)
 			if err != nil {
 				log.Errorf("Search failed: %v", err)
+				emitStatus(fmt.Sprintf("❌ Search failed: %s", query))
 				return
 			}
+
+			emitStatus(fmt.Sprintf("✓ Found %d results for: %s", len(searchResults), query))
 
 			mu.Lock()
 			defer mu.Unlock()
