@@ -10,9 +10,10 @@ shim:
   tls-challenge: dns
 
 containers:
-  - name: "proxy"
+  - name: "websearch-proxy"
     image: ""
     args: [
-      "ghcr.io/tinfoilsh/confidential-model-router:0.0.28",
-      "-d","$(awk -F': *' '$1~/^domain$/{print $2; exit}' /mnt/ramdisk/external-config.yml)",
+      "ghcr.io/tinfoilsh/confidential-websearch:0.0.1",
+      "-e", "EXA_API_KEY=$(awk -F': *' '$1~/^exa_api_key$/{print $2; exit}' /mnt/ramdisk/external-config.yml)",
+      "-e", "BING_API_KEY=$(awk -F': *' '$1~/^bing_api_key$/{print $2; exit}' /mnt/ramdisk/external-config.yml)",
     ]

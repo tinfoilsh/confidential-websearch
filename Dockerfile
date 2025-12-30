@@ -2,23 +2,21 @@ FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 
-ARG VERSION
-
-COPY go.mod ./
+COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags "-X main.version=${VERSION}" \
-    -o proxy
+RUN CGO_ENABLED=0 GOOS=linux go build -o websearch-proxy .
 
 FROM alpine:latest
 
+RUN apk --no-cache add ca-certificates
+
 WORKDIR /app
 
-COPY --from=builder /app/proxy .
+COPY --from=builder /app/websearch-proxy .
 
 EXPOSE 8089
 
-ENTRYPOINT ["./proxy"]
+ENTRYPOINT ["./websearch-proxy"]

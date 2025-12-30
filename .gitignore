@@ -1,6 +1,4 @@
 .idea/
-confidential-model-router
-proxy
-proxyctl
+confidential-websearch
 ext.yml
 tuf-repo-cdn.sigstore.dev.json

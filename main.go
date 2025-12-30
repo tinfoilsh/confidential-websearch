@@ -1,93 +1,224 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	_ "embed"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/openai/openai-go/v2"
+	"github.com/openai/openai-go/v2/option"
+	"github.com/openai/openai-go/v2/shared"
 	log "github.com/sirupsen/logrus"
+	"github.com/tinfoilsh/tinfoil-go"
 
-	"github.com/tinfoilsh/confidential-model-router/manager"
+	"github.com/tinfoilsh/confidential-websearch/agent"
+	"github.com/tinfoilsh/confidential-websearch/config"
+	"github.com/tinfoilsh/confidential-websearch/search"
 )
 
-//go:embed config.yml
-var configFile []byte // Initial (attested) config
-
-// Set by build process
-var version = "dev"
-
 var (
-	port            = flag.String("l", "8089", "port to listen on")
-	controlPlaneURL = flag.String("C", "https://api.tinfoil.sh", "control plane URL")
-	verbose         = flag.Bool("v", false, "enable verbose logging")
-	initConfigURL   = flag.String("i", "", "optional path to initial config.yml (requires to append @sha256:<hex> for integrity)")
-	updateConfigURL = flag.String("u", "https://raw.githubusercontent.com/tinfoilsh/confidential-model-router/main/config.yml", "path to runtime config.yml")
-	domain          = flag.String("d", "localhost", "domain used by this router")
+	verbose        = flag.Bool("v", false, "enable verbose logging")
+	cfg            *config.Config
+	client         *openai.Client
+	ag             *agent.Agent
+	tinfoilEnclave string
 )
 
 func jsonError(w http.ResponseWriter, message string, code int) {
-	switch {
-	case code >= 500:
-		log.Errorf("jsonError: %s", message)
-	case code >= 400:
-		log.Warnf("jsonError: %s", message)
-	default:
-		log.Debugf("jsonError: %s", message)
-	}
-
+	log.WithField("code", code).Warn(message)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{
-		"error": message,
-	})
+	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
-func sendJSON(w http.ResponseWriter, data any) {
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
-	}
+// IncomingRequest represents the incoming chat request
+type IncomingRequest struct {
+	Model         string                   `json:"model"`
+	Messages      []map[string]interface{} `json:"messages"`
+	Stream        bool                     `json:"stream"`
+	Temperature   *float64                 `json:"temperature,omitempty"`
+	MaxTokens     *int64                   `json:"max_tokens,omitempty"`
+	StreamOptions map[string]interface{}   `json:"stream_options,omitempty"`
 }
 
-func parseModelFromSubdomain(r *http.Request, domain string) (string, error) {
-	// Check if the request is for a subdomain and derive model from leftmost subdomain.
-	host := r.Header.Get("X-Forwarded-Host")
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	log.Debugf("host (from X-Forwarded-Host): %s", host)
-	if !strings.HasSuffix(host, "."+domain) {
-		return "", nil
+func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Forward the Authorization header from the incoming request
+	authHeader := r.Header.Get("Authorization")
+	var reqOpts []option.RequestOption
+	if authHeader != "" {
+		reqOpts = append(reqOpts, option.WithHeader("Authorization", authHeader))
 	}
 
-	// If request is for a subdomain, use leftmost label as model name (e.g., deepseek.inference.tinfoil.sh -> deepseek)
-	if host != domain && strings.HasSuffix(host, "."+domain) {
-		sub := strings.TrimSuffix(host, "."+domain)
-		if sub == "" {
-			return "", fmt.Errorf("subdomain is empty")
-		} else {
-			parts := strings.Split(sub, ".")
-			if len(parts) > 0 && parts[0] != "" {
-				return parts[0], nil
-			} else {
-				return "", fmt.Errorf("first subdomain is empty")
+	// Parse incoming request
+	var req IncomingRequest
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		jsonError(w, fmt.Sprintf("failed to read request: %v", err), http.StatusBadRequest)
+		return
+	}
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
+		jsonError(w, fmt.Sprintf("failed to parse request: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Use model from request for the responder
+	responderModel := req.Model
+	if responderModel == "" {
+		jsonError(w, "model parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// Extract user query (last user message)
+	var userQuery string
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		if role, ok := req.Messages[i]["role"].(string); ok && role == "user" {
+			if content, ok := req.Messages[i]["content"].(string); ok {
+				userQuery = content
+				break
 			}
 		}
 	}
-	return "", nil
+
+	if userQuery == "" {
+		jsonError(w, "no user message found", http.StatusBadRequest)
+		return
+	}
+
+	log.Infof("Processing query: %s (responder: %s)", truncate(userQuery, 100), responderModel)
+
+	// Step 1: Run agent to gather search results (forward auth header)
+	agentResult, err := ag.Run(ctx, userQuery, reqOpts...)
+	if err != nil {
+		jsonError(w, fmt.Sprintf("agent failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	log.Infof("Agent completed: %d tool calls, %d results", len(agentResult.ToolCalls), len(agentResult.SearchResults))
+
+	// Step 2: Build messages for responder - preserve original context
+	var messages []openai.ChatCompletionMessageParamUnion
+
+	// Convert original messages from the request
+	for _, msg := range req.Messages {
+		role, _ := msg["role"].(string)
+		content, _ := msg["content"].(string)
+		switch role {
+		case "system":
+			messages = append(messages, openai.SystemMessage(content))
+		case "user":
+			messages = append(messages, openai.UserMessage(content))
+		case "assistant":
+			messages = append(messages, openai.AssistantMessage(content))
+		}
+	}
+
+	// If we have search results, append tool calls and tool results
+	if len(agentResult.ToolCalls) > 0 {
+		// Build tool calls for the assistant message
+		toolCalls := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(agentResult.ToolCalls))
+		for _, tc := range agentResult.ToolCalls {
+			toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnionParam{
+				OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+					ID: tc.ID,
+					Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+						Name:      "web_search",
+						Arguments: fmt.Sprintf(`{"query": %q}`, tc.Query),
+					},
+				},
+			})
+		}
+
+		// Add assistant message with tool calls
+		assistantMsg := openai.ChatCompletionAssistantMessageParam{
+			ToolCalls: toolCalls,
+		}
+		messages = append(messages, openai.ChatCompletionMessageParamUnion{
+			OfAssistant: &assistantMsg,
+		})
+
+		// Add tool results - format nicely with numbered citations
+		for i, tc := range agentResult.ToolCalls {
+			var toolContent string
+			// Find results for this tool call
+			endIdx := len(agentResult.SearchResults)
+			if i+1 < len(agentResult.ToolCalls) {
+				endIdx = agentResult.ToolCalls[i+1].ResultIdx
+			}
+
+			resultNum := 1
+			for j := tc.ResultIdx; j < endIdx; j++ {
+				sr := agentResult.SearchResults[j]
+				toolContent += fmt.Sprintf("[%d] %s\nURL: %s\n%s\n\n",
+					resultNum, sr.Title, sr.URL, sr.Content)
+				resultNum++
+			}
+
+			messages = append(messages, openai.ToolMessage(toolContent, tc.ID))
+		}
+	}
+
+	// Step 3: Call responder with model from request (forward auth header)
+	params := openai.ChatCompletionNewParams{
+		Model:    shared.ChatModel(responderModel),
+		Messages: messages,
+	}
+	if req.Temperature != nil {
+		params.Temperature = openai.Float(*req.Temperature)
+	}
+	if req.MaxTokens != nil {
+		params.MaxTokens = openai.Int(*req.MaxTokens)
+	}
+
+	if req.Stream {
+		log.Debugf("Streaming response from responder (%s)", responderModel)
+
+		// Set up SSE headers
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			jsonError(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
+		stream := client.Chat.Completions.NewStreaming(ctx, params, reqOpts...)
+		for stream.Next() {
+			chunk := stream.Current()
+			data, _ := json.Marshal(chunk)
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+		if err := stream.Err(); err != nil {
+			log.Errorf("Streaming error: %v", err)
+		}
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	} else {
+		resp, err := client.Chat.Completions.New(ctx, params, reqOpts...)
+		if err != nil {
+			jsonError(w, fmt.Sprintf("responder failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 func main() {
@@ -96,190 +227,71 @@ func main() {
 		log.SetLevel(log.DebugLevel)
 	}
 
-	em, err := manager.NewEnclaveManager(configFile, *controlPlaneURL, *initConfigURL, *updateConfigURL)
+	// Load configuration
+	cfg = config.Load()
+
+	// Initialize Tinfoil client (no API key needed - forwarded from requests)
+	tinfoilClient, err := tinfoil.NewClient()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Failed to create Tinfoil client: %v", err)
 	}
-	defer em.Shutdown()
-	go em.StartWorker()
+	client = tinfoilClient.Client
+	tinfoilEnclave = tinfoilClient.Enclave()
 
+	// Initialize search provider (uses Exa or Bing based on available API key)
+	searcher, err := search.NewProvider(search.Config{
+		ExaAPIKey:  cfg.ExaAPIKey,
+		BingAPIKey: cfg.BingAPIKey,
+	})
+	if err != nil {
+		log.Fatalf("Failed to create search provider: %v", err)
+	}
+
+	// Initialize agent (uses same client, configured agent model)
+	ag = agent.New(client, cfg.AgentModel, searcher)
+
+	// Set up HTTP handlers
+	http.HandleFunc("/v1/chat/completions", handleChatCompletions)
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"ok"}`))
+	})
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		var modelName string
-		var err error
-
-		if modelName, err = parseModelFromSubdomain(r, *domain); err != nil {
-			jsonError(w, fmt.Sprintf("failed to parse subdomain: %v", err), http.StatusBadRequest)
-			return
-		} else if modelName == "" { // The request does not use a subdomain. We route using specific inference routing logic.
-			if r.URL.Path == "/" {
-				http.Redirect(w, r, "https://docs.tinfoil.sh", http.StatusTemporaryRedirect)
-				return
-			} else if r.URL.Path == "/.well-known/tinfoil-proxy" {
-				status := em.Status()
-				status["version"] = version
-				sendJSON(w, status)
-				return
-			} else if r.URL.Path == "/metrics" {
-				// Expose Prometheus metrics
-				promhttp.Handler().ServeHTTP(w, r)
-				return
-			} else if r.URL.Path == "/v1/models" {
-				ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-				defer cancel()
-				req, err := http.NewRequestWithContext(ctx, http.MethodGet, *controlPlaneURL+"/v1/models", nil)
-				if err != nil {
-					jsonError(w, fmt.Sprintf("failed to create request: %v", err), http.StatusInternalServerError)
-					return
-				}
-				resp, err := http.DefaultClient.Do(req)
-				if err != nil {
-					jsonError(w, fmt.Sprintf("failed to fetch models: %v", err), http.StatusBadGateway)
-					return
-				}
-				defer resp.Body.Close()
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(resp.StatusCode)
-				io.Copy(w, resp.Body)
-				return
-			} else if r.URL.Path == "/v1/audio/transcriptions" || strings.HasPrefix(r.URL.Path, "/v1/audio/") {
-				modelName = "whisper-large-v3-turbo"
-			} else if r.URL.Path == "/v1/convert/file" {
-				modelName = "doc-upload"
-			} else { // This is an OpenAI-compatible API request
-				var body map[string]interface{}
-				bodyBytes, err := io.ReadAll(r.Body)
-
-				if err != nil {
-					jsonError(w, fmt.Sprintf("failed to read request body: %v", err), http.StatusBadRequest)
-					return
-				}
-				if err := json.Unmarshal(bodyBytes, &body); err != nil {
-					jsonError(w, fmt.Sprintf("failed to parse request body: %v", err), http.StatusBadRequest)
-					return
-				}
-
-				// Extract model name from request body
-				modelInterface, ok := body["model"]
-				if !ok {
-					jsonError(w, "model parameter not found in request body", http.StatusBadRequest)
-					return
-				}
-				modelName, ok = modelInterface.(string)
-				if !ok {
-					jsonError(w, "model parameter must be a string", http.StatusBadRequest)
-					return
-				}
-
-				// If streaming request, ensure continuous_usage_stats is enabled
-				if stream, ok := body["stream"].(bool); ok && stream {
-					// Check if client requested usage stats before we modify anything
-					clientRequestedUsage := false
-					if streamOptions, ok := body["stream_options"].(map[string]interface{}); ok {
-						// Check for OpenAI-style include_usage
-						if includeUsage, ok := streamOptions["include_usage"].(bool); ok && includeUsage {
-							clientRequestedUsage = true
-						}
-						// Check for vLLM-style continuous_usage_stats
-						if continuousUsage, ok := streamOptions["continuous_usage_stats"].(bool); ok && continuousUsage {
-							clientRequestedUsage = true
-						}
-						streamOptions["continuous_usage_stats"] = true
-					} else {
-						body["stream_options"] = map[string]interface{}{
-							"continuous_usage_stats": true,
-						}
-					}
-
-					// Set internal header to indicate if client requested usage
-					// This header will be used by the proxy to decide whether to filter usage-only chunks
-					if clientRequestedUsage {
-						r.Header.Set("X-Tinfoil-Client-Requested-Usage", "true")
-					}
-
-					// Re-encode the modified body
-					newBodyBytes, err := json.Marshal(body)
-					if err != nil {
-						jsonError(w, fmt.Sprintf("failed to process request body: %v", err), http.StatusInternalServerError)
-						return
-					}
-					bodyBytes = newBodyBytes
-					// Update Content-Length header to match new body size
-					r.Header.Set("Content-Length", fmt.Sprintf("%d", len(bodyBytes)))
-					r.ContentLength = int64(len(bodyBytes))
-					log.Debugf("Modified streaming request body to include continuous_usage_stats, client requested usage: %v", clientRequestedUsage)
-				}
-
-				r.Body.Close()
-				r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-			}
-		}
-
-		model, found := em.GetModel(modelName)
-		if !found {
-			jsonError(w, "model not found", http.StatusNotFound)
-			return
-		}
-
-		enclave := model.NextEnclave()
-		if enclave == nil {
-			jsonError(w, "no enclaves available", http.StatusServiceUnavailable)
-			return
-		}
-
-		if overloaded, retryAfter, waiting := enclave.ShouldReject(); overloaded {
-			secs := int(retryAfter.Seconds())
-			if secs <= 0 {
-				secs = 60
-			}
-			w.Header().Set("Retry-After", strconv.Itoa(secs))
-			log.WithFields(log.Fields{
-				"model":               modelName,
-				"enclave":             enclave.String(),
-				"requests_waiting":    waiting,
-				"retry_after_seconds": secs,
-			}).Warn("rejecting request due to backend overload")
-
-			// Record rejection metrics
-			manager.RequestsRejectedTotal.WithLabelValues(modelName).Inc()
-			manager.RetryAfterSeconds.WithLabelValues(modelName).Observe(float64(secs))
-
-			jsonError(w, fmt.Sprintf("backend overloaded, retry after %d seconds", secs), http.StatusTooManyRequests)
-			return
-		}
-
-		log.Debugf("%s serving request\n", enclave)
-
-		enclave.ServeHTTP(w, r)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"service": "confidential-websearch",
+			"status":  "ok",
+		})
 	})
 
 	// Setup graceful shutdown
 	server := &http.Server{
-		Addr:         ":" + *port,
-		Handler:      nil,             // Use default ServeMux
-		ReadTimeout:  5 * time.Minute, // Increased to support large RAG payloads
-		WriteTimeout: 0,               // Disabled to support long-running streaming responses
+		Addr:         cfg.ListenAddr,
+		Handler:      nil,
+		ReadTimeout:  5 * time.Minute,
+		WriteTimeout: 0, // Disabled for streaming
 	}
 
-	// Handle shutdown signals
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Printf("Starting proxy server on port %s\n", *port)
+		log.Infof("Starting websearch proxy on %s", cfg.ListenAddr)
+		log.Infof("Agent model: %s", cfg.AgentModel)
+		log.Infof("Responder model: from request")
+		log.Infof("Search provider: %s", searcher.Name())
+		log.Infof("Using Tinfoil enclave: %s", tinfoilEnclave)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
 	}()
 
-	// Wait for shutdown signal
 	<-sigChan
 	log.Info("Shutting down server...")
 
-	// Create shutdown context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Shutdown server
 	if err := server.Shutdown(ctx); err != nil {
 		log.WithError(err).Error("Failed to gracefully shutdown server")
 	}
