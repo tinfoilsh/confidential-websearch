@@ -16,8 +16,8 @@ type ChunkCallback func(chunk openai.ChatCompletionChunk)
 // StatusCallback is called for status updates (search progress, etc.)
 type StatusCallback func(status string)
 
-// WebSearchToolParams is the JSON schema for the web_search tool
-var WebSearchToolParams = shared.FunctionParameters{
+// SearchToolParams is the JSON schema for the search tool
+var SearchToolParams = shared.FunctionParameters{
 	"type": "object",
 	"properties": map[string]interface{}{
 		"query": map[string]interface{}{

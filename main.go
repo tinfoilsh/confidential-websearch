@@ -198,7 +198,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
 					ID: tc.ID,
 					Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
-						Name:      "web_search",
+						Name:      "search",
 						Arguments: fmt.Sprintf(`{"query": %q}`, tc.Query),
 					},
 				},
@@ -241,6 +241,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 			messages = append(messages, openai.ToolMessage(toolContent, tc.ID))
 		}
+
+		// Add instruction to synthesize the search results
+		messages = append(messages, openai.UserMessage("Based on the search results above, please provide a helpful answer to my question. Do not attempt to search again or use other tools."))
 	}
 
 	// Debug: print messages being sent to responder
@@ -251,17 +254,6 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	params := openai.ChatCompletionNewParams{
 		Model:    shared.ChatModel(responderModel),
 		Messages: messages,
-	}
-
-	// If we sent tool_calls in the messages, we need to define the tool for the responder
-	// so it understands the context (otherwise it may hallucinate tools) and can call the tool again if needed.
-	if len(agentResult.ToolCalls) > 0 {
-		webSearchTool := openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
-			Name:        "web_search",
-			Description: openai.String("Search the web for current information."),
-			Parameters:  agent.WebSearchToolParams,
-		})
-		params.Tools = []openai.ChatCompletionToolUnionParam{webSearchTool}
 	}
 
 	if req.Temperature != nil {

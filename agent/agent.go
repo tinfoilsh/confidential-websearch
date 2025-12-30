@@ -56,28 +56,25 @@ func (a *Agent) Run(ctx context.Context, userQuery string, reqOpts ...option.Req
 // - onStatus: called for status updates like search progress (can be nil)
 func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk ChunkCallback, onStatus StatusCallback, reqOpts ...option.RequestOption) (*Result, error) {
 	messages := []openai.ChatCompletionMessageParamUnion{
-		openai.SystemMessage(`You are a research assistant. Decide if you need to search the web to answer the user's question.
+		openai.SystemMessage(`You are a research assistant. Use the search tool for current information or facts you're uncertain about.
 
-If the question requires current information, recent events, or facts you're uncertain about, use the web_search tool.
-If the question is about general knowledge, logic, or creative tasks, you can answer directly without searching.
-
-Be concise in your search queries. You can call web_search multiple times in parallel if needed.`),
+You can call search multiple times in parallel for complex queries or comparisons.`),
 		openai.UserMessage(userQuery),
 	}
 
 	result := &Result{}
 
-	// Define the web_search tool
-	webSearchTool := openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
-		Name:        "web_search",
-		Description: openai.String("Search the web for current information. Use this when you need up-to-date information or facts you're uncertain about."),
-		Parameters:  WebSearchToolParams,
+	// Define the search tool - using simple name that gpt-oss recognizes
+	searchTool := openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+		Name:        "search",
+		Description: openai.String("Search the web for current information. Returns search results with titles, URLs and content snippets. You can call this tool multiple times in parallel for complex queries."),
+		Parameters:  SearchToolParams,
 	})
 
 	params := openai.ChatCompletionNewParams{
 		Model:       shared.ChatModel(a.model),
 		Messages:    messages,
-		Tools:       []openai.ChatCompletionToolUnionParam{webSearchTool},
+		Tools:       []openai.ChatCompletionToolUnionParam{searchTool},
 		Temperature: openai.Float(0.3),
 		MaxTokens:   openai.Int(1024),
 	}
@@ -215,55 +212,58 @@ Be concise in your search queries. You can call web_search multiple times in par
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 
+	// Helper function to execute a single search query
+	executeSearch := func(toolCallID, query string) {
+		query = strings.TrimSpace(query)
+		if query == "" {
+			log.Warn("Skipping empty search query")
+			return
+		}
+
+		emitStatus(fmt.Sprintf("🔍 Searching: %s", query))
+		log.Infof("Searching: %s", query)
+
+		searchResults, err := a.searcher.Search(ctx, query, 5)
+		if err != nil {
+			log.Errorf("Search failed: %v", err)
+			emitStatus(fmt.Sprintf("❌ Search failed: %s", query))
+			return
+		}
+
+		emitStatus(fmt.Sprintf("✓ Found %d results for: %s", len(searchResults), query))
+
+		mu.Lock()
+		defer mu.Unlock()
+
+		result.ToolCalls = append(result.ToolCalls, ToolCall{
+			ID:        toolCallID,
+			Query:     query,
+			ResultIdx: len(result.SearchResults),
+		})
+		result.SearchResults = append(result.SearchResults, searchResults...)
+	}
+
 	for _, tc := range toolCalls {
 		toolCallID := tc.ID
 		functionName := tc.Function.Name
 		functionArgs := tc.Function.Arguments
 
-		// Handle variations like "web_search" or "web_search.exec"
-		if !strings.HasPrefix(functionName, "web_search") {
-			log.Warnf("Unknown tool: %s", functionName)
-			continue
-		}
-
-		wg.Add(1)
-		go func(toolCallID string, arguments string) {
-			defer wg.Done()
-
+		// Handle search tool (accept "search" or legacy "web_search" variants)
+		if functionName == "search" || strings.HasPrefix(functionName, "web_search") {
 			var args SearchArgs
-			if err := json.Unmarshal([]byte(arguments), &args); err != nil {
-				log.Errorf("Failed to parse tool arguments: %v", err)
-				return
+			if err := json.Unmarshal([]byte(functionArgs), &args); err != nil {
+				log.Errorf("Failed to parse search arguments: %v", err)
+				continue
 			}
 
-			query := strings.TrimSpace(args.Query)
-			if query == "" {
-				log.Warn("Skipping empty search query")
-				return
-			}
-
-			emitStatus(fmt.Sprintf("🔍 Searching: %s", query))
-			log.Infof("Searching: %s", query)
-
-			searchResults, err := a.searcher.Search(ctx, query, 5)
-			if err != nil {
-				log.Errorf("Search failed: %v", err)
-				emitStatus(fmt.Sprintf("❌ Search failed: %s", query))
-				return
-			}
-
-			emitStatus(fmt.Sprintf("✓ Found %d results for: %s", len(searchResults), query))
-
-			mu.Lock()
-			defer mu.Unlock()
-
-			result.ToolCalls = append(result.ToolCalls, ToolCall{
-				ID:        toolCallID,
-				Query:     query,
-				ResultIdx: len(result.SearchResults),
-			})
-			result.SearchResults = append(result.SearchResults, searchResults...)
-		}(toolCallID, functionArgs)
+			wg.Add(1)
+			go func(q string) {
+				defer wg.Done()
+				executeSearch(toolCallID, q)
+			}(args.Query)
+		} else {
+			log.Warnf("Unknown tool: %s", functionName)
+		}
 	}
 	wg.Wait()
 
