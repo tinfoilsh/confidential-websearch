@@ -80,9 +80,10 @@ type Annotation struct {
 
 // WebSearchCall represents a search operation in streaming output
 type WebSearchCall struct {
-	Type   string `json:"type"`
-	ID     string `json:"id"`
-	Status string `json:"status"`
+	Type   string           `json:"type"`
+	ID     string           `json:"id"`
+	Status string           `json:"status"`
+	Action *WebSearchAction `json:"action,omitempty"`
 }
 
 // StreamingDelta represents a delta in a streaming chunk
@@ -253,21 +254,40 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	if req.Stream {
 		searchCallsSent := make(map[string]bool)
+		toolCallArgs := make(map[int]string)
+		toolCallIDs := make(map[int]string)
 
 		agentResult, agentErr = s.agent.RunStreaming(ctx, userQuery,
 			func(chunk openai.ChatCompletionChunk) {
 				for _, choice := range chunk.Choices {
 					for _, tc := range choice.Delta.ToolCalls {
-						if tc.ID != "" && !searchCallsSent[tc.ID] {
-							searchEvent := WebSearchCall{
-								Type:   "web_search_call",
-								ID:     tc.ID,
-								Status: "in_progress",
+						idx := int(tc.Index)
+						if tc.ID != "" {
+							toolCallIDs[idx] = tc.ID
+						}
+						if tc.Function.Arguments != "" {
+							toolCallArgs[idx] += tc.Function.Arguments
+						}
+						id := toolCallIDs[idx]
+						if id != "" && !searchCallsSent[id] {
+							var args struct {
+								Query string `json:"query"`
 							}
-							data, _ := json.Marshal(searchEvent)
-							fmt.Fprintf(w, "data: %s\n\n", data)
-							flusher.Flush()
-							searchCallsSent[tc.ID] = true
+							if json.Unmarshal([]byte(toolCallArgs[idx]), &args) == nil && args.Query != "" {
+								searchEvent := WebSearchCall{
+									Type:   "web_search_call",
+									ID:     id,
+									Status: "in_progress",
+									Action: &WebSearchAction{
+										Type:  "search",
+										Query: args.Query,
+									},
+								}
+								data, _ := json.Marshal(searchEvent)
+								fmt.Fprintf(w, "data: %s\n\n", data)
+								flusher.Flush()
+								searchCallsSent[id] = true
+							}
 						}
 					}
 				}
