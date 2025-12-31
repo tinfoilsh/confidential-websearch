@@ -61,7 +61,7 @@ func (p *BingProvider) Search(ctx context.Context, query string, maxResults int)
 	results := make([]Result, 0, len(data.WebPages.Value))
 	for _, item := range data.WebPages.Value {
 		var favicon string
-		if parsed, err := url.Parse(item.URL); err == nil {
+		if parsed, err := url.Parse(item.URL); err == nil && parsed.Host != "" {
 			favicon = "https://icons.duckduckgo.com/ip3/" + parsed.Host + ".ico"
 		}
 		results = append(results, Result{
