@@ -65,6 +65,64 @@ type Message struct {
 	Content string `json:"content"`
 }
 
+// URLCitation contains the citation details
+type URLCitation struct {
+	StartIndex int64  `json:"start_index"`
+	EndIndex   int64  `json:"end_index"`
+	Title      string `json:"title"`
+	URL        string `json:"url"`
+}
+
+// Annotation represents a url_citation annotation
+type Annotation struct {
+	Type        string      `json:"type"`
+	URLCitation URLCitation `json:"url_citation"`
+}
+
+// WebSearchCall represents a search operation in streaming output
+type WebSearchCall struct {
+	Type   string `json:"type"`
+	ID     string `json:"id"`
+	Status string `json:"status"`
+}
+
+// StreamingDelta represents a delta in a streaming chunk
+type StreamingDelta struct {
+	Annotations []Annotation `json:"annotations,omitempty"`
+}
+
+// StreamingChoice represents a choice in a streaming chunk
+type StreamingChoice struct {
+	Index int64          `json:"index"`
+	Delta StreamingDelta `json:"delta"`
+}
+
+// StreamingChunk represents a custom streaming chunk for annotations
+type StreamingChunk struct {
+	ID      string            `json:"id"`
+	Object  string            `json:"object"`
+	Created int64             `json:"created"`
+	Model   string            `json:"model"`
+	Choices []StreamingChoice `json:"choices"`
+}
+
+// buildAnnotations creates URL citations from search results
+func buildAnnotations(toolCalls []agent.ToolCall) []Annotation {
+	var annotations []Annotation
+	for _, tc := range toolCalls {
+		for _, r := range tc.Results {
+			annotations = append(annotations, Annotation{
+				Type: "url_citation",
+				URLCitation: URLCitation{
+					URL:   r.URL,
+					Title: r.Title,
+				},
+			})
+		}
+	}
+	return annotations
+}
+
 func jsonError(w http.ResponseWriter, message string, code int) {
 	log.WithField("code", code).Warn(message)
 	w.Header().Set("Content-Type", "application/json")
@@ -144,13 +202,38 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	var agentErr error
 
 	if req.Stream {
+		searchCallsSent := make(map[string]bool)
+
 		agentResult, agentErr = s.agent.RunStreaming(ctx, userQuery,
 			func(chunk openai.ChatCompletionChunk) {
-				data, _ := json.Marshal(chunk)
-				fmt.Fprintf(w, "data: %s\n\n", data)
-				flusher.Flush()
+				for _, choice := range chunk.Choices {
+					for _, tc := range choice.Delta.ToolCalls {
+						if tc.ID != "" && !searchCallsSent[tc.ID] {
+							searchEvent := WebSearchCall{
+								Type:   "web_search_call",
+								ID:     tc.ID,
+								Status: "in_progress",
+							}
+							data, _ := json.Marshal(searchEvent)
+							fmt.Fprintf(w, "data: %s\n\n", data)
+							flusher.Flush()
+							searchCallsSent[tc.ID] = true
+						}
+					}
+				}
 			},
 			reqOpts...)
+
+		for id := range searchCallsSent {
+			searchEvent := WebSearchCall{
+				Type:   "web_search_call",
+				ID:     id,
+				Status: "completed",
+			}
+			data, _ := json.Marshal(searchEvent)
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		}
 	} else {
 		agentResult, agentErr = s.agent.Run(ctx, userQuery, reqOpts...)
 	}
@@ -230,8 +313,33 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	if req.Stream {
 		stream := s.client.Chat.Completions.NewStreaming(ctx, params, reqOpts...)
+
+		annotations := buildAnnotations(agentResult.ToolCalls)
+		annotationsSent := false
+
 		for stream.Next() {
-			data, _ := json.Marshal(stream.Current())
+			chunk := stream.Current()
+
+			if !annotationsSent && len(annotations) > 0 && len(chunk.Choices) > 0 {
+				annotationsChunk := StreamingChunk{
+					ID:      chunk.ID,
+					Object:  "chat.completion.chunk",
+					Created: chunk.Created,
+					Model:   chunk.Model,
+					Choices: []StreamingChoice{
+						{
+							Index: 0,
+							Delta: StreamingDelta{Annotations: annotations},
+						},
+					},
+				}
+				data, _ := json.Marshal(annotationsChunk)
+				fmt.Fprintf(w, "data: %s\n\n", data)
+				flusher.Flush()
+				annotationsSent = true
+			}
+
+			data, _ := json.Marshal(chunk)
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		}
@@ -246,8 +354,25 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, fmt.Sprintf("responder failed: %v", err), http.StatusInternalServerError)
 			return
 		}
+
+		annotations := buildAnnotations(agentResult.ToolCalls)
+
+		respJSON, _ := json.Marshal(resp)
+		var respMap map[string]interface{}
+		json.Unmarshal(respJSON, &respMap)
+
+		if choices, ok := respMap["choices"].([]interface{}); ok {
+			for _, c := range choices {
+				if choice, ok := c.(map[string]interface{}); ok {
+					if msg, ok := choice["message"].(map[string]interface{}); ok {
+						msg["annotations"] = annotations
+					}
+				}
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		json.NewEncoder(w).Encode(respMap)
 	}
 }
 
