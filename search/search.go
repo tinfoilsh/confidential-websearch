@@ -9,9 +9,11 @@ import (
 
 // Result represents a single search result
 type Result struct {
-	Title   string `json:"title"`
-	URL     string `json:"url"`
-	Content string `json:"content"`
+	Title         string `json:"title"`
+	URL           string `json:"url"`
+	Content       string `json:"content"`
+	Favicon       string `json:"favicon,omitempty"`
+	PublishedDate string `json:"published_date,omitempty"`
 }
 
 // Provider defines the interface for search providers

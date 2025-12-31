@@ -38,9 +38,11 @@ type exaTextParam struct {
 // exaResponse represents the Exa API response structure
 type exaResponse struct {
 	Results []struct {
-		Title string `json:"title"`
-		URL   string `json:"url"`
-		Text  string `json:"text"`
+		Title         string `json:"title"`
+		URL           string `json:"url"`
+		Text          string `json:"text"`
+		Favicon       string `json:"favicon"`
+		PublishedDate string `json:"publishedDate"`
 	} `json:"results"`
 	Error string `json:"error,omitempty"`
 }
@@ -100,9 +102,11 @@ func (p *ExaProvider) Search(ctx context.Context, query string, maxResults int) 
 			content = content[:500] + "..."
 		}
 		results = append(results, Result{
-			Title:   item.Title,
-			URL:     item.URL,
-			Content: content,
+			Title:         item.Title,
+			URL:           item.URL,
+			Content:       content,
+			Favicon:       item.Favicon,
+			PublishedDate: item.PublishedDate,
 		})
 	}
 

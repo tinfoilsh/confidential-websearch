@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 )
 
 // BingProvider handles web searches using Bing API
@@ -21,9 +22,10 @@ func (p *BingProvider) Name() string {
 type bingResponse struct {
 	WebPages struct {
 		Value []struct {
-			Name    string `json:"name"`
-			URL     string `json:"url"`
-			Snippet string `json:"snippet"`
+			Name          string `json:"name"`
+			URL           string `json:"url"`
+			Snippet       string `json:"snippet"`
+			DatePublished string `json:"datePublished"`
 		} `json:"value"`
 	} `json:"webPages"`
 }
@@ -58,10 +60,16 @@ func (p *BingProvider) Search(ctx context.Context, query string, maxResults int)
 
 	results := make([]Result, 0, len(data.WebPages.Value))
 	for _, item := range data.WebPages.Value {
+		var favicon string
+		if parsed, err := url.Parse(item.URL); err == nil {
+			favicon = "https://icons.duckduckgo.com/ip3/" + parsed.Host + ".ico"
+		}
 		results = append(results, Result{
-			Title:   item.Name,
-			URL:     item.URL,
-			Content: item.Snippet,
+			Title:         item.Name,
+			URL:           item.URL,
+			Content:       item.Snippet,
+			Favicon:       favicon,
+			PublishedDate: item.DatePublished,
 		})
 	}
 
