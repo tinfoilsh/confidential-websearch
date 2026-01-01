@@ -181,26 +181,91 @@ func jsonError(w http.ResponseWriter, message string, code int) {
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
-func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
-	// Only allow POST
+// requestContext holds common request processing state
+type requestContext struct {
+	ctx     context.Context
+	cancel  context.CancelFunc
+	reqOpts []option.RequestOption
+}
+
+// prepareRequest handles common request setup: method validation, timeout, body limit, auth
+func (s *Server) prepareRequest(w http.ResponseWriter, r *http.Request) (*requestContext, bool) {
 	if r.Method != http.MethodPost {
 		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+		return nil, false
 	}
 
-	// Set request timeout
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
-	defer cancel()
-
-	// Limit request body size to prevent DoS
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 
-	// Forward the Authorization header from the incoming request
-	authHeader := r.Header.Get("Authorization")
 	var reqOpts []option.RequestOption
-	if authHeader != "" {
-		reqOpts = append(reqOpts, option.WithHeader("Authorization", authHeader))
+	if auth := r.Header.Get("Authorization"); auth != "" {
+		reqOpts = append(reqOpts, option.WithHeader("Authorization", auth))
 	}
+
+	return &requestContext{ctx: ctx, cancel: cancel, reqOpts: reqOpts}, true
+}
+
+// buildResponderMessages creates the message array for the responder LLM call
+func buildResponderMessages(inputMessages []Message, agentResult *agent.Result) []openai.ChatCompletionMessageParamUnion {
+	var messages []openai.ChatCompletionMessageParamUnion
+
+	// Add input messages
+	for _, msg := range inputMessages {
+		switch msg.Role {
+		case "system":
+			messages = append(messages, openai.SystemMessage(msg.Content))
+		case "user":
+			messages = append(messages, openai.UserMessage(msg.Content))
+		case "assistant":
+			messages = append(messages, openai.AssistantMessage(msg.Content))
+		}
+	}
+
+	// If we have search results, append tool calls and tool results
+	if len(agentResult.ToolCalls) > 0 {
+		toolCalls := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(agentResult.ToolCalls))
+		for _, tc := range agentResult.ToolCalls {
+			toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnionParam{
+				OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+					ID: tc.ID,
+					Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+						Name:      "search",
+						Arguments: fmt.Sprintf(`{"query": %q}`, tc.Query),
+					},
+				},
+			})
+		}
+
+		assistantMsg := openai.ChatCompletionAssistantMessageParam{ToolCalls: toolCalls}
+		if agentResult.AgentReasoning != "" {
+			assistantMsg.Content = openai.ChatCompletionAssistantMessageParamContentUnion{
+				OfString: openai.Opt(agentResult.AgentReasoning),
+			}
+		}
+		messages = append(messages, openai.ChatCompletionMessageParamUnion{OfAssistant: &assistantMsg})
+
+		// Add tool results
+		for _, tc := range agentResult.ToolCalls {
+			var toolContent string
+			for i, sr := range tc.Results {
+				toolContent += fmt.Sprintf("[%d] %s\nURL: %s\n%s\n\n", i+1, sr.Title, sr.URL, sr.Content)
+			}
+			messages = append(messages, openai.ToolMessage(toolContent, tc.ID))
+		}
+
+		messages = append(messages, openai.UserMessage("Based on the search results above, please provide a helpful answer to my question. Do not attempt to search again or use other tools."))
+	}
+
+	return messages
+}
+
+func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	rc, ok := s.prepareRequest(w, r)
+	if !ok {
+		return
+	}
+	defer rc.cancel()
 
 	// Parse incoming request
 	var req IncomingRequest
@@ -257,7 +322,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		toolCallArgs := make(map[int]string)
 		toolCallIDs := make(map[int]string)
 
-		agentResult, agentErr = s.agent.RunStreaming(ctx, userQuery,
+		agentResult, agentErr = s.agent.RunStreaming(rc.ctx, userQuery,
 			func(chunk openai.ChatCompletionChunk) {
 				for _, choice := range chunk.Choices {
 					for _, tc := range choice.Delta.ToolCalls {
@@ -292,7 +357,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			},
-			reqOpts...)
+			rc.reqOpts...)
 
 		for id := range searchCallsSent {
 			searchEvent := WebSearchCall{
@@ -305,7 +370,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	} else {
-		agentResult, agentErr = s.agent.Run(ctx, userQuery, reqOpts...)
+		agentResult, agentErr = s.agent.Run(rc.ctx, userQuery, rc.reqOpts...)
 	}
 
 	if agentErr != nil {
@@ -320,54 +385,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Infof("Agent completed: %d tool calls", len(agentResult.ToolCalls))
 
-	// Step 2: Build messages for responder - preserve original context
-	var messages []openai.ChatCompletionMessageParamUnion
-
-	for _, msg := range req.Messages {
-		switch msg.Role {
-		case "system":
-			messages = append(messages, openai.SystemMessage(msg.Content))
-		case "user":
-			messages = append(messages, openai.UserMessage(msg.Content))
-		case "assistant":
-			messages = append(messages, openai.AssistantMessage(msg.Content))
-		}
-	}
-
-	// If we have search results, append tool calls and tool results
-	if len(agentResult.ToolCalls) > 0 {
-		toolCalls := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(agentResult.ToolCalls))
-		for _, tc := range agentResult.ToolCalls {
-			toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnionParam{
-				OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
-					ID: tc.ID,
-					Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
-						Name:      "search",
-						Arguments: fmt.Sprintf(`{"query": %q}`, tc.Query),
-					},
-				},
-			})
-		}
-
-		assistantMsg := openai.ChatCompletionAssistantMessageParam{ToolCalls: toolCalls}
-		if agentResult.AgentReasoning != "" {
-			assistantMsg.Content = openai.ChatCompletionAssistantMessageParamContentUnion{
-				OfString: openai.Opt(agentResult.AgentReasoning),
-			}
-		}
-		messages = append(messages, openai.ChatCompletionMessageParamUnion{OfAssistant: &assistantMsg})
-
-		// Add tool results
-		for _, tc := range agentResult.ToolCalls {
-			var toolContent string
-			for i, sr := range tc.Results {
-				toolContent += fmt.Sprintf("[%d] %s\nURL: %s\n%s\n\n", i+1, sr.Title, sr.URL, sr.Content)
-			}
-			messages = append(messages, openai.ToolMessage(toolContent, tc.ID))
-		}
-
-		messages = append(messages, openai.UserMessage("Based on the search results above, please provide a helpful answer to my question. Do not attempt to search again or use other tools."))
-	}
+	// Step 2: Build messages for responder
+	messages := buildResponderMessages(req.Messages, agentResult)
 
 	// Step 3: Call responder
 	params := openai.ChatCompletionNewParams{
@@ -382,7 +401,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Stream {
-		stream := s.client.Chat.Completions.NewStreaming(ctx, params, reqOpts...)
+		stream := s.client.Chat.Completions.NewStreaming(rc.ctx, params, rc.reqOpts...)
 
 		annotations := buildAnnotations(agentResult.ToolCalls)
 		annotationsSent := false
@@ -419,7 +438,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "data: [DONE]\n\n")
 		flusher.Flush()
 	} else {
-		resp, err := s.client.Chat.Completions.New(ctx, params, reqOpts...)
+		resp, err := s.client.Chat.Completions.New(rc.ctx, params, rc.reqOpts...)
 		if err != nil {
 			jsonError(w, fmt.Sprintf("responder failed: %v", err), http.StatusInternalServerError)
 			return
@@ -454,21 +473,11 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+	rc, ok := s.prepareRequest(w, r)
+	if !ok {
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
-	defer cancel()
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
-
-	authHeader := r.Header.Get("Authorization")
-	var reqOpts []option.RequestOption
-	if authHeader != "" {
-		reqOpts = append(reqOpts, option.WithHeader("Authorization", authHeader))
-	}
+	defer rc.cancel()
 
 	var req ResponsesRequest
 	bodyBytes, err := io.ReadAll(r.Body)
@@ -491,54 +500,22 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 
 	log.Infof("Processing responses request (model: %s)", req.Model)
 
-	agentResult, agentErr := s.agent.Run(ctx, req.Input, reqOpts...)
+	agentResult, agentErr := s.agent.Run(rc.ctx, req.Input, rc.reqOpts...)
 	if agentErr != nil {
 		jsonError(w, fmt.Sprintf("agent failed: %v", agentErr), http.StatusInternalServerError)
 		return
 	}
 
-	var messages []openai.ChatCompletionMessageParamUnion
-	messages = append(messages, openai.UserMessage(req.Input))
-
-	if len(agentResult.ToolCalls) > 0 {
-		toolCalls := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(agentResult.ToolCalls))
-		for _, tc := range agentResult.ToolCalls {
-			toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnionParam{
-				OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
-					ID: tc.ID,
-					Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
-						Name:      "search",
-						Arguments: fmt.Sprintf(`{"query": %q}`, tc.Query),
-					},
-				},
-			})
-		}
-
-		assistantMsg := openai.ChatCompletionAssistantMessageParam{ToolCalls: toolCalls}
-		if agentResult.AgentReasoning != "" {
-			assistantMsg.Content = openai.ChatCompletionAssistantMessageParamContentUnion{
-				OfString: openai.Opt(agentResult.AgentReasoning),
-			}
-		}
-		messages = append(messages, openai.ChatCompletionMessageParamUnion{OfAssistant: &assistantMsg})
-
-		for _, tc := range agentResult.ToolCalls {
-			var toolContent string
-			for i, sr := range tc.Results {
-				toolContent += fmt.Sprintf("[%d] %s\nURL: %s\n%s\n\n", i+1, sr.Title, sr.URL, sr.Content)
-			}
-			messages = append(messages, openai.ToolMessage(toolContent, tc.ID))
-		}
-
-		messages = append(messages, openai.UserMessage("Based on the search results above, please provide a helpful answer to my question. Do not attempt to search again or use other tools."))
-	}
+	// Build messages using shared helper
+	inputMessages := []Message{{Role: "user", Content: req.Input}}
+	messages := buildResponderMessages(inputMessages, agentResult)
 
 	params := openai.ChatCompletionNewParams{
 		Model:    shared.ChatModel(req.Model),
 		Messages: messages,
 	}
 
-	resp, err := s.client.Chat.Completions.New(ctx, params, reqOpts...)
+	resp, err := s.client.Chat.Completions.New(rc.ctx, params, rc.reqOpts...)
 	if err != nil {
 		jsonError(w, fmt.Sprintf("responder failed: %v", err), http.StatusInternalServerError)
 		return
