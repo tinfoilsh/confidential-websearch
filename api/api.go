@@ -314,6 +314,7 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := stream.Err(); err != nil {
 			log.Errorf("Streaming error: %v", err)
+			return
 		}
 		fmt.Fprintf(w, "data: [DONE]\n\n")
 		flusher.Flush()
