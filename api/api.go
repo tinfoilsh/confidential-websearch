@@ -308,8 +308,7 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				annotationsSent = true
 			}
 
-			data, _ := json.Marshal(chunk)
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			fmt.Fprintf(w, "data: %s\n\n", chunk.RawJSON())
 			flusher.Flush()
 		}
 		if err := stream.Err(); err != nil {
