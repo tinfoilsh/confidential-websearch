@@ -9,6 +9,7 @@ import (
 
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/option"
+	"github.com/openai/openai-go/v2/responses"
 	"github.com/openai/openai-go/v2/shared"
 	log "github.com/sirupsen/logrus"
 	"github.com/tinfoilsh/tinfoil-go"
@@ -17,28 +18,10 @@ import (
 )
 
 const (
-	agentTemperature   = 0.3
-	agentMaxTokens     = 1024
-	defaultMaxResults  = 5
+	agentTemperature  = 0.3
+	agentMaxTokens    = 1024
+	defaultMaxResults = 5
 )
-
-// extractReasoningContent extracts reasoning_content or content from raw JSON response.
-func extractReasoningContent(rawJSON string) string {
-	if rawJSON == "" {
-		return ""
-	}
-	var data map[string]interface{}
-	if err := json.Unmarshal([]byte(rawJSON), &data); err != nil {
-		return ""
-	}
-	if rc, ok := data["reasoning_content"].(string); ok && rc != "" {
-		return rc
-	}
-	if content, ok := data["content"].(string); ok {
-		return content
-	}
-	return ""
-}
 
 // Agent handles the tool-calling loop with the small model
 type Agent struct {
@@ -59,106 +42,106 @@ func (a *Agent) Run(ctx context.Context, userQuery string, reqOpts ...option.Req
 
 // RunStreaming executes the agent with optional streaming support
 func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk ChunkCallback, reqOpts ...option.RequestOption) (*Result, error) {
-	messages := []openai.ChatCompletionMessageParamUnion{
-		openai.SystemMessage(`You are a research assistant. Use the search tool for current information or facts you're uncertain about. You can call search multiple times in parallel for complex queries.`),
-		openai.UserMessage(userQuery),
+	searchTool := responses.ToolParamOfFunction(
+		"search",
+		SearchToolParams,
+		false,
+	)
+	searchTool.OfFunction.Description = openai.String("Search the web for current information.")
+
+	params := responses.ResponseNewParams{
+		Model:           shared.ResponsesModel(a.model),
+		Instructions:    openai.String(`You are a research assistant. Use the search tool for current information or facts you're uncertain about. You can call search multiple times in parallel for complex queries.`),
+		Input:           responses.ResponseNewParamsInputUnion{OfString: openai.String(userQuery)},
+		Tools:           []responses.ToolUnionParam{searchTool},
+		Temperature:     openai.Float(agentTemperature),
+		MaxOutputTokens: openai.Int(agentMaxTokens),
 	}
 
-	searchTool := openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
-		Name:        "search",
-		Description: openai.String("Search the web for current information."),
-		Parameters:  SearchToolParams,
-	})
-
-	params := openai.ChatCompletionNewParams{
-		Model:       shared.ChatModel(a.model),
-		Messages:    messages,
-		Tools:       []openai.ChatCompletionToolUnionParam{searchTool},
-		Temperature: openai.Float(agentTemperature),
-		MaxTokens:   openai.Int(agentMaxTokens),
+	// Track function calls by output index
+	type functionCall struct {
+		id        string
+		name      string
+		arguments strings.Builder
 	}
-
-	var toolCalls []openai.ChatCompletionMessageToolCallUnion
-	var reasoning string
+	functionCalls := make(map[int]*functionCall)
+	var reasoningBuilder strings.Builder
 
 	if onChunk != nil {
-		stream := a.client.Chat.Completions.NewStreaming(ctx, params, reqOpts...)
-		toolCallBuilders := make(map[int]*toolCallBuilder)
-		var reasoningBuilder strings.Builder
+		stream := a.client.Responses.NewStreaming(ctx, params, reqOpts...)
 
 		for stream.Next() {
-			chunk := stream.Current()
-			onChunk(chunk)
+			event := stream.Current()
+			onChunk(event)
 
-			if len(chunk.Choices) > 0 {
-				delta := chunk.Choices[0].Delta
-				if delta.Content != "" {
-					reasoningBuilder.WriteString(delta.Content)
+			switch event.Type {
+			case "response.reasoning_text.delta":
+				reasoningBuilder.WriteString(event.Delta)
+
+			case "response.output_item.added":
+				if event.Item.Type == "function_call" {
+					fc := event.Item.AsFunctionCall()
+					functionCalls[int(event.OutputIndex)] = &functionCall{
+						id:   fc.CallID,
+						name: fc.Name,
+					}
 				}
-				if rc := extractReasoningContent(delta.RawJSON()); rc != "" {
-					reasoningBuilder.WriteString(rc)
-				}
-				for _, tcDelta := range delta.ToolCalls {
-					idx := int(tcDelta.Index)
-					if toolCallBuilders[idx] == nil {
-						toolCallBuilders[idx] = &toolCallBuilder{}
-					}
-					b := toolCallBuilders[idx]
-					if tcDelta.ID != "" {
-						b.id = tcDelta.ID
-					}
-					if tcDelta.Function.Name != "" {
-						b.name = tcDelta.Function.Name
-					}
-					if tcDelta.Function.Arguments != "" {
-						b.arguments.WriteString(tcDelta.Function.Arguments)
-					}
+
+			case "response.function_call_arguments.delta":
+				idx := int(event.OutputIndex)
+				if functionCalls[idx] != nil {
+					functionCalls[idx].arguments.WriteString(event.Arguments)
 				}
 			}
 		}
 		if err := stream.Err(); err != nil {
 			return nil, fmt.Errorf("agent streaming failed: %w", err)
 		}
-
-		reasoning = reasoningBuilder.String()
-		for _, b := range toolCallBuilders {
-			toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnion{
-				ID:       b.id,
-				Function: openai.ChatCompletionMessageFunctionToolCallFunction{Name: b.name, Arguments: b.arguments.String()},
-			})
-		}
 	} else {
-		resp, err := a.client.Chat.Completions.New(ctx, params, reqOpts...)
+		resp, err := a.client.Responses.New(ctx, params, reqOpts...)
 		if err != nil {
 			return nil, fmt.Errorf("agent LLM call failed: %w", err)
 		}
-		if len(resp.Choices) == 0 {
-			return nil, fmt.Errorf("agent LLM returned no choices")
+
+		for i, item := range resp.Output {
+			switch item.Type {
+			case "reasoning":
+				for _, part := range item.AsReasoning().Summary {
+					if part.Type == "summary_text" {
+						reasoningBuilder.WriteString(part.Text)
+					}
+				}
+			case "function_call":
+				fc := item.AsFunctionCall()
+				functionCalls[i] = &functionCall{
+					id:   fc.CallID,
+					name: fc.Name,
+				}
+				functionCalls[i].arguments.WriteString(fc.Arguments)
+			}
 		}
-		toolCalls = resp.Choices[0].Message.ToolCalls
-		reasoning = extractReasoningContent(resp.Choices[0].Message.RawJSON())
 	}
 
-	result := &Result{AgentReasoning: reasoning}
+	result := &Result{AgentReasoning: reasoningBuilder.String()}
 
-	if len(toolCalls) == 0 {
+	if len(functionCalls) == 0 {
 		log.Debug("Agent decided no search needed")
 		return result, nil
 	}
 
-	log.Debugf("Agent requested %d search(es)", len(toolCalls))
+	log.Debugf("Agent requested %d search(es)", len(functionCalls))
 
 	// Execute searches in parallel
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 
-	for _, tc := range toolCalls {
-		if tc.Function.Name != "search" {
+	for _, fc := range functionCalls {
+		if fc.name != "search" {
 			continue
 		}
 
 		var args SearchArgs
-		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+		if err := json.Unmarshal([]byte(fc.arguments.String()), &args); err != nil {
 			log.Errorf("Failed to parse search arguments: %v", err)
 			continue
 		}
@@ -182,7 +165,7 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 			mu.Lock()
 			result.ToolCalls = append(result.ToolCalls, ToolCall{ID: id, Query: q, Results: searchResults})
 			mu.Unlock()
-		}(tc.ID, query)
+		}(fc.id, query)
 	}
 	wg.Wait()
 
