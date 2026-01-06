@@ -182,7 +182,7 @@ func buildResponderMessages(inputMessages []Message, agentResult *agent.Result) 
 			messages = append(messages, openai.ToolMessage(toolContent, tc.ID))
 		}
 
-		messages = append(messages, openai.UserMessage("Based on the search results above, please provide a helpful answer to my question. Do not attempt to search again or use other tools."))
+		messages = append(messages, openai.UserMessage("Answer using the search results above."))
 	}
 
 	return messages
