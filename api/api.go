@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/option"
+	"github.com/openai/openai-go/v2/responses"
 	"github.com/openai/openai-go/v2/shared"
 	log "github.com/sirupsen/logrus"
 
@@ -261,36 +262,37 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		toolCallIDs := make(map[int]string)
 
 		agentResult, agentErr = s.Agent.RunStreaming(rc.Ctx, userQuery,
-			func(chunk openai.ChatCompletionChunk) {
-				for _, choice := range chunk.Choices {
-					for _, tc := range choice.Delta.ToolCalls {
-						idx := int(tc.Index)
-						if tc.ID != "" {
-							toolCallIDs[idx] = tc.ID
+			func(event responses.ResponseStreamEventUnion) {
+				switch event.Type {
+				case "response.output_item.added":
+					if event.Item.Type == "function_call" {
+						fc := event.Item.AsFunctionCall()
+						toolCallIDs[int(event.OutputIndex)] = fc.CallID
+					}
+
+				case "response.function_call_arguments.delta":
+					idx := int(event.OutputIndex)
+					toolCallArgs[idx] += event.Arguments
+
+					id := toolCallIDs[idx]
+					if id != "" && !searchCallsSent[id] {
+						var args struct {
+							Query string `json:"query"`
 						}
-						if tc.Function.Arguments != "" {
-							toolCallArgs[idx] += tc.Function.Arguments
-						}
-						id := toolCallIDs[idx]
-						if id != "" && !searchCallsSent[id] {
-							var args struct {
-								Query string `json:"query"`
+						if json.Unmarshal([]byte(toolCallArgs[idx]), &args) == nil && args.Query != "" {
+							searchEvent := WebSearchCall{
+								Type:   "web_search_call",
+								ID:     id,
+								Status: "in_progress",
+								Action: &WebSearchAction{
+									Type:  "search",
+									Query: args.Query,
+								},
 							}
-							if json.Unmarshal([]byte(toolCallArgs[idx]), &args) == nil && args.Query != "" {
-								searchEvent := WebSearchCall{
-									Type:   "web_search_call",
-									ID:     id,
-									Status: "in_progress",
-									Action: &WebSearchAction{
-										Type:  "search",
-										Query: args.Query,
-									},
-								}
-								data, _ := json.Marshal(searchEvent)
-								fmt.Fprintf(w, "data: %s\n\n", data)
-								flusher.Flush()
-								searchCallsSent[id] = true
-							}
+							data, _ := json.Marshal(searchEvent)
+							fmt.Fprintf(w, "data: %s\n\n", data)
+							flusher.Flush()
+							searchCallsSent[id] = true
 						}
 					}
 				}

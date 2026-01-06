@@ -1,10 +1,7 @@
 package agent
 
 import (
-	"strings"
-
-	"github.com/openai/openai-go/v2"
-	"github.com/openai/openai-go/v2/shared"
+	"github.com/openai/openai-go/v2/responses"
 
 	"github.com/tinfoilsh/confidential-websearch/search"
 )
@@ -12,13 +9,6 @@ import (
 // SearchArgs represents the arguments for a web search
 type SearchArgs struct {
 	Query string `json:"query"`
-}
-
-// toolCallBuilder accumulates streaming tool call deltas
-type toolCallBuilder struct {
-	id        string
-	name      string
-	arguments strings.Builder
 }
 
 // ToolCall represents a completed tool call with its results
@@ -34,14 +24,14 @@ type Result struct {
 	AgentReasoning string
 }
 
-// ChunkCallback is called for each streaming chunk from the agent LLM
-type ChunkCallback func(chunk openai.ChatCompletionChunk)
+// ChunkCallback is called for each streaming event from the agent LLM
+type ChunkCallback func(event responses.ResponseStreamEventUnion)
 
 // SearchToolParams is the JSON schema for the search tool
-var SearchToolParams = shared.FunctionParameters{
+var SearchToolParams = map[string]any{
 	"type": "object",
-	"properties": map[string]interface{}{
-		"query": map[string]interface{}{
+	"properties": map[string]any{
+		"query": map[string]any{
 			"type":        "string",
 			"description": "The search query",
 		},
