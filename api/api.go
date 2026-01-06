@@ -393,6 +393,7 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			Created: resp.Created,
 			Model:   resp.Model,
 			Usage:   resp.Usage,
+			Choices: []ChatCompletionChoiceOutput{},
 		}
 
 		for _, choice := range resp.Choices {
