@@ -127,3 +127,28 @@ type RequestContext struct {
 	Cancel  context.CancelFunc
 	ReqOpts []option.RequestOption
 }
+
+// ChatCompletionResponse represents the non-streaming chat completion response
+type ChatCompletionResponse struct {
+	ID      string                       `json:"id"`
+	Object  string                       `json:"object"`
+	Created int64                        `json:"created"`
+	Model   string                       `json:"model"`
+	Choices []ChatCompletionChoiceOutput `json:"choices"`
+	Usage   interface{}                  `json:"usage,omitempty"`
+}
+
+// ChatCompletionChoiceOutput represents a choice in the response
+type ChatCompletionChoiceOutput struct {
+	Index        int64                        `json:"index"`
+	FinishReason string                       `json:"finish_reason"`
+	Message      ChatCompletionMessageOutput  `json:"message"`
+}
+
+// ChatCompletionMessageOutput represents the assistant message with annotations
+type ChatCompletionMessageOutput struct {
+	Role            string       `json:"role"`
+	Content         string       `json:"content"`
+	Annotations     []Annotation `json:"annotations,omitempty"`
+	SearchReasoning string       `json:"search_reasoning,omitempty"`
+}

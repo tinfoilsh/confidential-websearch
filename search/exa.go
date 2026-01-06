@@ -96,10 +96,9 @@ func (p *ExaProvider) Search(ctx context.Context, query string, maxResults int) 
 
 	results := make([]Result, 0, len(data.Results))
 	for _, item := range data.Results {
-		// Truncate content to reasonable length for context
 		content := item.Text
-		if len(content) > 500 {
-			content = content[:500] + "..."
+		if len(content) > maxContentLength {
+			content = content[:maxContentLength] + "..."
 		}
 		results = append(results, Result{
 			Title:         item.Title,

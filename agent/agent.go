@@ -16,6 +16,12 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/search"
 )
 
+const (
+	agentTemperature   = 0.3
+	agentMaxTokens     = 1024
+	defaultMaxResults  = 5
+)
+
 // extractReasoningContent extracts reasoning_content or content from raw JSON response.
 func extractReasoningContent(rawJSON string) string {
 	if rawJSON == "" {
@@ -68,8 +74,8 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 		Model:       shared.ChatModel(a.model),
 		Messages:    messages,
 		Tools:       []openai.ChatCompletionToolUnionParam{searchTool},
-		Temperature: openai.Float(0.3),
-		MaxTokens:   openai.Int(1024),
+		Temperature: openai.Float(agentTemperature),
+		MaxTokens:   openai.Int(agentMaxTokens),
 	}
 
 	var toolCalls []openai.ChatCompletionMessageToolCallUnion
@@ -167,7 +173,7 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 			defer wg.Done()
 			log.Infof("Searching: %s", q)
 
-			searchResults, err := a.searcher.Search(ctx, q, 5)
+			searchResults, err := a.searcher.Search(ctx, q, defaultMaxResults)
 			if err != nil {
 				log.Errorf("Search failed: %v", err)
 				return

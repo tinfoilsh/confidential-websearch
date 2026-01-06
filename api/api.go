@@ -36,6 +36,23 @@ func jsonError(w http.ResponseWriter, message string, code int) {
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
+// parseRequestBody reads and parses the request body into the given struct
+func parseRequestBody(r *http.Request, v interface{}) error {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read request: %w", err)
+	}
+	if err := json.Unmarshal(body, v); err != nil {
+		return fmt.Errorf("failed to parse request: %w", err)
+	}
+	return nil
+}
+
+// formatSearchResult formats a search result for inclusion in tool message content
+func formatSearchResult(index int, title, url, content string) string {
+	return fmt.Sprintf("[%d] %s\nURL: %s\n%s\n\n", index, title, url, content)
+}
+
 // prepareRequest handles common request setup: method validation, timeout, body limit, auth
 func (s *Server) prepareRequest(w http.ResponseWriter, r *http.Request) (*RequestContext, bool) {
 	if r.Method != http.MethodPost {
@@ -119,7 +136,7 @@ func injectHistoricalSearchContext(messages []openai.ChatCompletionMessageParamU
 	var toolContent string
 	for i, ann := range msg.Annotations {
 		if ann.Type == "url_citation" {
-			toolContent += fmt.Sprintf("[%d] %s\nURL: %s\n%s\n\n", i+1, ann.URLCitation.Title, ann.URLCitation.URL, ann.URLCitation.Content)
+			toolContent += formatSearchResult(i+1, ann.URLCitation.Title, ann.URLCitation.URL, ann.URLCitation.Content)
 		}
 	}
 	messages = append(messages, openai.ToolMessage(toolContent, toolCallID))
@@ -177,7 +194,7 @@ func buildResponderMessages(inputMessages []Message, agentResult *agent.Result) 
 		for _, tc := range agentResult.ToolCalls {
 			var toolContent string
 			for i, sr := range tc.Results {
-				toolContent += fmt.Sprintf("[%d] %s\nURL: %s\n%s\n\n", i+1, sr.Title, sr.URL, sr.Content)
+				toolContent += formatSearchResult(i+1, sr.Title, sr.URL, sr.Content)
 			}
 			messages = append(messages, openai.ToolMessage(toolContent, tc.ID))
 		}
@@ -195,15 +212,9 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rc.Cancel()
 
-	// Parse incoming request
 	var req IncomingRequest
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		jsonError(w, fmt.Sprintf("failed to read request: %v", err), http.StatusBadRequest)
-		return
-	}
-	if err := json.Unmarshal(bodyBytes, &req); err != nil {
-		jsonError(w, fmt.Sprintf("failed to parse request: %v", err), http.StatusBadRequest)
+	if err := parseRequestBody(r, &req); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if req.Model == "" {
@@ -234,8 +245,7 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Connection", "keep-alive")
 
 		var ok bool
-		flusher, ok = w.(http.Flusher)
-		if !ok {
+		if flusher, ok = w.(http.Flusher); !ok {
 			jsonError(w, "streaming not supported", http.StatusInternalServerError)
 			return
 		}
@@ -377,32 +387,29 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 		annotations := buildAnnotations(agentResult.ToolCalls)
 
-		respJSON, err := json.Marshal(resp)
-		if err != nil {
-			jsonError(w, fmt.Sprintf("failed to marshal response: %v", err), http.StatusInternalServerError)
-			return
-		}
-		var respMap map[string]interface{}
-		if err := json.Unmarshal(respJSON, &respMap); err != nil {
-			jsonError(w, fmt.Sprintf("failed to unmarshal response: %v", err), http.StatusInternalServerError)
-			return
+		response := ChatCompletionResponse{
+			ID:      resp.ID,
+			Object:  string(resp.Object),
+			Created: resp.Created,
+			Model:   resp.Model,
+			Usage:   resp.Usage,
 		}
 
-		if choices, ok := respMap["choices"].([]interface{}); ok {
-			for _, c := range choices {
-				if choice, ok := c.(map[string]interface{}); ok {
-					if msg, ok := choice["message"].(map[string]interface{}); ok {
-						msg["annotations"] = annotations
-						if agentResult.AgentReasoning != "" {
-							msg["search_reasoning"] = agentResult.AgentReasoning
-						}
-					}
-				}
-			}
+		for _, choice := range resp.Choices {
+			response.Choices = append(response.Choices, ChatCompletionChoiceOutput{
+				Index:        choice.Index,
+				FinishReason: string(choice.FinishReason),
+				Message: ChatCompletionMessageOutput{
+					Role:            string(choice.Message.Role),
+					Content:         choice.Message.Content,
+					Annotations:     annotations,
+					SearchReasoning: agentResult.AgentReasoning,
+				},
+			})
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(respMap)
+		json.NewEncoder(w).Encode(response)
 	}
 }
 
@@ -414,13 +421,8 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	defer rc.Cancel()
 
 	var req ResponsesRequest
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		jsonError(w, fmt.Sprintf("failed to read request: %v", err), http.StatusBadRequest)
-		return
-	}
-	if err := json.Unmarshal(bodyBytes, &req); err != nil {
-		jsonError(w, fmt.Sprintf("failed to parse request: %v", err), http.StatusBadRequest)
+	if err := parseRequestBody(r, &req); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if req.Model == "" {
