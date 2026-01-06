@@ -34,8 +34,10 @@ type IncomingRequest struct {
 
 // Message represents a chat message in the incoming request
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role            string       `json:"role"`
+	Content         string       `json:"content"`
+	Annotations     []Annotation `json:"annotations,omitempty"`
+	SearchReasoning string       `json:"search_reasoning,omitempty"`
 }
 
 // URLCitation contains the citation details
@@ -62,7 +64,8 @@ type WebSearchCall struct {
 
 // StreamingDelta represents a delta in a streaming chunk
 type StreamingDelta struct {
-	Annotations []Annotation `json:"annotations,omitempty"`
+	Annotations     []Annotation `json:"annotations,omitempty"`
+	SearchReasoning string       `json:"search_reasoning,omitempty"`
 }
 
 // StreamingChoice represents a choice in a streaming chunk
