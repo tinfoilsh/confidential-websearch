@@ -7,6 +7,14 @@ import (
 	"time"
 )
 
+const (
+	httpMaxIdleConns        = 100
+	httpMaxIdleConnsPerHost = 100
+	httpIdleConnTimeout     = 90 * time.Second
+	httpClientTimeout       = 30 * time.Second
+	maxContentLength        = 500
+)
+
 // Result represents a single search result
 type Result struct {
 	Title         string `json:"title"`
@@ -33,11 +41,11 @@ type Config struct {
 func NewProvider(cfg Config) (Provider, error) {
 	httpClient := &http.Client{
 		Transport: &http.Transport{
-			MaxIdleConns:        100,
-			MaxIdleConnsPerHost: 100,
-			IdleConnTimeout:     90 * time.Second,
+			MaxIdleConns:        httpMaxIdleConns,
+			MaxIdleConnsPerHost: httpMaxIdleConnsPerHost,
+			IdleConnTimeout:     httpIdleConnTimeout,
 		},
-		Timeout: 30 * time.Second,
+		Timeout: httpClientTimeout,
 	}
 
 	if cfg.ExaAPIKey != "" {
