@@ -40,8 +40,10 @@ type Message struct {
 
 // URLCitation contains the citation details
 type URLCitation struct {
-	Title string `json:"title"`
-	URL   string `json:"url"`
+	Title         string `json:"title"`
+	URL           string `json:"url"`
+	Content       string `json:"content,omitempty"`
+	PublishedDate string `json:"published_date,omitempty"`
 }
 
 // Annotation represents a url_citation annotation
@@ -80,9 +82,11 @@ type StreamingChunk struct {
 
 // FlatAnnotation represents a url_citation annotation (Responses API format)
 type FlatAnnotation struct {
-	Type  string `json:"type"`
-	Title string `json:"title"`
-	URL   string `json:"url"`
+	Type          string `json:"type"`
+	Title         string `json:"title"`
+	URL           string `json:"url"`
+	Content       string `json:"content,omitempty"`
+	PublishedDate string `json:"published_date,omitempty"`
 }
 
 // WebSearchAction contains the search query details

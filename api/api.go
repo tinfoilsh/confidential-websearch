@@ -62,8 +62,10 @@ func buildAnnotations(toolCalls []agent.ToolCall) []Annotation {
 			annotations = append(annotations, Annotation{
 				Type: "url_citation",
 				URLCitation: URLCitation{
-					URL:   r.URL,
-					Title: r.Title,
+					URL:           r.URL,
+					Title:         r.Title,
+					Content:       r.Content,
+					PublishedDate: r.PublishedDate,
 				},
 			})
 		}
@@ -77,9 +79,11 @@ func buildFlatAnnotations(toolCalls []agent.ToolCall) []FlatAnnotation {
 	for _, tc := range toolCalls {
 		for _, r := range tc.Results {
 			annotations = append(annotations, FlatAnnotation{
-				Type:  "url_citation",
-				URL:   r.URL,
-				Title: r.Title,
+				Type:          "url_citation",
+				URL:           r.URL,
+				Title:         r.Title,
+				Content:       r.Content,
+				PublishedDate: r.PublishedDate,
 			})
 		}
 	}
