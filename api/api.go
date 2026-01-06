@@ -90,11 +90,51 @@ func buildFlatAnnotations(toolCalls []agent.ToolCall) []FlatAnnotation {
 	return annotations
 }
 
+// injectHistoricalSearchContext reconstructs tool call context from a historical assistant message with annotations
+func injectHistoricalSearchContext(messages []openai.ChatCompletionMessageParamUnion, msg Message) []openai.ChatCompletionMessageParamUnion {
+	toolCallID := fmt.Sprintf("historical_%d", len(messages))
+
+	// Build tool call with reasoning content
+	toolCalls := []openai.ChatCompletionMessageToolCallUnionParam{
+		{
+			OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+				ID: toolCallID,
+				Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+					Name:      "search",
+					Arguments: `{"query": "historical search"}`,
+				},
+			},
+		},
+	}
+
+	assistantMsg := openai.ChatCompletionAssistantMessageParam{ToolCalls: toolCalls}
+	if msg.SearchReasoning != "" {
+		assistantMsg.Content = openai.ChatCompletionAssistantMessageParamContentUnion{
+			OfString: openai.Opt(msg.SearchReasoning),
+		}
+	}
+	messages = append(messages, openai.ChatCompletionMessageParamUnion{OfAssistant: &assistantMsg})
+
+	// Build tool result from annotations
+	var toolContent string
+	for i, ann := range msg.Annotations {
+		if ann.Type == "url_citation" {
+			toolContent += fmt.Sprintf("[%d] %s\nURL: %s\n%s\n\n", i+1, ann.URLCitation.Title, ann.URLCitation.URL, ann.URLCitation.Content)
+		}
+	}
+	messages = append(messages, openai.ToolMessage(toolContent, toolCallID))
+
+	// Add the actual assistant response
+	messages = append(messages, openai.AssistantMessage(msg.Content))
+
+	return messages
+}
+
 // buildResponderMessages creates the message array for the responder LLM call
 func buildResponderMessages(inputMessages []Message, agentResult *agent.Result) []openai.ChatCompletionMessageParamUnion {
 	var messages []openai.ChatCompletionMessageParamUnion
 
-	// Add input messages
+	// Add input messages, injecting historical search context for assistant messages with annotations
 	for _, msg := range inputMessages {
 		switch msg.Role {
 		case "system":
@@ -102,7 +142,11 @@ func buildResponderMessages(inputMessages []Message, agentResult *agent.Result) 
 		case "user":
 			messages = append(messages, openai.UserMessage(msg.Content))
 		case "assistant":
-			messages = append(messages, openai.AssistantMessage(msg.Content))
+			if len(msg.Annotations) > 0 {
+				messages = injectHistoricalSearchContext(messages, msg)
+			} else {
+				messages = append(messages, openai.AssistantMessage(msg.Content))
+			}
 		}
 	}
 
@@ -288,13 +332,13 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		stream := s.Client.Chat.Completions.NewStreaming(rc.Ctx, params, rc.ReqOpts...)
 
 		annotations := buildAnnotations(agentResult.ToolCalls)
-		annotationsSent := false
+		metadataSent := false
 
 		for stream.Next() {
 			chunk := stream.Current()
 
-			if !annotationsSent && len(annotations) > 0 && len(chunk.Choices) > 0 {
-				annotationsChunk := StreamingChunk{
+			if !metadataSent && len(chunk.Choices) > 0 && (len(annotations) > 0 || agentResult.AgentReasoning != "") {
+				metadataChunk := StreamingChunk{
 					ID:      chunk.ID,
 					Object:  "chat.completion.chunk",
 					Created: chunk.Created,
@@ -302,14 +346,17 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 					Choices: []StreamingChoice{
 						{
 							Index: 0,
-							Delta: StreamingDelta{Annotations: annotations},
+							Delta: StreamingDelta{
+								Annotations:     annotations,
+								SearchReasoning: agentResult.AgentReasoning,
+							},
 						},
 					},
 				}
-				data, _ := json.Marshal(annotationsChunk)
+				data, _ := json.Marshal(metadataChunk)
 				fmt.Fprintf(w, "data: %s\n\n", data)
 				flusher.Flush()
-				annotationsSent = true
+				metadataSent = true
 			}
 
 			fmt.Fprintf(w, "data: %s\n\n", chunk.RawJSON())
@@ -346,6 +393,9 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				if choice, ok := c.(map[string]interface{}); ok {
 					if msg, ok := choice["message"].(map[string]interface{}); ok {
 						msg["annotations"] = annotations
+						if agentResult.AgentReasoning != "" {
+							msg["search_reasoning"] = agentResult.AgentReasoning
+						}
 					}
 				}
 			}
