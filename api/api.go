@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 
 	"github.com/google/uuid"
 	"github.com/openai/openai-go/v2"
@@ -16,6 +17,9 @@ import (
 
 	"github.com/tinfoilsh/confidential-websearch/agent"
 )
+
+// citationMarkerRegex matches OpenAI-style citation markers like 【1】 or 【1†L1-L15】
+var citationMarkerRegex = regexp.MustCompile(`【\d+[^】]*】`)
 
 // RecoveryMiddleware catches panics and returns 500 instead of crashing
 func RecoveryMiddleware(next http.HandlerFunc) http.HandlerFunc {
@@ -375,7 +379,30 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				metadataSent = true
 			}
 
-			fmt.Fprintf(w, "data: %s\n\n", chunk.RawJSON())
+			// Strip citation markers from streaming content
+			chunkData := chunk.RawJSON()
+			if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
+				var parsed map[string]interface{}
+				if err := json.Unmarshal([]byte(chunkData), &parsed); err == nil {
+					if choices, ok := parsed["choices"].([]interface{}); ok && len(choices) > 0 {
+						if choice, ok := choices[0].(map[string]interface{}); ok {
+							if delta, ok := choice["delta"].(map[string]interface{}); ok {
+								if content, ok := delta["content"].(string); ok {
+									cleaned := citationMarkerRegex.ReplaceAllString(content, "")
+									if cleaned != content {
+										delta["content"] = cleaned
+										if marshaled, err := json.Marshal(parsed); err == nil {
+											chunkData = string(marshaled)
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+
+			fmt.Fprintf(w, "data: %s\n\n", chunkData)
 			flusher.Flush()
 		}
 		if err := stream.Err(); err != nil {
@@ -411,12 +438,14 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		for _, choice := range resp.Choices {
+			// Strip citation markers from content
+			content := citationMarkerRegex.ReplaceAllString(choice.Message.Content, "")
 			response.Choices = append(response.Choices, ChatCompletionChoiceOutput{
 				Index:        choice.Index,
 				FinishReason: string(choice.FinishReason),
 				Message: ChatCompletionMessageOutput{
 					Role:            string(choice.Message.Role),
-					Content:         choice.Message.Content,
+					Content:         content,
 					Annotations:     annotations,
 					SearchReasoning: agentResult.AgentReasoning,
 				},
@@ -489,6 +518,8 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(resp.Choices) > 0 {
+		// Strip citation markers from content
+		content := citationMarkerRegex.ReplaceAllString(resp.Choices[0].Message.Content, "")
 		output = append(output, ResponsesOutput{
 			Type:   "message",
 			ID:     "msg_" + uuid.New().String()[:8],
@@ -497,7 +528,7 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 			Content: []ResponsesContent{
 				{
 					Type:        "output_text",
-					Text:        resp.Choices[0].Message.Content,
+					Text:        content,
 					Annotations: flatAnnotations,
 				},
 			},
