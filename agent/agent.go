@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"github.com/openai/openai-go/v2"
-	"github.com/openai/openai-go/v2/option"
 	"github.com/openai/openai-go/v2/responses"
 	"github.com/openai/openai-go/v2/shared"
 	log "github.com/sirupsen/logrus"
@@ -36,12 +35,12 @@ func New(client *tinfoil.Client, model string, searcher search.Provider) *Agent 
 }
 
 // Run executes a single-shot tool call to gather search results (non-streaming)
-func (a *Agent) Run(ctx context.Context, userQuery string, reqOpts ...option.RequestOption) (*Result, error) {
-	return a.RunStreaming(ctx, userQuery, nil, reqOpts...)
+func (a *Agent) Run(ctx context.Context, userQuery string) (*Result, error) {
+	return a.RunStreaming(ctx, userQuery, nil)
 }
 
 // RunStreaming executes the agent with optional streaming support
-func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk ChunkCallback, reqOpts ...option.RequestOption) (*Result, error) {
+func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk ChunkCallback) (*Result, error) {
 	searchTool := responses.ToolParamOfFunction(
 		"search",
 		SearchToolParams,
@@ -68,19 +67,23 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 	var reasoningBuilder strings.Builder
 
 	if onChunk != nil {
-		stream := a.client.Responses.NewStreaming(ctx, params, reqOpts...)
+		stream := a.client.Responses.NewStreaming(ctx, params)
 
 		for stream.Next() {
 			event := stream.Current()
 			onChunk(event)
+
+			log.Debugf("Event type: %s", event.Type)
 
 			switch event.Type {
 			case "response.reasoning_text.delta":
 				reasoningBuilder.WriteString(event.Delta)
 
 			case "response.output_item.added":
+				log.Debugf("output_item.added: item.Type=%s, OutputIndex=%d", event.Item.Type, event.OutputIndex)
 				if event.Item.Type == "function_call" {
 					fc := event.Item.AsFunctionCall()
+					log.Debugf("Function call added: id=%s, name=%s", fc.CallID, fc.Name)
 					functionCalls[int(event.OutputIndex)] = &functionCall{
 						id:   fc.CallID,
 						name: fc.Name,
@@ -89,8 +92,16 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 
 			case "response.function_call_arguments.delta":
 				idx := int(event.OutputIndex)
+				log.Debugf("function_call_arguments.delta: OutputIndex=%d, Arguments=%q, Delta=%q", idx, event.Arguments, event.Delta)
+				// Arguments come in the Delta field for streaming events
+				args := event.Delta
+				if args == "" {
+					args = event.Arguments
+				}
 				if functionCalls[idx] != nil {
-					functionCalls[idx].arguments.WriteString(event.Arguments)
+					functionCalls[idx].arguments.WriteString(args)
+				} else {
+					log.Warnf("No function call found for OutputIndex=%d", idx)
 				}
 			}
 		}
@@ -98,7 +109,7 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 			return nil, fmt.Errorf("agent streaming failed: %w", err)
 		}
 	} else {
-		resp, err := a.client.Responses.New(ctx, params, reqOpts...)
+		resp, err := a.client.Responses.New(ctx, params)
 		if err != nil {
 			return nil, fmt.Errorf("agent LLM call failed: %w", err)
 		}
@@ -140,9 +151,12 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 			continue
 		}
 
+		argsStr := fc.arguments.String()
+		log.Debugf("Function call %s args: %q", fc.id, argsStr)
+
 		var args SearchArgs
-		if err := json.Unmarshal([]byte(fc.arguments.String()), &args); err != nil {
-			log.Errorf("Failed to parse search arguments: %v", err)
+		if err := json.Unmarshal([]byte(argsStr), &args); err != nil {
+			log.Errorf("Failed to parse search arguments: %v (raw: %q)", err, argsStr)
 			continue
 		}
 

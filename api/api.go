@@ -296,8 +296,7 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 				}
-			},
-			rc.ReqOpts...)
+			})
 
 		for id := range searchCallsSent {
 			searchEvent := WebSearchCall{
@@ -310,7 +309,7 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	} else {
-		agentResult, agentErr = s.Agent.Run(rc.Ctx, userQuery, rc.ReqOpts...)
+		agentResult, agentErr = s.Agent.Run(rc.Ctx, userQuery)
 	}
 
 	if agentErr != nil {
@@ -439,7 +438,7 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 
 	log.Infof("Processing responses request (model: %s)", req.Model)
 
-	agentResult, agentErr := s.Agent.Run(rc.Ctx, req.Input, rc.ReqOpts...)
+	agentResult, agentErr := s.Agent.Run(rc.Ctx, req.Input)
 	if agentErr != nil {
 		jsonError(w, fmt.Sprintf("agent failed: %v", agentErr), http.StatusInternalServerError)
 		return
