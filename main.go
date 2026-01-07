@@ -49,6 +49,7 @@ func main() {
 
 	http.HandleFunc("/v1/chat/completions", api.RecoveryMiddleware(srv.HandleChatCompletions))
 	http.HandleFunc("/v1/responses", api.RecoveryMiddleware(srv.HandleResponses))
+	http.HandleFunc("/v1/search/approve", api.RecoveryMiddleware(srv.HandleSearchApproval))
 	http.HandleFunc("/health", srv.HandleHealth)
 	http.HandleFunc("/", srv.HandleRoot)
 

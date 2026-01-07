@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/openai/openai-go/v2"
@@ -15,6 +17,24 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/tinfoilsh/confidential-websearch/agent"
+)
+
+const (
+	approvalTimeout = 60 * time.Second
+)
+
+// pendingApproval tracks a search awaiting client approval
+type pendingApproval struct {
+	decisions *agent.DecisionResult
+	approved  map[string]bool
+	done      chan struct{}
+	mu        sync.Mutex
+}
+
+// approvalRegistry tracks all pending approval requests
+var (
+	pendingApprovals   = make(map[string]*pendingApproval)
+	pendingApprovalsMu sync.Mutex
 )
 
 // RecoveryMiddleware catches panics and returns 500 instead of crashing
@@ -236,7 +256,13 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Infof("Processing query (model: %s)", req.Model)
+	// Generate request ID if not provided
+	requestID := req.RequestID
+	if requestID == "" {
+		requestID = uuid.New().String()
+	}
+
+	log.Infof("Processing query (model: %s, request_id: %s, require_approval: %v)", req.Model, requestID, req.RequireSearchApproval)
 
 	// Set up streaming if requested
 	var flusher http.Flusher
@@ -256,7 +282,11 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	var agentResult *agent.Result
 	var agentErr error
 
-	if req.Stream {
+	if req.RequireSearchApproval && req.Stream {
+		// Approval flow: get decisions, wait for approval, then execute
+		agentResult, agentErr = s.handleApprovalFlow(rc.Ctx, userQuery, requestID, w, flusher, rc.ReqOpts)
+	} else if req.Stream {
+		// Standard streaming flow (no approval)
 		searchCallsSent := make(map[string]bool)
 		toolCallArgs := make(map[int]string)
 		toolCallIDs := make(map[int]string)
@@ -283,7 +313,7 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 							searchEvent := WebSearchCall{
 								Type:   "web_search_call",
 								ID:     id,
-								Status: "in_progress",
+								Status: SearchStatusInProgress,
 								Action: &WebSearchAction{
 									Type:  "search",
 									Query: args.Query,
@@ -302,7 +332,7 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			searchEvent := WebSearchCall{
 				Type:   "web_search_call",
 				ID:     id,
-				Status: "completed",
+				Status: SearchStatusCompleted,
 			}
 			data, _ := json.Marshal(searchEvent)
 			fmt.Fprintf(w, "data: %s\n\n", data)
@@ -515,4 +545,150 @@ func (s *Server) HandleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) HandleRoot(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"service": "confidential-websearch", "status": "ok"})
+}
+
+// handleApprovalFlow runs the agent to get decisions, waits for client approval, then executes approved searches
+func (s *Server) handleApprovalFlow(ctx context.Context, userQuery string, requestID string, w http.ResponseWriter, flusher http.Flusher, reqOpts []option.RequestOption) (*agent.Result, error) {
+	// Get search decisions from the agent (without executing)
+	decisions, err := s.Agent.GetSearchDecisions(ctx, userQuery, nil, reqOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	// If no searches needed, return empty result
+	if len(decisions.Decisions) == 0 {
+		return &agent.Result{AgentReasoning: decisions.AgentReasoning}, nil
+	}
+
+	// Register pending approval
+	pending := &pendingApproval{
+		decisions: decisions,
+		approved:  make(map[string]bool),
+		done:      make(chan struct{}),
+	}
+	pendingApprovalsMu.Lock()
+	pendingApprovals[requestID] = pending
+	pendingApprovalsMu.Unlock()
+
+	// Clean up on exit
+	defer func() {
+		pendingApprovalsMu.Lock()
+		delete(pendingApprovals, requestID)
+		pendingApprovalsMu.Unlock()
+	}()
+
+	// Send pending_approval events for each search
+	for _, d := range decisions.Decisions {
+		searchEvent := WebSearchCall{
+			Type:      "web_search_call",
+			ID:        d.ID,
+			Status:    SearchStatusPendingApproval,
+			RequestID: requestID,
+			Action: &WebSearchAction{
+				Type:  "search",
+				Query: d.Query,
+			},
+		}
+		data, _ := json.Marshal(searchEvent)
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+
+	// Wait for all approvals or timeout
+	select {
+	case <-pending.done:
+		// All decisions received
+	case <-time.After(approvalTimeout):
+		log.Warnf("Approval timeout for request %s", requestID)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	// Collect approved search IDs
+	pending.mu.Lock()
+	approvedIDs := make(map[string]bool)
+	for id, approved := range pending.approved {
+		approvedIDs[id] = approved
+	}
+	pending.mu.Unlock()
+
+	// Send status updates for each decision
+	for _, d := range decisions.Decisions {
+		status := SearchStatusRejected
+		if approvedIDs[d.ID] {
+			status = SearchStatusInProgress
+		}
+		searchEvent := WebSearchCall{
+			Type:   "web_search_call",
+			ID:     d.ID,
+			Status: status,
+		}
+		data, _ := json.Marshal(searchEvent)
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+
+	// Execute approved searches
+	result, err := s.Agent.ExecuteApprovedSearches(ctx, decisions, approvedIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Send completed events for approved searches
+	for _, tc := range result.ToolCalls {
+		searchEvent := WebSearchCall{
+			Type:   "web_search_call",
+			ID:     tc.ID,
+			Status: SearchStatusCompleted,
+		}
+		data, _ := json.Marshal(searchEvent)
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+
+	return result, nil
+}
+
+// HandleSearchApproval handles client approval/rejection of pending searches
+func (s *Server) HandleSearchApproval(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req SearchApprovalRequest
+	if err := parseRequestBody(r, &req); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.RequestID == "" {
+		jsonError(w, "request_id is required", http.StatusBadRequest)
+		return
+	}
+	if req.SearchID == "" {
+		jsonError(w, "search_id is required", http.StatusBadRequest)
+		return
+	}
+
+	pendingApprovalsMu.Lock()
+	pending, exists := pendingApprovals[req.RequestID]
+	pendingApprovalsMu.Unlock()
+
+	if !exists {
+		jsonError(w, "no pending approval found for request_id", http.StatusNotFound)
+		return
+	}
+
+	pending.mu.Lock()
+	pending.approved[req.SearchID] = req.Approved
+	allDecided := len(pending.approved) >= len(pending.decisions.Decisions)
+	pending.mu.Unlock()
+
+	if allDecided {
+		close(pending.done)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
