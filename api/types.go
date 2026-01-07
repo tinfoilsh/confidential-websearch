@@ -62,6 +62,7 @@ const (
 	SearchStatusInProgress      = "in_progress"
 	SearchStatusCompleted       = "completed"
 	SearchStatusRejected        = "rejected"
+	SearchStatusTimeout         = "timeout"
 )
 
 // WebSearchCall represents a search operation in streaming output

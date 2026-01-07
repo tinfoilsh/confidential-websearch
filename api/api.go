@@ -595,11 +595,13 @@ func (s *Server) handleApprovalFlow(ctx context.Context, userQuery string, reque
 	}
 
 	// Wait for all approvals or timeout
+	timedOut := false
 	select {
 	case <-pending.done:
 		// All decisions received
 	case <-time.After(approvalTimeout):
 		log.Warnf("Approval timeout for request %s", requestID)
+		timedOut = true
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -614,9 +616,13 @@ func (s *Server) handleApprovalFlow(ctx context.Context, userQuery string, reque
 
 	// Send status updates for each decision
 	for _, d := range decisions.Decisions {
-		status := SearchStatusRejected
-		if approvedIDs[d.ID] {
+		var status string
+		if _, decided := approvedIDs[d.ID]; !decided && timedOut {
+			status = SearchStatusTimeout
+		} else if approvedIDs[d.ID] {
 			status = SearchStatusInProgress
+		} else {
+			status = SearchStatusRejected
 		}
 		searchEvent := WebSearchCall{
 			Type:   "web_search_call",
