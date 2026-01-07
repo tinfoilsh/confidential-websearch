@@ -272,7 +272,12 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 				case "response.function_call_arguments.delta":
 					idx := int(event.OutputIndex)
-					toolCallArgs[idx] += event.Arguments
+					// Arguments come in the Delta field for streaming events
+					args := event.Delta
+					if args == "" {
+						args = event.Arguments
+					}
+					toolCallArgs[idx] += args
 
 					id := toolCallIDs[idx]
 					if id != "" && !searchCallsSent[id] {
