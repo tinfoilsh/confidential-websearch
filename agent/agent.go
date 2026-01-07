@@ -73,17 +73,13 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 			event := stream.Current()
 			onChunk(event)
 
-			log.Debugf("Event type: %s", event.Type)
-
 			switch event.Type {
 			case "response.reasoning_text.delta":
 				reasoningBuilder.WriteString(event.Delta)
 
 			case "response.output_item.added":
-				log.Debugf("output_item.added: item.Type=%s, OutputIndex=%d", event.Item.Type, event.OutputIndex)
 				if event.Item.Type == "function_call" {
 					fc := event.Item.AsFunctionCall()
-					log.Debugf("Function call added: id=%s, name=%s", fc.CallID, fc.Name)
 					functionCalls[int(event.OutputIndex)] = &functionCall{
 						id:   fc.CallID,
 						name: fc.Name,
@@ -92,7 +88,6 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 
 			case "response.function_call_arguments.delta":
 				idx := int(event.OutputIndex)
-				log.Debugf("function_call_arguments.delta: OutputIndex=%d, Arguments=%q, Delta=%q", idx, event.Arguments, event.Delta)
 				// Arguments come in the Delta field for streaming events
 				args := event.Delta
 				if args == "" {
@@ -100,8 +95,6 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 				}
 				if functionCalls[idx] != nil {
 					functionCalls[idx].arguments.WriteString(args)
-				} else {
-					log.Warnf("No function call found for OutputIndex=%d", idx)
 				}
 			}
 		}
@@ -151,12 +144,9 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 			continue
 		}
 
-		argsStr := fc.arguments.String()
-		log.Debugf("Function call %s args: %q", fc.id, argsStr)
-
 		var args SearchArgs
-		if err := json.Unmarshal([]byte(argsStr), &args); err != nil {
-			log.Errorf("Failed to parse search arguments: %v (raw: %q)", err, argsStr)
+		if err := json.Unmarshal([]byte(fc.arguments.String()), &args); err != nil {
+			log.Errorf("Failed to parse search arguments: %v", err)
 			continue
 		}
 
