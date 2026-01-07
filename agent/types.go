@@ -11,11 +11,23 @@ type SearchArgs struct {
 	Query string `json:"query"`
 }
 
+// SearchDecision represents a pending search that the agent wants to execute
+type SearchDecision struct {
+	ID    string `json:"id"`
+	Query string `json:"query"`
+}
+
 // ToolCall represents a completed tool call with its results
 type ToolCall struct {
 	ID      string          `json:"id"`
 	Query   string          `json:"query"`
 	Results []search.Result `json:"results"`
+}
+
+// DecisionResult contains the agent's search decisions before execution
+type DecisionResult struct {
+	Decisions      []SearchDecision
+	AgentReasoning string
 }
 
 // Result contains the search results gathered by the agent

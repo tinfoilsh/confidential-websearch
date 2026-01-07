@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/openai/openai-go/v2"
+	"github.com/openai/openai-go/v2/option"
 	"github.com/openai/openai-go/v2/responses"
 	"github.com/openai/openai-go/v2/shared"
 	log "github.com/sirupsen/logrus"
@@ -35,12 +36,22 @@ func New(client *tinfoil.Client, model string, searcher search.Provider) *Agent 
 }
 
 // Run executes a single-shot tool call to gather search results (non-streaming)
-func (a *Agent) Run(ctx context.Context, userQuery string) (*Result, error) {
-	return a.RunStreaming(ctx, userQuery, nil)
+func (a *Agent) Run(ctx context.Context, userQuery string, reqOpts ...option.RequestOption) (*Result, error) {
+	return a.RunStreaming(ctx, userQuery, nil, reqOpts...)
 }
 
-// RunStreaming executes the agent with optional streaming support
-func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk ChunkCallback) (*Result, error) {
+// RunStreaming executes the agent with optional streaming support (decision + execution combined)
+func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk ChunkCallback, reqOpts ...option.RequestOption) (*Result, error) {
+	decisions, err := a.GetSearchDecisions(ctx, userQuery, onChunk, reqOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return a.ExecuteSearches(ctx, decisions)
+}
+
+// GetSearchDecisions runs the agent LLM and returns search decisions without executing them
+func (a *Agent) GetSearchDecisions(ctx context.Context, userQuery string, onChunk ChunkCallback, reqOpts ...option.RequestOption) (*DecisionResult, error) {
 	searchTool := responses.ToolParamOfFunction(
 		"search",
 		SearchToolParams,
@@ -57,7 +68,6 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 		MaxOutputTokens: openai.Int(agentMaxTokens),
 	}
 
-	// Track function calls by output index
 	type functionCall struct {
 		id        string
 		name      string
@@ -67,7 +77,7 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 	var reasoningBuilder strings.Builder
 
 	if onChunk != nil {
-		stream := a.client.Responses.NewStreaming(ctx, params)
+		stream := a.client.Responses.NewStreaming(ctx, params, reqOpts...)
 
 		for stream.Next() {
 			event := stream.Current()
@@ -109,7 +119,7 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 			return nil, fmt.Errorf("agent streaming failed: %w", err)
 		}
 	} else {
-		resp, err := a.client.Responses.New(ctx, params)
+		resp, err := a.client.Responses.New(ctx, params, reqOpts...)
 		if err != nil {
 			return nil, fmt.Errorf("agent LLM call failed: %w", err)
 		}
@@ -133,18 +143,7 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 		}
 	}
 
-	result := &Result{AgentReasoning: reasoningBuilder.String()}
-
-	if len(functionCalls) == 0 {
-		log.Debug("Agent decided no search needed")
-		return result, nil
-	}
-
-	log.Debugf("Agent requested %d search(es)", len(functionCalls))
-
-	// Execute searches in parallel
-	var wg sync.WaitGroup
-	var mu sync.Mutex
+	result := &DecisionResult{AgentReasoning: reasoningBuilder.String()}
 
 	for _, fc := range functionCalls {
 		if fc.name != "search" {
@@ -165,6 +164,30 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 			continue
 		}
 
+		result.Decisions = append(result.Decisions, SearchDecision{ID: fc.id, Query: query})
+	}
+
+	if len(result.Decisions) == 0 {
+		log.Debug("Agent decided no search needed")
+	} else {
+		log.Debugf("Agent requested %d search(es)", len(result.Decisions))
+	}
+
+	return result, nil
+}
+
+// ExecuteSearches executes the given search decisions and returns results
+func (a *Agent) ExecuteSearches(ctx context.Context, decisions *DecisionResult) (*Result, error) {
+	result := &Result{AgentReasoning: decisions.AgentReasoning}
+
+	if len(decisions.Decisions) == 0 {
+		return result, nil
+	}
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	for _, d := range decisions.Decisions {
 		wg.Add(1)
 		go func(id, q string) {
 			defer wg.Done()
@@ -179,9 +202,20 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 			mu.Lock()
 			result.ToolCalls = append(result.ToolCalls, ToolCall{ID: id, Query: q, Results: searchResults})
 			mu.Unlock()
-		}(fc.id, query)
+		}(d.ID, d.Query)
 	}
 	wg.Wait()
 
 	return result, nil
+}
+
+// ExecuteApprovedSearches executes only the approved search decisions
+func (a *Agent) ExecuteApprovedSearches(ctx context.Context, decisions *DecisionResult, approvedIDs map[string]bool) (*Result, error) {
+	filtered := &DecisionResult{AgentReasoning: decisions.AgentReasoning}
+	for _, d := range decisions.Decisions {
+		if approvedIDs[d.ID] {
+			filtered.Decisions = append(filtered.Decisions, d)
+		}
+	}
+	return a.ExecuteSearches(ctx, filtered)
 }

@@ -25,11 +25,13 @@ type Server struct {
 
 // IncomingRequest represents the incoming chat request
 type IncomingRequest struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	Stream      bool      `json:"stream"`
-	Temperature *float64  `json:"temperature,omitempty"`
-	MaxTokens   *int64    `json:"max_tokens,omitempty"`
+	Model                 string    `json:"model"`
+	Messages              []Message `json:"messages"`
+	Stream                bool      `json:"stream"`
+	Temperature           *float64  `json:"temperature,omitempty"`
+	MaxTokens             *int64    `json:"max_tokens,omitempty"`
+	RequireSearchApproval bool      `json:"require_search_approval,omitempty"`
+	RequestID             string    `json:"request_id,omitempty"`
 }
 
 // Message represents a chat message in the incoming request
@@ -54,12 +56,28 @@ type Annotation struct {
 	URLCitation URLCitation `json:"url_citation"`
 }
 
+// WebSearchCall status values
+const (
+	SearchStatusPendingApproval = "pending_approval"
+	SearchStatusInProgress      = "in_progress"
+	SearchStatusCompleted       = "completed"
+	SearchStatusRejected        = "rejected"
+)
+
 // WebSearchCall represents a search operation in streaming output
 type WebSearchCall struct {
-	Type   string           `json:"type"`
-	ID     string           `json:"id"`
-	Status string           `json:"status"`
-	Action *WebSearchAction `json:"action,omitempty"`
+	Type      string           `json:"type"`
+	ID        string           `json:"id"`
+	Status    string           `json:"status"`
+	Action    *WebSearchAction `json:"action,omitempty"`
+	RequestID string           `json:"request_id,omitempty"`
+}
+
+// SearchApprovalRequest represents a client's approval/rejection of a search
+type SearchApprovalRequest struct {
+	RequestID string `json:"request_id"`
+	SearchID  string `json:"search_id"`
+	Approved  bool   `json:"approved"`
 }
 
 // StreamingDelta represents a delta in a streaming chunk
