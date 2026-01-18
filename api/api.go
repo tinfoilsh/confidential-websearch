@@ -307,11 +307,21 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				}
 			})
 
+		// Build set of successful search IDs
+		successfulSearchIDs := make(map[string]bool)
+		for _, tc := range agentResult.ToolCalls {
+			successfulSearchIDs[tc.ID] = true
+		}
+
 		for id := range searchCallsSent {
+			status := "completed"
+			if !successfulSearchIDs[id] {
+				status = "failed"
+			}
 			searchEvent := WebSearchCall{
 				Type:   "web_search_call",
 				ID:     id,
-				Status: "completed",
+				Status: status,
 			}
 			data, _ := json.Marshal(searchEvent)
 			fmt.Fprintf(w, "data: %s\n\n", data)
