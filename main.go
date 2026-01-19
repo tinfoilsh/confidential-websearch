@@ -15,6 +15,8 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/agent"
 	"github.com/tinfoilsh/confidential-websearch/api"
 	"github.com/tinfoilsh/confidential-websearch/config"
+	"github.com/tinfoilsh/confidential-websearch/llm"
+	"github.com/tinfoilsh/confidential-websearch/pipeline"
 	"github.com/tinfoilsh/confidential-websearch/search"
 )
 
@@ -41,10 +43,22 @@ func main() {
 		log.Fatalf("Failed to create search provider: %v", err)
 	}
 
+	agentInstance := agent.New(client, cfg.AgentModel, searcher)
+	responder := llm.NewTinfoilResponder(&client.Chat.Completions)
+	messageBuilder := llm.NewMessageBuilder()
+
+	p := pipeline.NewPipeline([]pipeline.Stage{
+		&pipeline.ValidateStage{},
+		&pipeline.AgentStage{Agent: agentInstance},
+		&pipeline.BuildMessagesStage{Builder: messageBuilder},
+		&pipeline.ResponderStage{Responder: responder},
+	}, api.RequestTimeout)
+
 	srv := &api.Server{
-		Cfg:    cfg,
-		Client: client,
-		Agent:  agent.New(client, cfg.AgentModel, searcher),
+		Cfg:      cfg,
+		Client:   client,
+		Agent:    agentInstance,
+		Pipeline: p,
 	}
 
 	http.HandleFunc("/v1/chat/completions", api.RecoveryMiddleware(srv.HandleChatCompletions))
