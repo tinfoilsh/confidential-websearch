@@ -154,10 +154,10 @@ func extractRequestOptions(r *http.Request) []option.RequestOption {
 	return reqOpts
 }
 
-// extractUserQuery returns the content of the last user message, or empty string if none
+// extractUserQuery returns the content of the last non-empty user message, or empty string if none
 func extractUserQuery(messages []pipeline.Message) string {
 	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "user" {
+		if messages[i].Role == "user" && messages[i].Content != "" {
 			return messages[i].Content
 		}
 	}
