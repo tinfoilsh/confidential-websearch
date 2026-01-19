@@ -120,7 +120,14 @@ type BuildMessagesStage struct {
 func (s *BuildMessagesStage) Name() string { return "build_messages" }
 
 func (s *BuildMessagesStage) Execute(ctx *Context) error {
-	ctx.ResponderMessages = s.Builder.Build(ctx.Request.Messages, ctx.AgentResult)
+	messages := ctx.Request.Messages
+
+	// For Responses API, construct messages from Input since Messages is empty
+	if ctx.Request.Format == FormatResponses && len(messages) == 0 {
+		messages = []Message{{Role: "user", Content: ctx.UserQuery}}
+	}
+
+	ctx.ResponderMessages = s.Builder.Build(messages, ctx.AgentResult)
 	return nil
 }
 
