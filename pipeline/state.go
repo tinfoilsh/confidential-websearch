@@ -87,11 +87,21 @@ func (t *DefaultStateTracker) Transition(to State, metadata map[string]interface
 	}
 
 	now := time.Now()
+
+	// Copy metadata to prevent caller mutations from affecting stored history
+	var metadataCopy map[string]interface{}
+	if metadata != nil {
+		metadataCopy = make(map[string]interface{}, len(metadata))
+		for k, v := range metadata {
+			metadataCopy[k] = v
+		}
+	}
+
 	transition := StateTransition{
 		From:      t.current,
 		To:        to,
 		Timestamp: now,
-		Metadata:  metadata,
+		Metadata:  metadataCopy,
 	}
 
 	t.history = append(t.history, transition)
