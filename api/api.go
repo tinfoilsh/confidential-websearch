@@ -154,6 +154,16 @@ func extractRequestOptions(r *http.Request) []option.RequestOption {
 	return reqOpts
 }
 
+// extractUserQuery returns the content of the last user message, or empty string if none
+func extractUserQuery(messages []pipeline.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			return messages[i].Content
+		}
+	}
+	return ""
+}
+
 func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -232,6 +242,17 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 func (s *Server) handleStreamingChatCompletion(w http.ResponseWriter, r *http.Request, req *pipeline.Request, reqOpts []option.RequestOption) {
 	log.Infof("Processing streaming query (model: %s)", req.Model)
 
+	// Validate request before processing
+	if req.Model == "" {
+		jsonError(w, "model is required", http.StatusBadRequest)
+		return
+	}
+	userQuery := extractUserQuery(req.Messages)
+	if userQuery == "" {
+		jsonError(w, "at least one user message is required", http.StatusBadRequest)
+		return
+	}
+
 	emitter, err := NewSSEEmitter(w)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -246,7 +267,7 @@ func (s *Server) handleStreamingChatCompletion(w http.ResponseWriter, r *http.Re
 	toolCallArgs := make(map[int]string)
 	toolCallIDs := make(map[int]string)
 
-	agentResult, agentErr := s.Agent.RunStreaming(ctx, req.Messages[len(req.Messages)-1].Content,
+	agentResult, agentErr := s.Agent.RunStreaming(ctx, userQuery,
 		func(event responses.ResponseStreamEventUnion) {
 			switch event.Type {
 			case "response.output_item.added":
