@@ -1,0 +1,113 @@
+package pipeline
+
+import (
+	"context"
+
+	"github.com/openai/openai-go/v2"
+	"github.com/openai/openai-go/v2/option"
+
+	"github.com/tinfoilsh/confidential-websearch/agent"
+)
+
+// APIFormat indicates which API format the request uses
+type APIFormat int
+
+const (
+	FormatChatCompletion APIFormat = iota
+	FormatResponses
+)
+
+// Message represents a chat message
+type Message struct {
+	Role            string       `json:"role"`
+	Content         string       `json:"content"`
+	Annotations     []Annotation `json:"annotations,omitempty"`
+	SearchReasoning string       `json:"search_reasoning,omitempty"`
+}
+
+// Annotation represents a url_citation annotation
+type Annotation struct {
+	Type        string      `json:"type"`
+	URLCitation URLCitation `json:"url_citation"`
+}
+
+// URLCitation contains the citation details
+type URLCitation struct {
+	Title         string `json:"title"`
+	URL           string `json:"url"`
+	Content       string `json:"content,omitempty"`
+	PublishedDate string `json:"published_date,omitempty"`
+}
+
+// Request is the unified internal request representation
+type Request struct {
+	Model       string
+	Messages    []Message
+	Input       string    // For Responses API
+	Stream      bool
+	Temperature *float64
+	MaxTokens   *int64
+	Format      APIFormat
+	AuthHeader  string
+}
+
+// Context carries all request data through the pipeline
+type Context struct {
+	context.Context
+
+	// Identification
+	RequestID string
+
+	// Input
+	Request   *Request
+	UserQuery string
+
+	// Request options for LLM calls
+	ReqOpts []option.RequestOption
+
+	// Intermediate results
+	AgentResult       *agent.Result
+	ResponderMessages []openai.ChatCompletionMessageParamUnion
+
+	// State tracking
+	State StateTracker
+
+	// Streaming support (nil for non-streaming)
+	Emitter EventEmitter
+
+	// Cancel function for timeout
+	Cancel context.CancelFunc
+}
+
+// NewContext creates a new pipeline context
+func NewContext(ctx context.Context, requestID string, req *Request) *Context {
+	return &Context{
+		Context:   ctx,
+		RequestID: requestID,
+		Request:   req,
+		State:     NewStateTracker(),
+	}
+}
+
+// IsStreaming returns true if this is a streaming request
+func (c *Context) IsStreaming() bool {
+	return c.Emitter != nil
+}
+
+// EventEmitter handles streaming output events
+type EventEmitter interface {
+	// EmitSearchCall emits a web search call event
+	EmitSearchCall(id, status, query string) error
+
+	// EmitMetadata emits annotations and reasoning before content
+	EmitMetadata(annotations []Annotation, reasoning string) error
+
+	// EmitChunk emits a raw chunk of data
+	EmitChunk(data []byte) error
+
+	// EmitError emits an error event
+	EmitError(err error) error
+
+	// EmitDone emits the final done signal
+	EmitDone() error
+}
