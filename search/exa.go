@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/tinfoilsh/confidential-websearch/config"
 )
 
 // ExaProvider handles web searches using Exa AI
@@ -56,7 +58,7 @@ func (p *ExaProvider) Search(ctx context.Context, query string, maxResults int) 
 		NumResults: maxResults,
 		Contents: &exaContentsParam{
 			Text: &exaTextParam{
-				MaxCharacters: maxContentLength,
+				MaxCharacters: config.MaxSearchContentLength,
 			},
 		},
 	}
@@ -100,10 +102,14 @@ func (p *ExaProvider) Search(ctx context.Context, query string, maxResults int) 
 
 	results := make([]Result, 0, len(data.Results))
 	for _, item := range data.Results {
+		content := item.Text
+		if len(content) > config.MaxSearchContentLength {
+			content = content[:config.MaxSearchContentLength] + "..."
+		}
 		results = append(results, Result{
 			Title:         item.Title,
 			URL:           item.URL,
-			Content:       item.Text,
+			Content:       content,
 			Favicon:       item.Favicon,
 			PublishedDate: item.PublishedDate,
 		})
