@@ -42,11 +42,21 @@ func (a *Agent) SetSearchFilter(filter SearchFilter) {
 
 // Run executes a single-shot tool call to gather search results (non-streaming)
 func (a *Agent) Run(ctx context.Context, userQuery string) (*Result, error) {
-	return a.RunStreaming(ctx, userQuery, nil)
+	return a.runWithFilter(ctx, userQuery, nil, a.searchFilter)
 }
 
 // RunStreaming executes the agent with optional streaming support
 func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk ChunkCallback) (*Result, error) {
+	return a.runWithFilter(ctx, userQuery, onChunk, a.searchFilter)
+}
+
+// RunWithFilter executes the agent with a specific search filter (thread-safe for concurrent use)
+func (a *Agent) RunWithFilter(ctx context.Context, userQuery string, filter SearchFilter) (*Result, error) {
+	return a.runWithFilter(ctx, userQuery, nil, filter)
+}
+
+// runWithFilter is the internal implementation that accepts a filter parameter
+func (a *Agent) runWithFilter(ctx context.Context, userQuery string, onChunk ChunkCallback, filter SearchFilter) (*Result, error) {
 	searchTool := responses.ToolParamOfFunction(
 		"search",
 		SearchToolParams,
@@ -173,13 +183,13 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 	}
 
 	// Apply filter if set
-	if a.searchFilter != nil {
+	if filter != nil {
 		queryStrings := make([]string, len(queries))
 		for i, q := range queries {
 			queryStrings[i] = q.query
 		}
 
-		allowed := a.searchFilter(ctx, queryStrings)
+		allowed := filter(ctx, queryStrings)
 		allowedSet := make(map[string]bool, len(allowed))
 		for _, q := range allowed {
 			allowedSet[q] = true

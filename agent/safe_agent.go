@@ -46,15 +46,14 @@ func (s *SafeAgent) Run(ctx context.Context, userQuery string) (*Result, error) 
 
 // RunWithContext executes the agent with safety checks and conversation context for PII detection
 func (s *SafeAgent) RunWithContext(ctx context.Context, userQuery string, conversationContext string) (*Result, error) {
-	// Set up PII filter if enabled
+	// Create PII filter if enabled (passed as parameter for thread-safety)
+	var filter SearchFilter
 	if s.enablePIICheck && s.safeguardClient != nil {
-		s.agent.SetSearchFilter(s.createPIIFilter(ctx, conversationContext))
-	} else {
-		s.agent.SetSearchFilter(nil)
+		filter = s.createPIIFilter(ctx, conversationContext)
 	}
 
-	// Run the base agent (non-streaming - agent determines tool calls only)
-	result, err := s.agent.Run(ctx, userQuery)
+	// Run the base agent with the filter (thread-safe)
+	result, err := s.agent.RunWithFilter(ctx, userQuery, filter)
 	if err != nil {
 		return nil, err
 	}
