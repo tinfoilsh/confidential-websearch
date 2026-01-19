@@ -8,13 +8,12 @@ import (
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/shared"
 	"github.com/tinfoilsh/tinfoil-go"
+
+	"github.com/tinfoilsh/confidential-websearch/config"
 )
 
-const (
-	DefaultModel       = "gpt-oss-safeguard-120b"
-	defaultTemperature = 0.0
-	defaultMaxTokens   = 256
-)
+// DefaultModel is the default safeguard model
+const DefaultModel = "gpt-oss-safeguard-120b"
 
 // CheckResult contains the result of a safety check
 type CheckResult struct {
@@ -45,8 +44,8 @@ func (c *Client) Check(ctx context.Context, policy, content string) (*CheckResul
 			openai.SystemMessage(policy),
 			openai.UserMessage(content),
 		},
-		Temperature: openai.Float(defaultTemperature),
-		MaxTokens:   openai.Int(defaultMaxTokens),
+		Temperature: openai.Float(config.SafeguardTemperature),
+		MaxTokens:   openai.Int(config.SafeguardMaxTokens),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("safeguard call failed: %w", err)

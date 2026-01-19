@@ -4,6 +4,20 @@ import (
 	"os"
 )
 
+// LLM parameter constants
+const (
+	AgentTemperature     = 0.3
+	AgentMaxTokens       = 1024
+	SafeguardTemperature = 0.0
+	SafeguardMaxTokens   = 256
+)
+
+// Search constants
+const (
+	DefaultMaxSearchResults = 5
+	MaxSearchContentLength  = 500
+)
+
 // Config holds the proxy configuration
 type Config struct {
 	// Agent model (small model for tool use decisions)

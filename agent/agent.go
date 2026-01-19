@@ -13,13 +13,8 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/tinfoilsh/tinfoil-go"
 
+	"github.com/tinfoilsh/confidential-websearch/config"
 	"github.com/tinfoilsh/confidential-websearch/search"
-)
-
-const (
-	agentTemperature  = 0.3
-	agentMaxTokens    = 1024
-	defaultMaxResults = 5
 )
 
 // SearchFilter is called with queries before search execution.
@@ -64,8 +59,8 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 		Instructions:    openai.String(`You are a research assistant. Use the search tool for current information or facts you're uncertain about. You can call search multiple times in parallel for complex queries.`),
 		Input:           responses.ResponseNewParamsInputUnion{OfString: openai.String(userQuery)},
 		Tools:           []responses.ToolUnionParam{searchTool},
-		Temperature:     openai.Float(agentTemperature),
-		MaxOutputTokens: openai.Int(agentMaxTokens),
+		Temperature:     openai.Float(config.AgentTemperature),
+		MaxOutputTokens: openai.Int(config.AgentMaxTokens),
 	}
 
 	// Track function calls by output index
@@ -214,7 +209,7 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 			defer wg.Done()
 			log.Infof("Searching: %s", query)
 
-			searchResults, err := a.searcher.Search(ctx, query, defaultMaxResults)
+			searchResults, err := a.searcher.Search(ctx, query, config.DefaultMaxSearchResults)
 			if err != nil {
 				log.Errorf("Search failed: %v", err)
 				return
