@@ -67,7 +67,6 @@ func main() {
 	srv := &api.Server{
 		Cfg:      cfg,
 		Client:   client,
-		Agent:    baseAgent,
 		Pipeline: p,
 	}
 

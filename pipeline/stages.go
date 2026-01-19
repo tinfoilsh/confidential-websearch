@@ -168,6 +168,13 @@ func (s *ResponderStage) Execute(ctx *Context) error {
 	if ctx.IsStreaming() {
 		ctx.State.Transition(StateResponderStreaming, nil)
 
+		// Emit search completion events before streaming response content
+		if ctx.AgentResult != nil && ctx.Emitter != nil {
+			for _, tc := range ctx.AgentResult.ToolCalls {
+				ctx.Emitter.EmitSearchCall(tc.ID, "completed", tc.Query)
+			}
+		}
+
 		annotations := BuildAnnotations(ctx.AgentResult)
 		reasoning := ""
 		if ctx.AgentResult != nil {
