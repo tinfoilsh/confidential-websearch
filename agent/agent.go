@@ -22,16 +22,27 @@ const (
 	defaultMaxResults = 5
 )
 
+// SearchFilter is called with queries before search execution.
+// Returns the filtered list of queries that should proceed.
+type SearchFilter func(ctx context.Context, queries []string) []string
+
 // Agent handles the tool-calling loop with the small model
 type Agent struct {
-	client   *tinfoil.Client
-	model    string
-	searcher search.Provider
+	client       *tinfoil.Client
+	model        string
+	searcher     search.Provider
+	searchFilter SearchFilter
 }
 
 // New creates a new agent
 func New(client *tinfoil.Client, model string, searcher search.Provider) *Agent {
 	return &Agent{client: client, model: model, searcher: searcher}
+}
+
+// SetSearchFilter sets a filter to be applied before search execution.
+// The filter receives all queries and returns only those that should proceed.
+func (a *Agent) SetSearchFilter(filter SearchFilter) {
+	a.searchFilter = filter
 }
 
 // Run executes a single-shot tool call to gather search results (non-streaming)
@@ -135,9 +146,12 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 
 	log.Debugf("Agent requested %d search(es)", len(functionCalls))
 
-	// Execute searches in parallel
-	var wg sync.WaitGroup
-	var mu sync.Mutex
+	// Collect queries from function calls
+	type queryItem struct {
+		id    string
+		query string
+	}
+	var queries []queryItem
 
 	for _, fc := range functionCalls {
 		if fc.name != "search" {
@@ -155,21 +169,61 @@ func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk Chun
 			continue
 		}
 
-		wg.Add(1)
-		go func(id, q string) {
-			defer wg.Done()
-			log.Infof("Searching: %s", q)
+		queries = append(queries, queryItem{id: fc.id, query: query})
+	}
 
-			searchResults, err := a.searcher.Search(ctx, q, defaultMaxResults)
+	if len(queries) == 0 {
+		log.Debug("No valid search queries")
+		return result, nil
+	}
+
+	// Apply filter if set
+	if a.searchFilter != nil {
+		queryStrings := make([]string, len(queries))
+		for i, q := range queries {
+			queryStrings[i] = q.query
+		}
+
+		allowed := a.searchFilter(ctx, queryStrings)
+		allowedSet := make(map[string]bool, len(allowed))
+		for _, q := range allowed {
+			allowedSet[q] = true
+		}
+
+		var filtered []queryItem
+		for _, q := range queries {
+			if allowedSet[q.query] {
+				filtered = append(filtered, q)
+			}
+		}
+		queries = filtered
+
+		if len(queries) == 0 {
+			log.Debug("All queries filtered out")
+			return result, nil
+		}
+	}
+
+	// Execute searches in parallel
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	for _, q := range queries {
+		wg.Add(1)
+		go func(id, query string) {
+			defer wg.Done()
+			log.Infof("Searching: %s", query)
+
+			searchResults, err := a.searcher.Search(ctx, query, defaultMaxResults)
 			if err != nil {
 				log.Errorf("Search failed: %v", err)
 				return
 			}
 
 			mu.Lock()
-			result.ToolCalls = append(result.ToolCalls, ToolCall{ID: id, Query: q, Results: searchResults})
+			result.ToolCalls = append(result.ToolCalls, ToolCall{ID: id, Query: query, Results: searchResults})
 			mu.Unlock()
-		}(fc.id, query)
+		}(q.id, q.query)
 	}
 	wg.Wait()
 
