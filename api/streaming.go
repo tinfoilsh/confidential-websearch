@@ -61,27 +61,13 @@ func (e *SSEEmitter) EmitMetadata(annotations []pipeline.Annotation, reasoning s
 		return nil
 	}
 
-	// Convert pipeline annotations to API annotations
-	apiAnnotations := make([]Annotation, len(annotations))
-	for i, ann := range annotations {
-		apiAnnotations[i] = Annotation{
-			Type: ann.Type,
-			URLCitation: URLCitation{
-				Title:         ann.URLCitation.Title,
-				URL:           ann.URLCitation.URL,
-				Content:       ann.URLCitation.Content,
-				PublishedDate: ann.URLCitation.PublishedDate,
-			},
-		}
-	}
-
 	chunk := StreamingChunk{
 		Object: "chat.completion.chunk",
 		Choices: []StreamingChoice{
 			{
 				Index: 0,
 				Delta: StreamingDelta{
-					Annotations:     apiAnnotations,
+					Annotations:     annotations,
 					SearchReasoning: reasoning,
 				},
 			},
