@@ -32,13 +32,15 @@ type Provider interface {
 
 // Config holds API keys for search providers
 type Config struct {
-	ExaAPIKey  string
-	BingAPIKey string
+	ExaAPIKey string
 }
 
 // NewProvider creates a search provider based on available API keys
-// Priority: Exa > Bing
 func NewProvider(cfg Config) (Provider, error) {
+	if cfg.ExaAPIKey == "" {
+		return nil, fmt.Errorf("no search API key configured (set EXA_API_KEY)")
+	}
+
 	httpClient := &http.Client{
 		Transport: &http.Transport{
 			MaxIdleConns:        httpMaxIdleConns,
@@ -48,19 +50,8 @@ func NewProvider(cfg Config) (Provider, error) {
 		Timeout: httpClientTimeout,
 	}
 
-	if cfg.ExaAPIKey != "" {
-		return &ExaProvider{
-			apiKey:     cfg.ExaAPIKey,
-			httpClient: httpClient,
-		}, nil
-	}
-
-	if cfg.BingAPIKey != "" {
-		return &BingProvider{
-			apiKey:     cfg.BingAPIKey,
-			httpClient: httpClient,
-		}, nil
-	}
-
-	return nil, fmt.Errorf("no search API key configured (set EXA_API_KEY or BING_API_KEY)")
+	return &ExaProvider{
+		apiKey:     cfg.ExaAPIKey,
+		httpClient: httpClient,
+	}, nil
 }
