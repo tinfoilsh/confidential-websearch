@@ -22,6 +22,27 @@ type CheckResult struct {
 	Rationale string `json:"rationale"`
 }
 
+// checkResultSchema is the JSON schema for structured output enforcement
+var checkResultSchema = map[string]interface{}{
+	"type": "object",
+	"properties": map[string]interface{}{
+		"violation": map[string]interface{}{
+			"type":        "boolean",
+			"description": "Whether the content violates the policy",
+		},
+		"category": map[string]interface{}{
+			"type":        "string",
+			"description": "The category of violation or 'safe' if no violation",
+		},
+		"rationale": map[string]interface{}{
+			"type":        "string",
+			"description": "Brief explanation of the classification decision",
+		},
+	},
+	"required":             []string{"violation", "category", "rationale"},
+	"additionalProperties": false,
+}
+
 // Client wraps the Tinfoil client for safeguard model calls
 type Client struct {
 	tinfoil *tinfoil.Client
@@ -46,6 +67,15 @@ func (c *Client) Check(ctx context.Context, policy, content string) (*CheckResul
 		},
 		Temperature: openai.Float(config.SafeguardTemperature),
 		MaxTokens:   openai.Int(config.SafeguardMaxTokens),
+		ResponseFormat: openai.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONSchema: &openai.ResponseFormatJSONSchemaParam{
+				JSONSchema: openai.ResponseFormatJSONSchemaJSONSchemaParam{
+					Name:   "check_result",
+					Schema: checkResultSchema,
+					Strict: openai.Bool(true),
+				},
+			},
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("safeguard call failed: %w", err)
