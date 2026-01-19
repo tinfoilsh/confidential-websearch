@@ -21,7 +21,7 @@ User Request
          │
          ▼ web_search tool call
 ┌────────────────┐
-│  Exa / Bing    │ ──► Returns search results
+│      Exa       │ ──► Returns search results
 └────────────────┘
          │
          ▼
@@ -37,10 +37,8 @@ User Request
 ## Quick Start
 
 ```bash
-# Set a search API key (Exa preferred, Bing as fallback)
+# Set search API key
 export EXA_API_KEY="your-exa-api-key"
-# OR
-export BING_API_KEY="your-bing-api-key"
 
 # Run the proxy
 go run .
@@ -50,12 +48,9 @@ go run .
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `EXA_API_KEY` | - | Exa AI Search API key (preferred) |
-| `BING_API_KEY` | - | Bing Search API key (fallback) |
+| `EXA_API_KEY` | - | Exa AI Search API key (required) |
 | `AGENT_MODEL` | `gpt-oss-120b` | Agent model for tool use decisions |
 | `LISTEN_ADDR` | `:8089` | Address to listen on |
-
-The proxy will use **Exa** if `EXA_API_KEY` is set, otherwise falls back to **Bing**.
 
 ## API
 
@@ -79,7 +74,7 @@ curl http://localhost:8089/v1/chat/completions \
 1. **Request arrives** with `model` and API key
 2. **Agent phase**: Small agent model (`gpt-oss-120b`) decides if search is needed
    - If yes, generates search queries using the `web_search` tool
-   - Searches are executed in parallel via Exa or Bing
+   - Searches are executed in parallel via Exa
 3. **Response phase**: Search results are injected into the context as tool results
 4. **Final response**: The model from the request generates the answer
 5. Response is streamed back to the client

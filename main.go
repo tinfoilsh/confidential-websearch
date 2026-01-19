@@ -36,8 +36,7 @@ func main() {
 	}
 
 	searcher, err := search.NewProvider(search.Config{
-		ExaAPIKey:  cfg.ExaAPIKey,
-		BingAPIKey: cfg.BingAPIKey,
+		ExaAPIKey: cfg.ExaAPIKey,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create search provider: %v", err)
