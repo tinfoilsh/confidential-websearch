@@ -1,0 +1,192 @@
+package pipeline
+
+import (
+	"context"
+
+	"github.com/openai/openai-go/v2"
+	"github.com/openai/openai-go/v2/option"
+
+	"github.com/tinfoilsh/confidential-websearch/agent"
+)
+
+// Stage represents a single processing step in the pipeline
+type Stage interface {
+	Name() string
+	Execute(ctx *Context) error
+}
+
+// AgentRunner defines the interface for running the agent
+type AgentRunner interface {
+	Run(ctx context.Context, userQuery string) (*agent.Result, error)
+}
+
+// MessageBuilder defines the interface for building responder messages
+type MessageBuilder interface {
+	Build(inputMessages []Message, agentResult *agent.Result) []openai.ChatCompletionMessageParamUnion
+}
+
+// ResponderParams contains parameters for a responder LLM call
+type ResponderParams struct {
+	Model       string
+	Messages    []openai.ChatCompletionMessageParamUnion
+	Temperature *float64
+	MaxTokens   *int64
+}
+
+// ResponderResultData contains the result of a non-streaming responder call
+type ResponderResultData struct {
+	ID      string
+	Model   string
+	Object  string
+	Created int64
+	Content string
+	Usage   interface{}
+}
+
+// Responder defines the interface for making responder LLM calls
+type Responder interface {
+	Complete(ctx context.Context, params ResponderParams, opts ...option.RequestOption) (*ResponderResultData, error)
+	Stream(ctx context.Context, params ResponderParams, annotations []Annotation, reasoning string, emitter EventEmitter, opts ...option.RequestOption) error
+}
+
+// ValidateStage validates the incoming request
+type ValidateStage struct{}
+
+func (s *ValidateStage) Name() string { return "validate" }
+
+func (s *ValidateStage) Execute(ctx *Context) error {
+	if ctx.Request == nil {
+		return &ValidationError{Message: "request is nil"}
+	}
+
+	if ctx.Request.Model == "" {
+		return &ValidationError{Field: "model", Message: "model parameter is required"}
+	}
+
+	// Extract user query from messages (last user message)
+	if ctx.Request.Format == FormatChatCompletion {
+		for i := len(ctx.Request.Messages) - 1; i >= 0; i-- {
+			if ctx.Request.Messages[i].Role == "user" && ctx.Request.Messages[i].Content != "" {
+				ctx.UserQuery = ctx.Request.Messages[i].Content
+				break
+			}
+		}
+		if ctx.UserQuery == "" {
+			return &ValidationError{Message: "no user message found"}
+		}
+	} else {
+		// Responses API format
+		if ctx.Request.Input == "" {
+			return &ValidationError{Field: "input", Message: "input parameter is required"}
+		}
+		ctx.UserQuery = ctx.Request.Input
+	}
+
+	return nil
+}
+
+// AgentStage runs the agent to determine if search is needed
+type AgentStage struct {
+	Agent AgentRunner
+}
+
+func (s *AgentStage) Name() string { return "agent" }
+
+func (s *AgentStage) Execute(ctx *Context) error {
+	ctx.State.Transition(StateAgentStarted, map[string]interface{}{"query": ctx.UserQuery})
+
+	result, err := s.Agent.Run(ctx.Context, ctx.UserQuery)
+	if err != nil {
+		return &AgentError{Err: err}
+	}
+
+	ctx.AgentResult = result
+
+	// Track search state transitions
+	if len(result.ToolCalls) > 0 {
+		ctx.State.Transition(StateSearchStarted, map[string]interface{}{"count": len(result.ToolCalls)})
+		ctx.State.Transition(StateSearchCompleted, map[string]interface{}{"results": len(result.ToolCalls)})
+	}
+
+	ctx.State.Transition(StateAgentCompleted, nil)
+	return nil
+}
+
+// BuildMessagesStage constructs the messages for the responder LLM
+type BuildMessagesStage struct {
+	Builder MessageBuilder
+}
+
+func (s *BuildMessagesStage) Name() string { return "build_messages" }
+
+func (s *BuildMessagesStage) Execute(ctx *Context) error {
+	ctx.ResponderMessages = s.Builder.Build(ctx.Request.Messages, ctx.AgentResult)
+	return nil
+}
+
+// ResponderStage calls the responder LLM to generate the final response
+type ResponderStage struct {
+	Responder Responder
+}
+
+func (s *ResponderStage) Name() string { return "responder" }
+
+func (s *ResponderStage) Execute(ctx *Context) error {
+	ctx.State.Transition(StateResponderStarted, nil)
+
+	params := ResponderParams{
+		Model:       ctx.Request.Model,
+		Messages:    ctx.ResponderMessages,
+		Temperature: ctx.Request.Temperature,
+		MaxTokens:   ctx.Request.MaxTokens,
+	}
+
+	if ctx.IsStreaming() {
+		ctx.State.Transition(StateResponderStreaming, nil)
+
+		annotations := BuildAnnotations(ctx.AgentResult)
+		reasoning := ""
+		if ctx.AgentResult != nil {
+			reasoning = ctx.AgentResult.AgentReasoning
+		}
+
+		err := s.Responder.Stream(ctx.Context, params, annotations, reasoning, ctx.Emitter, ctx.ReqOpts...)
+		if err != nil {
+			return &ResponderError{Err: err}
+		}
+	} else {
+		result, err := s.Responder.Complete(ctx.Context, params, ctx.ReqOpts...)
+		if err != nil {
+			return &ResponderError{Err: err}
+		}
+
+		// Store result for handler to use
+		ctx.ResponderResult = result
+	}
+
+	ctx.State.Transition(StateCompleted, nil)
+	return nil
+}
+
+// BuildAnnotations creates URL citations from agent tool calls
+func BuildAnnotations(agentResult *agent.Result) []Annotation {
+	if agentResult == nil {
+		return nil
+	}
+
+	var annotations []Annotation
+	for _, tc := range agentResult.ToolCalls {
+		for _, r := range tc.Results {
+			annotations = append(annotations, Annotation{
+				Type: "url_citation",
+				URLCitation: URLCitation{
+					URL:           r.URL,
+					Title:         r.Title,
+					Content:       r.Content,
+					PublishedDate: r.PublishedDate,
+				},
+			})
+		}
+	}
+	return annotations
+}

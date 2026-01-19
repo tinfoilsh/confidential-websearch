@@ -1,0 +1,518 @@
+package pipeline
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/openai/openai-go/v2"
+	"github.com/openai/openai-go/v2/option"
+
+	"github.com/tinfoilsh/confidential-websearch/agent"
+	"github.com/tinfoilsh/confidential-websearch/search"
+)
+
+// MockAgentRunner implements AgentRunner for testing
+type MockAgentRunner struct {
+	RunFunc func(ctx context.Context, userQuery string) (*agent.Result, error)
+}
+
+func (m *MockAgentRunner) Run(ctx context.Context, userQuery string) (*agent.Result, error) {
+	if m.RunFunc != nil {
+		return m.RunFunc(ctx, userQuery)
+	}
+	return &agent.Result{}, nil
+}
+
+// MockMessageBuilder implements MessageBuilder for testing
+type MockMessageBuilder struct {
+	BuildFunc func(inputMessages []Message, agentResult *agent.Result) []openai.ChatCompletionMessageParamUnion
+}
+
+func (m *MockMessageBuilder) Build(inputMessages []Message, agentResult *agent.Result) []openai.ChatCompletionMessageParamUnion {
+	if m.BuildFunc != nil {
+		return m.BuildFunc(inputMessages, agentResult)
+	}
+	return []openai.ChatCompletionMessageParamUnion{}
+}
+
+// MockResponder implements Responder for testing
+type MockResponder struct {
+	CompleteFunc func(ctx context.Context, params ResponderParams, opts ...option.RequestOption) (*ResponderResultData, error)
+	StreamFunc   func(ctx context.Context, params ResponderParams, annotations []Annotation, reasoning string, emitter EventEmitter, opts ...option.RequestOption) error
+}
+
+func (m *MockResponder) Complete(ctx context.Context, params ResponderParams, opts ...option.RequestOption) (*ResponderResultData, error) {
+	if m.CompleteFunc != nil {
+		return m.CompleteFunc(ctx, params, opts...)
+	}
+	return &ResponderResultData{Content: "test"}, nil
+}
+
+func (m *MockResponder) Stream(ctx context.Context, params ResponderParams, annotations []Annotation, reasoning string, emitter EventEmitter, opts ...option.RequestOption) error {
+	if m.StreamFunc != nil {
+		return m.StreamFunc(ctx, params, annotations, reasoning, emitter, opts...)
+	}
+	return nil
+}
+
+// MockEventEmitter implements EventEmitter for testing
+type MockEventEmitter struct {
+	MetadataCalls []struct {
+		Annotations []Annotation
+		Reasoning   string
+	}
+	Chunks     [][]byte
+	Errors     []error
+	DoneCalled bool
+}
+
+func (m *MockEventEmitter) EmitSearchCall(id, status, query string) error {
+	return nil
+}
+
+func (m *MockEventEmitter) EmitMetadata(annotations []Annotation, reasoning string) error {
+	m.MetadataCalls = append(m.MetadataCalls, struct {
+		Annotations []Annotation
+		Reasoning   string
+	}{annotations, reasoning})
+	return nil
+}
+
+func (m *MockEventEmitter) EmitChunk(data []byte) error {
+	m.Chunks = append(m.Chunks, data)
+	return nil
+}
+
+func (m *MockEventEmitter) EmitError(err error) error {
+	m.Errors = append(m.Errors, err)
+	return nil
+}
+
+func (m *MockEventEmitter) EmitDone() error {
+	m.DoneCalled = true
+	return nil
+}
+
+// --- ValidateStage Tests ---
+
+func TestValidateStage_NilRequest(t *testing.T) {
+	stage := &ValidateStage{}
+	ctx := &Context{Context: context.Background()}
+
+	err := stage.Execute(ctx)
+	if err == nil {
+		t.Fatal("expected error for nil request")
+	}
+
+	var validationErr *ValidationError
+	if !errors.As(err, &validationErr) {
+		t.Errorf("expected ValidationError, got %T", err)
+	}
+}
+
+func TestValidateStage_MissingModel(t *testing.T) {
+	stage := &ValidateStage{}
+	ctx := &Context{
+		Context: context.Background(),
+		Request: &Request{
+			Model:    "",
+			Messages: []Message{{Role: "user", Content: "hello"}},
+			Format:   FormatChatCompletion,
+		},
+		State: NewStateTracker(),
+	}
+
+	err := stage.Execute(ctx)
+	if err == nil {
+		t.Fatal("expected error for missing model")
+	}
+
+	var validationErr *ValidationError
+	if !errors.As(err, &validationErr) {
+		t.Errorf("expected ValidationError, got %T", err)
+	}
+	if validationErr.Field != "model" {
+		t.Errorf("expected field 'model', got %q", validationErr.Field)
+	}
+}
+
+func TestValidateStage_NoUserMessage(t *testing.T) {
+	stage := &ValidateStage{}
+	ctx := &Context{
+		Context: context.Background(),
+		Request: &Request{
+			Model:    "gpt-4",
+			Messages: []Message{{Role: "system", Content: "you are helpful"}},
+			Format:   FormatChatCompletion,
+		},
+		State: NewStateTracker(),
+	}
+
+	err := stage.Execute(ctx)
+	if err == nil {
+		t.Fatal("expected error for no user message")
+	}
+}
+
+func TestValidateStage_ExtractsUserQuery(t *testing.T) {
+	stage := &ValidateStage{}
+	ctx := &Context{
+		Context: context.Background(),
+		Request: &Request{
+			Model: "gpt-4",
+			Messages: []Message{
+				{Role: "user", Content: "first message"},
+				{Role: "assistant", Content: "response"},
+				{Role: "user", Content: "latest query"},
+			},
+			Format: FormatChatCompletion,
+		},
+		State: NewStateTracker(),
+	}
+
+	err := stage.Execute(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if ctx.UserQuery != "latest query" {
+		t.Errorf("expected user query 'latest query', got %q", ctx.UserQuery)
+	}
+}
+
+func TestValidateStage_ResponsesAPI(t *testing.T) {
+	stage := &ValidateStage{}
+	ctx := &Context{
+		Context: context.Background(),
+		Request: &Request{
+			Model:  "gpt-4",
+			Input:  "my input",
+			Format: FormatResponses,
+		},
+		State: NewStateTracker(),
+	}
+
+	err := stage.Execute(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if ctx.UserQuery != "my input" {
+		t.Errorf("expected user query 'my input', got %q", ctx.UserQuery)
+	}
+}
+
+func TestValidateStage_ResponsesAPI_MissingInput(t *testing.T) {
+	stage := &ValidateStage{}
+	ctx := &Context{
+		Context: context.Background(),
+		Request: &Request{
+			Model:  "gpt-4",
+			Input:  "",
+			Format: FormatResponses,
+		},
+		State: NewStateTracker(),
+	}
+
+	err := stage.Execute(ctx)
+	if err == nil {
+		t.Fatal("expected error for missing input")
+	}
+
+	var validationErr *ValidationError
+	if !errors.As(err, &validationErr) {
+		t.Errorf("expected ValidationError, got %T", err)
+	}
+}
+
+// --- AgentStage Tests ---
+
+func TestAgentStage_Success(t *testing.T) {
+	mockAgent := &MockAgentRunner{
+		RunFunc: func(ctx context.Context, userQuery string) (*agent.Result, error) {
+			return &agent.Result{
+				AgentReasoning: "searched for info",
+				ToolCalls: []agent.ToolCall{
+					{ID: "call_1", Query: "test query", Results: []search.Result{{Title: "Result"}}},
+				},
+			}, nil
+		},
+	}
+
+	stage := &AgentStage{Agent: mockAgent}
+	ctx := &Context{
+		Context:   context.Background(),
+		UserQuery: "test query",
+		State:     NewStateTracker(),
+	}
+
+	err := stage.Execute(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if ctx.AgentResult == nil {
+		t.Fatal("expected agent result to be set")
+	}
+
+	if len(ctx.AgentResult.ToolCalls) != 1 {
+		t.Errorf("expected 1 tool call, got %d", len(ctx.AgentResult.ToolCalls))
+	}
+
+	if ctx.State.Current() != StateAgentCompleted {
+		t.Errorf("expected state AgentCompleted, got %s", ctx.State.Current())
+	}
+}
+
+func TestAgentStage_NoSearch(t *testing.T) {
+	mockAgent := &MockAgentRunner{
+		RunFunc: func(ctx context.Context, userQuery string) (*agent.Result, error) {
+			return &agent.Result{
+				AgentReasoning: "no search needed",
+				ToolCalls:      []agent.ToolCall{},
+			}, nil
+		},
+	}
+
+	stage := &AgentStage{Agent: mockAgent}
+	ctx := &Context{
+		Context:   context.Background(),
+		UserQuery: "hello",
+		State:     NewStateTracker(),
+	}
+
+	err := stage.Execute(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if ctx.State.Current() != StateAgentCompleted {
+		t.Errorf("expected state AgentCompleted, got %s", ctx.State.Current())
+	}
+}
+
+func TestAgentStage_Error(t *testing.T) {
+	mockAgent := &MockAgentRunner{
+		RunFunc: func(ctx context.Context, userQuery string) (*agent.Result, error) {
+			return nil, errors.New("agent failed")
+		},
+	}
+
+	stage := &AgentStage{Agent: mockAgent}
+	ctx := &Context{
+		Context:   context.Background(),
+		UserQuery: "test",
+		State:     NewStateTracker(),
+	}
+
+	err := stage.Execute(ctx)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var agentErr *AgentError
+	if !errors.As(err, &agentErr) {
+		t.Errorf("expected AgentError, got %T", err)
+	}
+}
+
+// --- BuildMessagesStage Tests ---
+
+func TestBuildMessagesStage_Success(t *testing.T) {
+	mockBuilder := &MockMessageBuilder{
+		BuildFunc: func(inputMessages []Message, agentResult *agent.Result) []openai.ChatCompletionMessageParamUnion {
+			return []openai.ChatCompletionMessageParamUnion{
+				openai.UserMessage("test"),
+			}
+		},
+	}
+
+	stage := &BuildMessagesStage{Builder: mockBuilder}
+	ctx := &Context{
+		Context: context.Background(),
+		Request: &Request{
+			Messages: []Message{{Role: "user", Content: "test"}},
+		},
+		AgentResult: &agent.Result{},
+		State:       NewStateTracker(),
+	}
+
+	err := stage.Execute(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(ctx.ResponderMessages) != 1 {
+		t.Errorf("expected 1 message, got %d", len(ctx.ResponderMessages))
+	}
+}
+
+// --- ResponderStage Tests ---
+
+func TestResponderStage_NonStreaming(t *testing.T) {
+	mockResponder := &MockResponder{
+		CompleteFunc: func(ctx context.Context, params ResponderParams, opts ...option.RequestOption) (*ResponderResultData, error) {
+			return &ResponderResultData{
+				ID:      "resp_123",
+				Content: "Hello world",
+			}, nil
+		},
+	}
+
+	stage := &ResponderStage{Responder: mockResponder}
+	ctx := &Context{
+		Context: context.Background(),
+		Request: &Request{Model: "gpt-4"},
+		ResponderMessages: []openai.ChatCompletionMessageParamUnion{
+			openai.UserMessage("test"),
+		},
+		AgentResult: &agent.Result{},
+		State:       NewStateTracker(),
+	}
+	ctx.State.Transition(StateAgentStarted, nil)
+	ctx.State.Transition(StateAgentCompleted, nil)
+
+	err := stage.Execute(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if ctx.ResponderResult == nil {
+		t.Fatal("expected responder result to be set")
+	}
+
+	result, ok := ctx.ResponderResult.(*ResponderResultData)
+	if !ok {
+		t.Fatalf("expected *ResponderResultData, got %T", ctx.ResponderResult)
+	}
+
+	if result.Content != "Hello world" {
+		t.Errorf("expected content 'Hello world', got %q", result.Content)
+	}
+
+	if ctx.State.Current() != StateCompleted {
+		t.Errorf("expected state Completed, got %s", ctx.State.Current())
+	}
+}
+
+func TestResponderStage_Streaming(t *testing.T) {
+	emitter := &MockEventEmitter{}
+	mockResponder := &MockResponder{
+		StreamFunc: func(ctx context.Context, params ResponderParams, annotations []Annotation, reasoning string, e EventEmitter, opts ...option.RequestOption) error {
+			e.EmitChunk([]byte(`{"content": "test"}`))
+			e.EmitDone()
+			return nil
+		},
+	}
+
+	stage := &ResponderStage{Responder: mockResponder}
+	ctx := &Context{
+		Context: context.Background(),
+		Request: &Request{Model: "gpt-4"},
+		ResponderMessages: []openai.ChatCompletionMessageParamUnion{
+			openai.UserMessage("test"),
+		},
+		AgentResult: &agent.Result{AgentReasoning: "searched"},
+		State:       NewStateTracker(),
+		Emitter:     emitter,
+	}
+	ctx.State.Transition(StateAgentStarted, nil)
+	ctx.State.Transition(StateAgentCompleted, nil)
+
+	err := stage.Execute(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if ctx.State.Current() != StateCompleted {
+		t.Errorf("expected state Completed, got %s", ctx.State.Current())
+	}
+}
+
+func TestResponderStage_Error(t *testing.T) {
+	mockResponder := &MockResponder{
+		CompleteFunc: func(ctx context.Context, params ResponderParams, opts ...option.RequestOption) (*ResponderResultData, error) {
+			return nil, errors.New("responder failed")
+		},
+	}
+
+	stage := &ResponderStage{Responder: mockResponder}
+	ctx := &Context{
+		Context:           context.Background(),
+		Request:           &Request{Model: "gpt-4"},
+		ResponderMessages: []openai.ChatCompletionMessageParamUnion{},
+		AgentResult:       &agent.Result{},
+		State:             NewStateTracker(),
+	}
+	ctx.State.Transition(StateAgentStarted, nil)
+	ctx.State.Transition(StateAgentCompleted, nil)
+
+	err := stage.Execute(ctx)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var responderErr *ResponderError
+	if !errors.As(err, &responderErr) {
+		t.Errorf("expected ResponderError, got %T", err)
+	}
+}
+
+// --- BuildAnnotations Tests ---
+
+func TestBuildAnnotations_Nil(t *testing.T) {
+	annotations := BuildAnnotations(nil)
+	if annotations != nil {
+		t.Errorf("expected nil, got %v", annotations)
+	}
+}
+
+func TestBuildAnnotations_WithResults(t *testing.T) {
+	result := &agent.Result{
+		ToolCalls: []agent.ToolCall{
+			{
+				ID:    "call_1",
+				Query: "test",
+				Results: []search.Result{
+					{Title: "Title 1", URL: "https://example.com/1", Content: "Content 1"},
+					{Title: "Title 2", URL: "https://example.com/2", Content: "Content 2"},
+				},
+			},
+		},
+	}
+
+	annotations := BuildAnnotations(result)
+
+	if len(annotations) != 2 {
+		t.Fatalf("expected 2 annotations, got %d", len(annotations))
+	}
+
+	if annotations[0].Type != "url_citation" {
+		t.Errorf("expected type url_citation, got %s", annotations[0].Type)
+	}
+
+	if annotations[0].URLCitation.Title != "Title 1" {
+		t.Errorf("expected title 'Title 1', got %q", annotations[0].URLCitation.Title)
+	}
+}
+
+func TestStage_Name(t *testing.T) {
+	tests := []struct {
+		stage Stage
+		name  string
+	}{
+		{&ValidateStage{}, "validate"},
+		{&AgentStage{}, "agent"},
+		{&BuildMessagesStage{}, "build_messages"},
+		{&ResponderStage{}, "responder"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.stage.Name() != tt.name {
+				t.Errorf("expected name %q, got %q", tt.name, tt.stage.Name())
+			}
+		})
+	}
+}
