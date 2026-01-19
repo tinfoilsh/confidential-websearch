@@ -48,7 +48,9 @@ func (e *SSEEmitter) EmitSearchCall(id, status, query string) error {
 		return err
 	}
 
-	fmt.Fprintf(e.w, "data: %s\n\n", data)
+	if _, err := fmt.Fprintf(e.w, "data: %s\n\n", data); err != nil {
+		return err
+	}
 	e.flusher.Flush()
 	return nil
 }
@@ -91,14 +93,18 @@ func (e *SSEEmitter) EmitMetadata(annotations []pipeline.Annotation, reasoning s
 		return err
 	}
 
-	fmt.Fprintf(e.w, "data: %s\n\n", data)
+	if _, err := fmt.Fprintf(e.w, "data: %s\n\n", data); err != nil {
+		return err
+	}
 	e.flusher.Flush()
 	return nil
 }
 
 // EmitChunk emits a raw data chunk
 func (e *SSEEmitter) EmitChunk(data []byte) error {
-	fmt.Fprintf(e.w, "data: %s\n\n", data)
+	if _, err := fmt.Fprintf(e.w, "data: %s\n\n", data); err != nil {
+		return err
+	}
 	e.flusher.Flush()
 	return nil
 }
@@ -115,14 +121,18 @@ func (e *SSEEmitter) EmitError(err error) error {
 		return marshalErr
 	}
 
-	fmt.Fprintf(e.w, "data: %s\n\n", errData)
+	if _, err := fmt.Fprintf(e.w, "data: %s\n\n", errData); err != nil {
+		return err
+	}
 	e.flusher.Flush()
 	return nil
 }
 
 // EmitDone emits the final done signal
 func (e *SSEEmitter) EmitDone() error {
-	fmt.Fprintf(e.w, "data: [DONE]\n\n")
+	if _, err := fmt.Fprintf(e.w, "data: [DONE]\n\n"); err != nil {
+		return err
+	}
 	e.flusher.Flush()
 	return nil
 }
