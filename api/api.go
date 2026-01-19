@@ -6,20 +6,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 
 	"github.com/google/uuid"
-	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/option"
 	"github.com/openai/openai-go/v2/responses"
-	"github.com/openai/openai-go/v2/shared"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/tinfoilsh/confidential-websearch/agent"
+	"github.com/tinfoilsh/confidential-websearch/llm"
+	"github.com/tinfoilsh/confidential-websearch/pipeline"
 )
-
-// citationMarkerRegex matches OpenAI-style citation markers like 【1】 or 【1†L1-L15】
-var citationMarkerRegex = regexp.MustCompile(`【\d+[^】]*】`)
 
 // RecoveryMiddleware catches panics and returns 500 instead of crashing
 func RecoveryMiddleware(next http.HandlerFunc) http.HandlerFunc {
@@ -41,7 +37,13 @@ func jsonError(w http.ResponseWriter, message string, code int) {
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
-// parseRequestBody reads and parses the request body into the given struct
+func jsonErrorResponse(w http.ResponseWriter, code int, body map[string]interface{}) {
+	log.WithField("code", code).Warn("error response")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(body)
+}
+
 func parseRequestBody(r *http.Request, v interface{}) error {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -53,31 +55,62 @@ func parseRequestBody(r *http.Request, v interface{}) error {
 	return nil
 }
 
-// formatSearchResult formats a search result for inclusion in tool message content
-func formatSearchResult(index int, title, url, content string) string {
-	return fmt.Sprintf("[%d] %s\nURL: %s\n%s\n\n", index, title, url, content)
+// convertMessages converts API messages to pipeline messages
+func convertMessages(msgs []Message) []pipeline.Message {
+	result := make([]pipeline.Message, len(msgs))
+	for i, msg := range msgs {
+		result[i] = pipeline.Message{
+			Role:            msg.Role,
+			Content:         msg.Content,
+			Annotations:     convertAnnotationsToPipeline(msg.Annotations),
+			SearchReasoning: msg.SearchReasoning,
+		}
+	}
+	return result
 }
 
-// prepareRequest handles common request setup: method validation, timeout, body limit, auth
-func (s *Server) prepareRequest(w http.ResponseWriter, r *http.Request) (*RequestContext, bool) {
-	if r.Method != http.MethodPost {
-		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
-		return nil, false
+// convertAnnotationsToPipeline converts API annotations to pipeline annotations
+func convertAnnotationsToPipeline(anns []Annotation) []pipeline.Annotation {
+	if anns == nil {
+		return nil
 	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), RequestTimeout)
-	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodySize)
-
-	var reqOpts []option.RequestOption
-	if auth := r.Header.Get("Authorization"); auth != "" {
-		reqOpts = append(reqOpts, option.WithHeader("Authorization", auth))
+	result := make([]pipeline.Annotation, len(anns))
+	for i, ann := range anns {
+		result[i] = pipeline.Annotation{
+			Type: ann.Type,
+			URLCitation: pipeline.URLCitation{
+				Title:         ann.URLCitation.Title,
+				URL:           ann.URLCitation.URL,
+				Content:       ann.URLCitation.Content,
+				PublishedDate: ann.URLCitation.PublishedDate,
+			},
+		}
 	}
-
-	return &RequestContext{Ctx: ctx, Cancel: cancel, ReqOpts: reqOpts}, true
+	return result
 }
 
-// buildAnnotations creates URL citations from search results
-func buildAnnotations(toolCalls []agent.ToolCall) []Annotation {
+// convertAnnotationsFromPipeline converts pipeline annotations to API annotations
+func convertAnnotationsFromPipeline(anns []pipeline.Annotation) []Annotation {
+	if anns == nil {
+		return nil
+	}
+	result := make([]Annotation, len(anns))
+	for i, ann := range anns {
+		result[i] = Annotation{
+			Type: ann.Type,
+			URLCitation: URLCitation{
+				Title:         ann.URLCitation.Title,
+				URL:           ann.URLCitation.URL,
+				Content:       ann.URLCitation.Content,
+				PublishedDate: ann.URLCitation.PublishedDate,
+			},
+		}
+	}
+	return result
+}
+
+// buildAnnotationsFromToolCalls creates API annotations from agent tool calls
+func buildAnnotationsFromToolCalls(toolCalls []agent.ToolCall) []Annotation {
 	var annotations []Annotation
 	for _, tc := range toolCalls {
 		for _, r := range tc.Results {
@@ -112,410 +145,219 @@ func buildFlatAnnotations(toolCalls []agent.ToolCall) []FlatAnnotation {
 	return annotations
 }
 
-// injectHistoricalSearchContext reconstructs tool call context from a historical assistant message with annotations
-func injectHistoricalSearchContext(messages []openai.ChatCompletionMessageParamUnion, msg Message) []openai.ChatCompletionMessageParamUnion {
-	toolCallID := fmt.Sprintf("historical_%d", len(messages))
-
-	// Build tool call with reasoning content
-	toolCalls := []openai.ChatCompletionMessageToolCallUnionParam{
-		{
-			OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
-				ID: toolCallID,
-				Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
-					Name:      "search",
-					Arguments: `{"query": "historical search"}`,
-				},
-			},
-		},
+// extractRequestOptions extracts request options from HTTP headers
+func extractRequestOptions(r *http.Request) []option.RequestOption {
+	var reqOpts []option.RequestOption
+	if auth := r.Header.Get("Authorization"); auth != "" {
+		reqOpts = append(reqOpts, option.WithHeader("Authorization", auth))
 	}
-
-	assistantMsg := openai.ChatCompletionAssistantMessageParam{ToolCalls: toolCalls}
-	if msg.SearchReasoning != "" {
-		assistantMsg.Content = openai.ChatCompletionAssistantMessageParamContentUnion{
-			OfString: openai.Opt(msg.SearchReasoning),
-		}
-	}
-	messages = append(messages, openai.ChatCompletionMessageParamUnion{OfAssistant: &assistantMsg})
-
-	// Build tool result from annotations
-	var toolContent string
-	for i, ann := range msg.Annotations {
-		if ann.Type == "url_citation" {
-			toolContent += formatSearchResult(i+1, ann.URLCitation.Title, ann.URLCitation.URL, ann.URLCitation.Content)
-		}
-	}
-	messages = append(messages, openai.ToolMessage(toolContent, toolCallID))
-
-	// Add the actual assistant response
-	messages = append(messages, openai.AssistantMessage(msg.Content))
-
-	return messages
-}
-
-// buildResponderMessages creates the message array for the responder LLM call
-func buildResponderMessages(inputMessages []Message, agentResult *agent.Result) []openai.ChatCompletionMessageParamUnion {
-	var messages []openai.ChatCompletionMessageParamUnion
-
-	// Add input messages, injecting historical search context for assistant messages with annotations
-	for _, msg := range inputMessages {
-		switch msg.Role {
-		case "system":
-			messages = append(messages, openai.SystemMessage(msg.Content))
-		case "user":
-			messages = append(messages, openai.UserMessage(msg.Content))
-		case "assistant":
-			if len(msg.Annotations) > 0 {
-				messages = injectHistoricalSearchContext(messages, msg)
-			} else {
-				messages = append(messages, openai.AssistantMessage(msg.Content))
-			}
-		}
-	}
-
-	// If we have search results, append tool calls and tool results
-	if len(agentResult.ToolCalls) > 0 {
-		toolCalls := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(agentResult.ToolCalls))
-		for _, tc := range agentResult.ToolCalls {
-			toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnionParam{
-				OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
-					ID: tc.ID,
-					Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
-						Name:      "search",
-						Arguments: fmt.Sprintf(`{"query": %q}`, tc.Query),
-					},
-				},
-			})
-		}
-
-		assistantMsg := openai.ChatCompletionAssistantMessageParam{ToolCalls: toolCalls}
-		if agentResult.AgentReasoning != "" {
-			assistantMsg.Content = openai.ChatCompletionAssistantMessageParamContentUnion{
-				OfString: openai.Opt(agentResult.AgentReasoning),
-			}
-		}
-		messages = append(messages, openai.ChatCompletionMessageParamUnion{OfAssistant: &assistantMsg})
-
-		// Add tool results
-		for _, tc := range agentResult.ToolCalls {
-			var toolContent string
-			for i, sr := range tc.Results {
-				toolContent += formatSearchResult(i+1, sr.Title, sr.URL, sr.Content)
-			}
-			messages = append(messages, openai.ToolMessage(toolContent, tc.ID))
-		}
-
-		messages = append(messages, openai.UserMessage("Answer using the search results above."))
-	}
-
-	return messages
+	return reqOpts
 }
 
 func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
-	rc, ok := s.prepareRequest(w, r)
-	if !ok {
+	if r.Method != http.MethodPost {
+		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	defer rc.Cancel()
+
+	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodySize)
 
 	var req IncomingRequest
 	if err := parseRequestBody(r, &req); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if req.Model == "" {
-		jsonError(w, "model parameter is required", http.StatusBadRequest)
-		return
+
+	reqOpts := extractRequestOptions(r)
+
+	pipelineReq := &pipeline.Request{
+		Model:       req.Model,
+		Messages:    convertMessages(req.Messages),
+		Stream:      req.Stream,
+		Temperature: req.Temperature,
+		MaxTokens:   req.MaxTokens,
+		Format:      pipeline.FormatChatCompletion,
 	}
 
-	// Extract user query (last user message)
-	var userQuery string
-	for i := len(req.Messages) - 1; i >= 0; i-- {
-		if req.Messages[i].Role == "user" && req.Messages[i].Content != "" {
-			userQuery = req.Messages[i].Content
-			break
-		}
+	if req.Stream {
+		s.handleStreamingChatCompletion(w, r, pipelineReq, reqOpts)
+	} else {
+		s.handleNonStreamingChatCompletion(w, r, pipelineReq, reqOpts)
 	}
-	if userQuery == "" {
-		jsonError(w, "no user message found", http.StatusBadRequest)
-		return
-	}
+}
 
+func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http.Request, req *pipeline.Request, reqOpts []option.RequestOption) {
 	log.Infof("Processing query (model: %s)", req.Model)
 
-	// Set up streaming if requested
-	var flusher http.Flusher
-	if req.Stream {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-
-		var ok bool
-		if flusher, ok = w.(http.Flusher); !ok {
-			jsonError(w, "streaming not supported", http.StatusInternalServerError)
-			return
-		}
+	pctx, err := s.Pipeline.Execute(r.Context(), req, nil, reqOpts...)
+	if pctx != nil && pctx.Cancel != nil {
+		defer pctx.Cancel()
 	}
 
-	// Step 1: Run agent to gather search results
-	var agentResult *agent.Result
-	var agentErr error
+	if err != nil {
+		status, body := pipeline.ErrorResponse(err)
+		jsonErrorResponse(w, status, body)
+		return
+	}
 
-	if req.Stream {
-		searchCallsSent := make(map[string]bool)
-		toolCallArgs := make(map[int]string)
-		toolCallIDs := make(map[int]string)
+	log.Infof("Agent completed: %d tool calls", len(pctx.AgentResult.ToolCalls))
 
-		agentResult, agentErr = s.Agent.RunStreaming(rc.Ctx, userQuery,
-			func(event responses.ResponseStreamEventUnion) {
-				switch event.Type {
-				case "response.output_item.added":
-					if event.Item.Type == "function_call" {
-						fc := event.Item.AsFunctionCall()
-						toolCallIDs[int(event.OutputIndex)] = fc.CallID
+	result := pctx.ResponderResult.(*pipeline.ResponderResultData)
+	annotations := buildAnnotationsFromToolCalls(pctx.AgentResult.ToolCalls)
+
+	response := ChatCompletionResponse{
+		ID:      result.ID,
+		Object:  result.Object,
+		Created: result.Created,
+		Model:   result.Model,
+		Usage:   result.Usage,
+		Choices: []ChatCompletionChoiceOutput{
+			{
+				Index:        0,
+				FinishReason: "stop",
+				Message: ChatCompletionMessageOutput{
+					Role:            "assistant",
+					Content:         result.Content,
+					Annotations:     annotations,
+					SearchReasoning: pctx.AgentResult.AgentReasoning,
+				},
+			},
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleStreamingChatCompletion(w http.ResponseWriter, r *http.Request, req *pipeline.Request, reqOpts []option.RequestOption) {
+	log.Infof("Processing streaming query (model: %s)", req.Model)
+
+	emitter, err := NewSSEEmitter(w)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), RequestTimeout)
+	defer cancel()
+
+	// Run agent with streaming event callbacks
+	searchCallsSent := make(map[string]bool)
+	toolCallArgs := make(map[int]string)
+	toolCallIDs := make(map[int]string)
+
+	agentResult, agentErr := s.Agent.RunStreaming(ctx, req.Messages[len(req.Messages)-1].Content,
+		func(event responses.ResponseStreamEventUnion) {
+			switch event.Type {
+			case "response.output_item.added":
+				if event.Item.Type == "function_call" {
+					fc := event.Item.AsFunctionCall()
+					toolCallIDs[int(event.OutputIndex)] = fc.CallID
+				}
+
+			case "response.function_call_arguments.delta":
+				idx := int(event.OutputIndex)
+				args := event.Delta
+				if args == "" {
+					args = event.Arguments
+				}
+				toolCallArgs[idx] += args
+
+				id := toolCallIDs[idx]
+				if id != "" && !searchCallsSent[id] {
+					var args struct {
+						Query string `json:"query"`
 					}
-
-				case "response.function_call_arguments.delta":
-					idx := int(event.OutputIndex)
-					// Arguments come in the Delta field for streaming events
-					args := event.Delta
-					if args == "" {
-						args = event.Arguments
-					}
-					toolCallArgs[idx] += args
-
-					id := toolCallIDs[idx]
-					if id != "" && !searchCallsSent[id] {
-						var args struct {
-							Query string `json:"query"`
-						}
-						if json.Unmarshal([]byte(toolCallArgs[idx]), &args) == nil && args.Query != "" {
-							searchEvent := WebSearchCall{
-								Type:   "web_search_call",
-								ID:     id,
-								Status: "in_progress",
-								Action: &WebSearchAction{
-									Type:  "search",
-									Query: args.Query,
-								},
-							}
-							data, _ := json.Marshal(searchEvent)
-							fmt.Fprintf(w, "data: %s\n\n", data)
-							flusher.Flush()
-							searchCallsSent[id] = true
-						}
+					if json.Unmarshal([]byte(toolCallArgs[idx]), &args) == nil && args.Query != "" {
+						emitter.EmitSearchCall(id, "in_progress", args.Query)
+						searchCallsSent[id] = true
 					}
 				}
-			})
+			}
+		})
 
-		// Build set of successful search IDs
-		successfulSearchIDs := make(map[string]bool)
+	// Build set of successful search IDs and emit completion events
+	successfulSearchIDs := make(map[string]bool)
+	if agentResult != nil {
 		for _, tc := range agentResult.ToolCalls {
 			successfulSearchIDs[tc.ID] = true
 		}
+	}
 
-		for id := range searchCallsSent {
-			status := "completed"
-			if !successfulSearchIDs[id] {
-				status = "failed"
-			}
-			searchEvent := WebSearchCall{
-				Type:   "web_search_call",
-				ID:     id,
-				Status: status,
-			}
-			data, _ := json.Marshal(searchEvent)
-			fmt.Fprintf(w, "data: %s\n\n", data)
-			flusher.Flush()
+	for id := range searchCallsSent {
+		status := "completed"
+		if !successfulSearchIDs[id] {
+			status = "failed"
 		}
-	} else {
-		agentResult, agentErr = s.Agent.Run(rc.Ctx, userQuery)
+		emitter.EmitSearchCall(id, status, "")
 	}
 
 	if agentErr != nil {
-		if req.Stream {
-			errData, _ := json.Marshal(map[string]interface{}{"error": map[string]string{"message": agentErr.Error()}})
-			fmt.Fprintf(w, "data: %s\n\n", errData)
-			flusher.Flush()
-		} else {
-			jsonError(w, fmt.Sprintf("agent failed: %v", agentErr), http.StatusInternalServerError)
-		}
+		emitter.EmitError(agentErr)
 		return
 	}
+
 	log.Infof("Agent completed: %d tool calls", len(agentResult.ToolCalls))
 
-	// Step 2: Build messages for responder
-	messages := buildResponderMessages(req.Messages, agentResult)
+	// Build messages and call responder using pipeline components
+	messageBuilder := llm.NewMessageBuilder()
+	responderMessages := messageBuilder.Build(req.Messages, agentResult)
 
-	// Step 3: Call responder
-	params := openai.ChatCompletionNewParams{
-		Model:    shared.ChatModel(req.Model),
-		Messages: messages,
-	}
-	if req.Temperature != nil {
-		params.Temperature = openai.Float(*req.Temperature)
-	}
-	if req.MaxTokens != nil {
-		params.MaxTokens = openai.Int(*req.MaxTokens)
+	responder := llm.NewTinfoilResponder(&s.Client.Chat.Completions)
+	params := pipeline.ResponderParams{
+		Model:       req.Model,
+		Messages:    responderMessages,
+		Temperature: req.Temperature,
+		MaxTokens:   req.MaxTokens,
 	}
 
-	if req.Stream {
-		stream := s.Client.Chat.Completions.NewStreaming(rc.Ctx, params, rc.ReqOpts...)
-
-		annotations := buildAnnotations(agentResult.ToolCalls)
-		metadataSent := false
-
-		for stream.Next() {
-			chunk := stream.Current()
-
-			if !metadataSent && len(chunk.Choices) > 0 && (len(annotations) > 0 || agentResult.AgentReasoning != "") {
-				metadataChunk := StreamingChunk{
-					ID:      chunk.ID,
-					Object:  "chat.completion.chunk",
-					Created: chunk.Created,
-					Model:   chunk.Model,
-					Choices: []StreamingChoice{
-						{
-							Index: 0,
-							Delta: StreamingDelta{
-								Annotations:     annotations,
-								SearchReasoning: agentResult.AgentReasoning,
-							},
-						},
-					},
-				}
-				data, _ := json.Marshal(metadataChunk)
-				fmt.Fprintf(w, "data: %s\n\n", data)
-				flusher.Flush()
-				metadataSent = true
-			}
-
-			// Strip citation markers from streaming content
-			chunkData := chunk.RawJSON()
-			if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-				var parsed map[string]interface{}
-				if err := json.Unmarshal([]byte(chunkData), &parsed); err == nil {
-					if choices, ok := parsed["choices"].([]interface{}); ok && len(choices) > 0 {
-						if choice, ok := choices[0].(map[string]interface{}); ok {
-							if delta, ok := choice["delta"].(map[string]interface{}); ok {
-								if content, ok := delta["content"].(string); ok {
-									cleaned := citationMarkerRegex.ReplaceAllString(content, "")
-									if cleaned != content {
-										delta["content"] = cleaned
-										if marshaled, err := json.Marshal(parsed); err == nil {
-											chunkData = string(marshaled)
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-
-			fmt.Fprintf(w, "data: %s\n\n", chunkData)
-			flusher.Flush()
-		}
-		if err := stream.Err(); err != nil {
-			log.Errorf("Streaming error: %v", err)
-			errData, _ := json.Marshal(map[string]interface{}{
-				"error": map[string]string{
-					"message": err.Error(),
-					"type":    "api_error",
-				},
-			})
-			fmt.Fprintf(w, "data: %s\n\n", errData)
-			flusher.Flush()
-			return
-		}
-		fmt.Fprintf(w, "data: [DONE]\n\n")
-		flusher.Flush()
-	} else {
-		resp, err := s.Client.Chat.Completions.New(rc.Ctx, params, rc.ReqOpts...)
-		if err != nil {
-			jsonError(w, fmt.Sprintf("responder failed: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		annotations := buildAnnotations(agentResult.ToolCalls)
-
-		response := ChatCompletionResponse{
-			ID:      resp.ID,
-			Object:  string(resp.Object),
-			Created: resp.Created,
-			Model:   resp.Model,
-			Usage:   resp.Usage,
-			Choices: []ChatCompletionChoiceOutput{},
-		}
-
-		for _, choice := range resp.Choices {
-			// Strip citation markers from content
-			content := citationMarkerRegex.ReplaceAllString(choice.Message.Content, "")
-			response.Choices = append(response.Choices, ChatCompletionChoiceOutput{
-				Index:        choice.Index,
-				FinishReason: string(choice.FinishReason),
-				Message: ChatCompletionMessageOutput{
-					Role:            string(choice.Message.Role),
-					Content:         content,
-					Annotations:     annotations,
-					SearchReasoning: agentResult.AgentReasoning,
-				},
-			})
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+	annotations := pipeline.BuildAnnotations(agentResult)
+	if err := responder.Stream(ctx, params, annotations, agentResult.AgentReasoning, emitter, reqOpts...); err != nil {
+		log.Errorf("Streaming error: %v", err)
 	}
 }
 
 func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
-	rc, ok := s.prepareRequest(w, r)
-	if !ok {
+	if r.Method != http.MethodPost {
+		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	defer rc.Cancel()
+
+	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodySize)
 
 	var req ResponsesRequest
 	if err := parseRequestBody(r, &req); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if req.Model == "" {
-		jsonError(w, "model parameter is required", http.StatusBadRequest)
-		return
-	}
-	if req.Input == "" {
-		jsonError(w, "input parameter is required", http.StatusBadRequest)
-		return
+
+	reqOpts := extractRequestOptions(r)
+
+	pipelineReq := &pipeline.Request{
+		Model:  req.Model,
+		Input:  req.Input,
+		Format: pipeline.FormatResponses,
 	}
 
 	log.Infof("Processing responses request (model: %s)", req.Model)
 
-	agentResult, agentErr := s.Agent.Run(rc.Ctx, req.Input)
-	if agentErr != nil {
-		jsonError(w, fmt.Sprintf("agent failed: %v", agentErr), http.StatusInternalServerError)
-		return
+	pctx, err := s.Pipeline.Execute(r.Context(), pipelineReq, nil, reqOpts...)
+	if pctx != nil && pctx.Cancel != nil {
+		defer pctx.Cancel()
 	}
 
-	// Build messages using shared helper
-	inputMessages := []Message{{Role: "user", Content: req.Input}}
-	messages := buildResponderMessages(inputMessages, agentResult)
-
-	params := openai.ChatCompletionNewParams{
-		Model:    shared.ChatModel(req.Model),
-		Messages: messages,
-	}
-
-	resp, err := s.Client.Chat.Completions.New(rc.Ctx, params, rc.ReqOpts...)
 	if err != nil {
-		jsonError(w, fmt.Sprintf("responder failed: %v", err), http.StatusInternalServerError)
+		status, body := pipeline.ErrorResponse(err)
+		jsonErrorResponse(w, status, body)
 		return
 	}
 
-	flatAnnotations := buildFlatAnnotations(agentResult.ToolCalls)
+	result := pctx.ResponderResult.(*pipeline.ResponderResultData)
+	flatAnnotations := buildFlatAnnotations(pctx.AgentResult.ToolCalls)
 
 	var output []ResponsesOutput
 
-	for _, tc := range agentResult.ToolCalls {
+	for _, tc := range pctx.AgentResult.ToolCalls {
 		output = append(output, ResponsesOutput{
 			Type:   "web_search_call",
 			ID:     "ws_" + tc.ID,
@@ -527,23 +369,19 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	if len(resp.Choices) > 0 {
-		// Strip citation markers from content
-		content := citationMarkerRegex.ReplaceAllString(resp.Choices[0].Message.Content, "")
-		output = append(output, ResponsesOutput{
-			Type:   "message",
-			ID:     "msg_" + uuid.New().String()[:8],
-			Status: "completed",
-			Role:   "assistant",
-			Content: []ResponsesContent{
-				{
-					Type:        "output_text",
-					Text:        content,
-					Annotations: flatAnnotations,
-				},
+	output = append(output, ResponsesOutput{
+		Type:   "message",
+		ID:     "msg_" + uuid.New().String()[:8],
+		Status: "completed",
+		Role:   "assistant",
+		Content: []ResponsesContent{
+			{
+				Type:        "output_text",
+				Text:        result.Content,
+				Annotations: flatAnnotations,
 			},
-		})
-	}
+		},
+	})
 
 	responsesResp := struct {
 		ID     string            `json:"id"`
@@ -553,7 +391,7 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	}{
 		ID:     "resp_" + uuid.New().String()[:8],
 		Object: "response",
-		Model:  resp.Model,
+		Model:  result.Model,
 		Output: output,
 	}
 
