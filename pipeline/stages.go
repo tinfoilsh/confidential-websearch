@@ -21,9 +21,10 @@ type AgentRunner interface {
 	Run(ctx context.Context, userQuery string) (*agent.Result, error)
 }
 
-// ConversationContextSetter is optionally implemented by agents that need conversation context
-type ConversationContextSetter interface {
-	SetConversationContext(context string)
+// AgentWithContext can receive conversation context per-request (thread-safe)
+type AgentWithContext interface {
+	AgentRunner
+	RunWithContext(ctx context.Context, userQuery string, conversationContext string) (*agent.Result, error)
 }
 
 // MessageBuilder defines the interface for building responder messages
@@ -101,12 +102,17 @@ func (s *AgentStage) Name() string { return "agent" }
 func (s *AgentStage) Execute(ctx *Context) error {
 	ctx.State.Transition(StateAgentStarted, map[string]interface{}{"query": ctx.UserQuery})
 
-	// Set conversation context if agent supports it (for PII detection)
-	if setter, ok := s.Agent.(ConversationContextSetter); ok {
-		setter.SetConversationContext(buildConversationContext(ctx.Request.Messages))
+	var result *agent.Result
+	var err error
+
+	// Use RunWithContext if agent supports it (thread-safe conversation context for PII detection)
+	if agentWithCtx, ok := s.Agent.(AgentWithContext); ok {
+		conversationCtx := buildConversationContext(ctx.Request.Messages)
+		result, err = agentWithCtx.RunWithContext(ctx.Context, ctx.UserQuery, conversationCtx)
+	} else {
+		result, err = s.Agent.Run(ctx.Context, ctx.UserQuery)
 	}
 
-	result, err := s.Agent.Run(ctx.Context, ctx.UserQuery)
 	if err != nil {
 		return &AgentError{Err: err}
 	}
