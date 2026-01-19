@@ -16,24 +16,6 @@ import (
 // citationMarkerRegex matches OpenAI-style citation markers like 【1】 or 【1†L1-L15】
 var citationMarkerRegex = regexp.MustCompile(`【\d+[^】]*】`)
 
-// ResponderParams contains parameters for a responder LLM call
-type ResponderParams struct {
-	Model       string
-	Messages    []openai.ChatCompletionMessageParamUnion
-	Temperature *float64
-	MaxTokens   *int64
-}
-
-// ResponderResult contains the result of a non-streaming responder call
-type ResponderResult struct {
-	ID      string
-	Model   string
-	Object  string
-	Created int64
-	Content string
-	Usage   interface{}
-}
-
 // ChatCompletionStream is the stream type returned by NewStreaming
 type ChatCompletionStream = ssestream.Stream[openai.ChatCompletionChunk]
 
@@ -41,15 +23,6 @@ type ChatCompletionStream = ssestream.Stream[openai.ChatCompletionChunk]
 type ChatClient interface {
 	New(ctx context.Context, params openai.ChatCompletionNewParams, opts ...option.RequestOption) (*openai.ChatCompletion, error)
 	NewStreaming(ctx context.Context, params openai.ChatCompletionNewParams, opts ...option.RequestOption) *ChatCompletionStream
-}
-
-// Responder handles the final LLM call to generate responses
-type Responder interface {
-	// Complete makes a non-streaming completion call
-	Complete(ctx context.Context, params ResponderParams, opts ...option.RequestOption) (*ResponderResult, error)
-
-	// Stream makes a streaming completion call, emitting chunks via the emitter
-	Stream(ctx context.Context, params ResponderParams, annotations []pipeline.Annotation, reasoning string, emitter pipeline.EventEmitter, opts ...option.RequestOption) error
 }
 
 // TinfoilResponder implements Responder using a Tinfoil client
@@ -63,7 +36,7 @@ func NewTinfoilResponder(client ChatClient) *TinfoilResponder {
 }
 
 // Complete makes a non-streaming completion call
-func (r *TinfoilResponder) Complete(ctx context.Context, params ResponderParams, opts ...option.RequestOption) (*ResponderResult, error) {
+func (r *TinfoilResponder) Complete(ctx context.Context, params pipeline.ResponderParams, opts ...option.RequestOption) (*pipeline.ResponderResultData, error) {
 	chatParams := openai.ChatCompletionNewParams{
 		Model:    shared.ChatModel(params.Model),
 		Messages: params.Messages,
@@ -86,7 +59,7 @@ func (r *TinfoilResponder) Complete(ctx context.Context, params ResponderParams,
 		content = StripCitationMarkers(resp.Choices[0].Message.Content)
 	}
 
-	return &ResponderResult{
+	return &pipeline.ResponderResultData{
 		ID:      resp.ID,
 		Model:   resp.Model,
 		Object:  string(resp.Object),
@@ -97,7 +70,7 @@ func (r *TinfoilResponder) Complete(ctx context.Context, params ResponderParams,
 }
 
 // Stream makes a streaming completion call
-func (r *TinfoilResponder) Stream(ctx context.Context, params ResponderParams, annotations []pipeline.Annotation, reasoning string, emitter pipeline.EventEmitter, opts ...option.RequestOption) error {
+func (r *TinfoilResponder) Stream(ctx context.Context, params pipeline.ResponderParams, annotations []pipeline.Annotation, reasoning string, emitter pipeline.EventEmitter, opts ...option.RequestOption) error {
 	chatParams := openai.ChatCompletionNewParams{
 		Model:    shared.ChatModel(params.Model),
 		Messages: params.Messages,

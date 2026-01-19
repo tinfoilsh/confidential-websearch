@@ -212,7 +212,7 @@ func TestTinfoilResponderComplete(t *testing.T) {
 
 	responder := NewTinfoilResponder(mockClient)
 
-	params := ResponderParams{
+	params := pipeline.ResponderParams{
 		Model:    "gpt-4",
 		Messages: []openai.ChatCompletionMessageParamUnion{},
 	}
@@ -246,7 +246,7 @@ func TestTinfoilResponderCompleteError(t *testing.T) {
 
 	responder := NewTinfoilResponder(mockClient)
 
-	params := ResponderParams{
+	params := pipeline.ResponderParams{
 		Model:    "gpt-4",
 		Messages: []openai.ChatCompletionMessageParamUnion{},
 	}
@@ -276,7 +276,7 @@ func TestTinfoilResponderCompleteWithParams(t *testing.T) {
 
 	temp := 0.7
 	maxTokens := int64(100)
-	params := ResponderParams{
+	params := pipeline.ResponderParams{
 		Model:       "gpt-4",
 		Messages:    []openai.ChatCompletionMessageParamUnion{},
 		Temperature: &temp,
