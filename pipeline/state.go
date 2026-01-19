@@ -96,6 +96,10 @@ func (t *DefaultStateTracker) Transition(to State, metadata map[string]interface
 
 	t.history = append(t.history, transition)
 	t.current = to
+
+	if t.stateStarted == nil {
+		t.stateStarted = make(map[State]time.Time)
+	}
 	t.stateStarted[to] = now
 
 	return nil
