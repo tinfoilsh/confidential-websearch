@@ -36,24 +36,10 @@ type IncomingRequest struct {
 
 // Message represents a chat message in the incoming request
 type Message struct {
-	Role            string       `json:"role"`
-	Content         string       `json:"content"`
-	Annotations     []Annotation `json:"annotations,omitempty"`
-	SearchReasoning string       `json:"search_reasoning,omitempty"`
-}
-
-// URLCitation contains the citation details
-type URLCitation struct {
-	Title         string `json:"title"`
-	URL           string `json:"url"`
-	Content       string `json:"content,omitempty"`
-	PublishedDate string `json:"published_date,omitempty"`
-}
-
-// Annotation represents a url_citation annotation
-type Annotation struct {
-	Type        string      `json:"type"`
-	URLCitation URLCitation `json:"url_citation"`
+	Role            string                `json:"role"`
+	Content         string                `json:"content"`
+	Annotations     []pipeline.Annotation `json:"annotations,omitempty"`
+	SearchReasoning string                `json:"search_reasoning,omitempty"`
 }
 
 // WebSearchCall represents a search operation in streaming output
@@ -66,8 +52,8 @@ type WebSearchCall struct {
 
 // StreamingDelta represents a delta in a streaming chunk
 type StreamingDelta struct {
-	Annotations     []Annotation `json:"annotations,omitempty"`
-	SearchReasoning string       `json:"search_reasoning,omitempty"`
+	Annotations     []pipeline.Annotation `json:"annotations,omitempty"`
+	SearchReasoning string                `json:"search_reasoning,omitempty"`
 }
 
 // StreamingChoice represents a choice in a streaming chunk
@@ -149,8 +135,8 @@ type ChatCompletionChoiceOutput struct {
 
 // ChatCompletionMessageOutput represents the assistant message with annotations
 type ChatCompletionMessageOutput struct {
-	Role            string       `json:"role"`
-	Content         string       `json:"content"`
-	Annotations     []Annotation `json:"annotations,omitempty"`
-	SearchReasoning string       `json:"search_reasoning,omitempty"`
+	Role            string                `json:"role"`
+	Content         string                `json:"content"`
+	Annotations     []pipeline.Annotation `json:"annotations,omitempty"`
+	SearchReasoning string                `json:"search_reasoning,omitempty"`
 }

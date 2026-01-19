@@ -62,70 +62,11 @@ func convertMessages(msgs []Message) []pipeline.Message {
 		result[i] = pipeline.Message{
 			Role:            msg.Role,
 			Content:         msg.Content,
-			Annotations:     convertAnnotationsToPipeline(msg.Annotations),
+			Annotations:     msg.Annotations, // Same type due to alias
 			SearchReasoning: msg.SearchReasoning,
 		}
 	}
 	return result
-}
-
-// convertAnnotationsToPipeline converts API annotations to pipeline annotations
-func convertAnnotationsToPipeline(anns []Annotation) []pipeline.Annotation {
-	if anns == nil {
-		return nil
-	}
-	result := make([]pipeline.Annotation, len(anns))
-	for i, ann := range anns {
-		result[i] = pipeline.Annotation{
-			Type: ann.Type,
-			URLCitation: pipeline.URLCitation{
-				Title:         ann.URLCitation.Title,
-				URL:           ann.URLCitation.URL,
-				Content:       ann.URLCitation.Content,
-				PublishedDate: ann.URLCitation.PublishedDate,
-			},
-		}
-	}
-	return result
-}
-
-// convertAnnotationsFromPipeline converts pipeline annotations to API annotations
-func convertAnnotationsFromPipeline(anns []pipeline.Annotation) []Annotation {
-	if anns == nil {
-		return nil
-	}
-	result := make([]Annotation, len(anns))
-	for i, ann := range anns {
-		result[i] = Annotation{
-			Type: ann.Type,
-			URLCitation: URLCitation{
-				Title:         ann.URLCitation.Title,
-				URL:           ann.URLCitation.URL,
-				Content:       ann.URLCitation.Content,
-				PublishedDate: ann.URLCitation.PublishedDate,
-			},
-		}
-	}
-	return result
-}
-
-// buildAnnotationsFromToolCalls creates API annotations from agent tool calls
-func buildAnnotationsFromToolCalls(toolCalls []agent.ToolCall) []Annotation {
-	var annotations []Annotation
-	for _, tc := range toolCalls {
-		for _, r := range tc.Results {
-			annotations = append(annotations, Annotation{
-				Type: "url_citation",
-				URLCitation: URLCitation{
-					URL:           r.URL,
-					Title:         r.Title,
-					Content:       r.Content,
-					PublishedDate: r.PublishedDate,
-				},
-			})
-		}
-	}
-	return annotations
 }
 
 // buildFlatAnnotations creates URL citations (Responses API format)
@@ -213,7 +154,7 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 	log.Infof("Agent completed: %d tool calls", len(pctx.AgentResult.ToolCalls))
 
 	result := pctx.ResponderResult.(*pipeline.ResponderResultData)
-	annotations := buildAnnotationsFromToolCalls(pctx.AgentResult.ToolCalls)
+	annotations := pipeline.BuildAnnotations(pctx.AgentResult)
 
 	response := ChatCompletionResponse{
 		ID:      result.ID,
