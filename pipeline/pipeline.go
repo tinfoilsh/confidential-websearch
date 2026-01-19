@@ -39,6 +39,9 @@ func (p *Pipeline) Execute(ctx context.Context, req *Request, emitter EventEmitt
 	// Execute stages
 	for _, stage := range p.stages {
 		if err := stage.Execute(pctx); err != nil {
+			// Cancel context immediately to stop any background work
+			cancel()
+
 			// Transition to failed state
 			pctx.State.Transition(StateFailed, map[string]interface{}{
 				"stage": stage.Name(),
