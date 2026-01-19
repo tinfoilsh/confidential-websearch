@@ -9,6 +9,7 @@ import (
 
 	"github.com/tinfoilsh/confidential-websearch/agent"
 	"github.com/tinfoilsh/confidential-websearch/config"
+	"github.com/tinfoilsh/confidential-websearch/pipeline"
 )
 
 const (
@@ -18,9 +19,10 @@ const (
 
 // Server holds all dependencies for the HTTP handlers
 type Server struct {
-	Cfg    *config.Config
-	Client *tinfoil.Client
-	Agent  *agent.Agent
+	Cfg      *config.Config
+	Client   *tinfoil.Client
+	Agent    *agent.Agent
+	Pipeline *pipeline.Pipeline
 }
 
 // IncomingRequest represents the incoming chat request
