@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"strings"
 
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/option"
@@ -18,6 +19,11 @@ type Stage interface {
 // AgentRunner defines the interface for running the agent
 type AgentRunner interface {
 	Run(ctx context.Context, userQuery string) (*agent.Result, error)
+}
+
+// ConversationContextSetter is optionally implemented by agents that need conversation context
+type ConversationContextSetter interface {
+	SetConversationContext(context string)
 }
 
 // MessageBuilder defines the interface for building responder messages
@@ -94,6 +100,11 @@ func (s *AgentStage) Name() string { return "agent" }
 
 func (s *AgentStage) Execute(ctx *Context) error {
 	ctx.State.Transition(StateAgentStarted, map[string]interface{}{"query": ctx.UserQuery})
+
+	// Set conversation context if agent supports it (for PII detection)
+	if setter, ok := s.Agent.(ConversationContextSetter); ok {
+		setter.SetConversationContext(buildConversationContext(ctx.Request.Messages))
+	}
 
 	result, err := s.Agent.Run(ctx.Context, ctx.UserQuery)
 	if err != nil {
@@ -196,4 +207,20 @@ func BuildAnnotations(agentResult *agent.Result) []Annotation {
 		}
 	}
 	return annotations
+}
+
+// buildConversationContext formats conversation messages for PII detection context
+func buildConversationContext(messages []Message) string {
+	if len(messages) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	for _, msg := range messages {
+		sb.WriteString(msg.Role)
+		sb.WriteString(": ")
+		sb.WriteString(msg.Content)
+		sb.WriteString("\n")
+	}
+	return sb.String()
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/config"
 	"github.com/tinfoilsh/confidential-websearch/llm"
 	"github.com/tinfoilsh/confidential-websearch/pipeline"
+	"github.com/tinfoilsh/confidential-websearch/safeguard"
 	"github.com/tinfoilsh/confidential-websearch/search"
 )
 
@@ -42,13 +43,23 @@ func main() {
 		log.Fatalf("Failed to create search provider: %v", err)
 	}
 
-	agentInstance := agent.New(client, cfg.AgentModel, searcher)
+	baseAgent := agent.New(client, cfg.AgentModel, searcher)
 	responder := llm.NewTinfoilResponder(&client.Chat.Completions)
 	messageBuilder := llm.NewMessageBuilder()
 
+	// Wrap agent with safety checks if enabled
+	var agentRunner pipeline.AgentRunner = baseAgent
+	if cfg.EnablePIICheck || cfg.EnableInjectionCheck {
+		safeguardClient := safeguard.NewClient(client, cfg.SafeguardModel)
+		safeAgent := agent.NewSafeAgent(baseAgent, safeguardClient)
+		safeAgent.SetPIICheckEnabled(cfg.EnablePIICheck)
+		safeAgent.SetInjectionCheckEnabled(cfg.EnableInjectionCheck)
+		agentRunner = safeAgent
+	}
+
 	p := pipeline.NewPipeline([]pipeline.Stage{
 		&pipeline.ValidateStage{},
-		&pipeline.AgentStage{Agent: agentInstance},
+		&pipeline.AgentStage{Agent: agentRunner},
 		&pipeline.BuildMessagesStage{Builder: messageBuilder},
 		&pipeline.ResponderStage{Responder: responder},
 	}, api.RequestTimeout)
@@ -56,7 +67,7 @@ func main() {
 	srv := &api.Server{
 		Cfg:      cfg,
 		Client:   client,
-		Agent:    agentInstance,
+		Agent:    baseAgent,
 		Pipeline: p,
 	}
 
