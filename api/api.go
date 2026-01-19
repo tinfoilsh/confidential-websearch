@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,11 +8,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/openai/openai-go/v2/option"
-	"github.com/openai/openai-go/v2/responses"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/tinfoilsh/confidential-websearch/agent"
-	"github.com/tinfoilsh/confidential-websearch/llm"
 	"github.com/tinfoilsh/confidential-websearch/pipeline"
 )
 
@@ -183,100 +180,23 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 func (s *Server) handleStreamingChatCompletion(w http.ResponseWriter, r *http.Request, req *pipeline.Request, reqOpts []option.RequestOption) {
 	log.Infof("Processing streaming query (model: %s)", req.Model)
 
-	// Validate request before processing
-	if req.Model == "" {
-		jsonError(w, "model is required", http.StatusBadRequest)
-		return
-	}
-	userQuery := extractUserQuery(req.Messages)
-	if userQuery == "" {
-		jsonError(w, "at least one user message is required", http.StatusBadRequest)
-		return
-	}
-
 	emitter, err := NewSSEEmitter(w)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), RequestTimeout)
-	defer cancel()
-
-	// Run agent with streaming event callbacks
-	searchCallsSent := make(map[string]bool)
-	toolCallArgs := make(map[int]string)
-	toolCallIDs := make(map[int]string)
-
-	agentResult, agentErr := s.Agent.RunStreaming(ctx, userQuery,
-		func(event responses.ResponseStreamEventUnion) {
-			switch event.Type {
-			case "response.output_item.added":
-				if event.Item.Type == "function_call" {
-					fc := event.Item.AsFunctionCall()
-					toolCallIDs[int(event.OutputIndex)] = fc.CallID
-				}
-
-			case "response.function_call_arguments.delta":
-				idx := int(event.OutputIndex)
-				args := event.Delta
-				if args == "" {
-					args = event.Arguments
-				}
-				toolCallArgs[idx] += args
-
-				id := toolCallIDs[idx]
-				if id != "" && !searchCallsSent[id] {
-					var args struct {
-						Query string `json:"query"`
-					}
-					if json.Unmarshal([]byte(toolCallArgs[idx]), &args) == nil && args.Query != "" {
-						emitter.EmitSearchCall(id, "in_progress", args.Query)
-						searchCallsSent[id] = true
-					}
-				}
-			}
-		})
-
-	// Build set of successful search IDs and emit completion events
-	successfulSearchIDs := make(map[string]bool)
-	if agentResult != nil {
-		for _, tc := range agentResult.ToolCalls {
-			successfulSearchIDs[tc.ID] = true
-		}
+	pctx, err := s.Pipeline.Execute(r.Context(), req, emitter, reqOpts...)
+	if pctx != nil && pctx.Cancel != nil {
+		defer pctx.Cancel()
 	}
 
-	for id := range searchCallsSent {
-		status := "completed"
-		if !successfulSearchIDs[id] {
-			status = "failed"
-		}
-		emitter.EmitSearchCall(id, status, "")
-	}
-
-	if agentErr != nil {
-		emitter.EmitError(agentErr)
+	if err != nil {
+		emitter.EmitError(err)
 		return
 	}
 
-	log.Infof("Agent completed: %d tool calls", len(agentResult.ToolCalls))
-
-	// Build messages and call responder using pipeline components
-	messageBuilder := llm.NewMessageBuilder()
-	responderMessages := messageBuilder.Build(req.Messages, agentResult)
-
-	responder := llm.NewTinfoilResponder(&s.Client.Chat.Completions)
-	params := pipeline.ResponderParams{
-		Model:       req.Model,
-		Messages:    responderMessages,
-		Temperature: req.Temperature,
-		MaxTokens:   req.MaxTokens,
-	}
-
-	annotations := pipeline.BuildAnnotations(agentResult)
-	if err := responder.Stream(ctx, params, annotations, agentResult.AgentReasoning, emitter, reqOpts...); err != nil {
-		log.Errorf("Streaming error: %v", err)
-	}
+	log.Infof("Streaming completed: %d tool calls", len(pctx.AgentResult.ToolCalls))
 }
 
 func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {

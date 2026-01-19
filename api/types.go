@@ -7,7 +7,6 @@ import (
 	"github.com/openai/openai-go/v2/option"
 	"github.com/tinfoilsh/tinfoil-go"
 
-	"github.com/tinfoilsh/confidential-websearch/agent"
 	"github.com/tinfoilsh/confidential-websearch/config"
 	"github.com/tinfoilsh/confidential-websearch/pipeline"
 )
@@ -21,7 +20,6 @@ const (
 type Server struct {
 	Cfg      *config.Config
 	Client   *tinfoil.Client
-	Agent    *agent.Agent
 	Pipeline *pipeline.Pipeline
 }
 
