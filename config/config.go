@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strconv"
 )
 
 // LLM parameter constants
@@ -59,5 +60,9 @@ func getEnvBool(key string, fallback bool) bool {
 	if val == "" {
 		return fallback
 	}
-	return val == "true" || val == "1"
+	parsed, err := strconv.ParseBool(val)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
