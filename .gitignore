@@ -2,3 +2,7 @@
 confidential-websearch
 ext.yml
 tuf-repo-cdn.sigstore.dev.json
+evals/.env
+evals/venv/
+evals/__pycache__/
+evals/**/__pycache__/
