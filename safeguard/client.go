@@ -18,7 +18,6 @@ const DefaultModel = "gpt-oss-safeguard-120b"
 // CheckResult contains the result of a safety check
 type CheckResult struct {
 	Violation bool   `json:"violation"`
-	Category  string `json:"category"`
 	Rationale string `json:"rationale"`
 }
 
@@ -30,16 +29,12 @@ var checkResultSchema = map[string]interface{}{
 			"type":        "boolean",
 			"description": "Whether the content violates the policy",
 		},
-		"category": map[string]interface{}{
-			"type":        "string",
-			"description": "The category of violation or 'safe' if no violation",
-		},
 		"rationale": map[string]interface{}{
 			"type":        "string",
 			"description": "Brief explanation of the classification decision",
 		},
 	},
-	"required":             []string{"violation", "category", "rationale"},
+	"required":             []string{"violation", "rationale"},
 	"additionalProperties": false,
 }
 

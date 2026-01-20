@@ -105,7 +105,7 @@ func (s *SafeAgent) createPIIFilter(ctx context.Context, conversationContext str
 				}
 
 				if checkResult.Violation {
-					log.Warnf("PII detected in query: %s - %s", checkResult.Category, checkResult.Rationale)
+					log.Warnf("PII detected in query: %s", checkResult.Rationale)
 				}
 
 				results <- struct {
@@ -190,9 +190,9 @@ func (s *SafeAgent) filterInjectedResults(ctx context.Context, toolCalls []ToolC
 			}
 
 			if check.Violation {
-				log.Warnf("Prompt injection detected in result from %s: %s - %s",
+				log.Warnf("Prompt injection detected in result from %s: %s",
 					toolCalls[r.toolCallIdx].Results[r.resultIdx].URL,
-					check.Category, check.Rationale)
+					check.Rationale)
 			}
 
 			results <- checkResult{ref: r, flagged: check.Violation}
