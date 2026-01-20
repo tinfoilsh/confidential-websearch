@@ -26,6 +26,7 @@ type Agent struct {
 	client       *tinfoil.Client
 	model        string
 	searcher     search.Provider
+	filterMu     sync.RWMutex
 	searchFilter SearchFilter
 }
 
@@ -36,18 +37,29 @@ func New(client *tinfoil.Client, model string, searcher search.Provider) *Agent 
 
 // SetSearchFilter sets a filter to be applied before search execution.
 // The filter receives all queries and returns only those that should proceed.
+// This method is safe for concurrent use.
 func (a *Agent) SetSearchFilter(filter SearchFilter) {
+	a.filterMu.Lock()
 	a.searchFilter = filter
+	a.filterMu.Unlock()
+}
+
+// getSearchFilter returns the current search filter (thread-safe).
+func (a *Agent) getSearchFilter() SearchFilter {
+	a.filterMu.RLock()
+	filter := a.searchFilter
+	a.filterMu.RUnlock()
+	return filter
 }
 
 // Run executes a single-shot tool call to gather search results (non-streaming)
 func (a *Agent) Run(ctx context.Context, userQuery string) (*Result, error) {
-	return a.runWithFilter(ctx, userQuery, nil, a.searchFilter)
+	return a.runWithFilter(ctx, userQuery, nil, a.getSearchFilter())
 }
 
 // RunStreaming executes the agent with optional streaming support
 func (a *Agent) RunStreaming(ctx context.Context, userQuery string, onChunk ChunkCallback) (*Result, error) {
-	return a.runWithFilter(ctx, userQuery, onChunk, a.searchFilter)
+	return a.runWithFilter(ctx, userQuery, onChunk, a.getSearchFilter())
 }
 
 // RunWithFilter executes the agent with a specific search filter (thread-safe for concurrent use)
