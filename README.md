@@ -1,10 +1,12 @@
 # Confidential Web Search Proxy
 
-A proxy that augments LLM responses with real-time web search results, running inside a secure enclave. It uses a multi-model architecture with safety filtering:
+A proxy that augments LLM responses with real-time web search results, running inside a secure enclave.
 
-1. **Agent Model** (small, fast): Decides whether to search and generates queries
-2. **Safeguard Model**: Filters PII from queries and detects prompt injection in results
-3. **Responder Model** (from request): Generates the final response using search results
+Requests flow through a pipeline of specialized models that handle search decisions, safety filtering, and response generation:
+
+1. **Agent Model**: A small, fast model that decides whether a search is needed and generates queries
+2. **Safeguard Model**: Filters PII from outgoing queries and detects prompt injection in search results
+3. **Responder Model**: The user's requested model, which generates the final response using search context
 
 Uses the [Tinfoil Go SDK](https://github.com/tinfoilsh/tinfoil-go) for secure, attested communication with Tinfoil enclaves.
 
@@ -12,12 +14,12 @@ Uses the [Tinfoil Go SDK](https://github.com/tinfoilsh/tinfoil-go) for secure, a
 
 ```
 User Request
-  │ model: "kimi-k2"
+  │ model: "<responder-model>"
   │ Authorization: Bearer <api-key>
   ▼
 ┌─────────────────────┐
 │    Agent Model      │ ──► Decides: search needed?
-│ (gpt-oss-120b-free) │     Generates search queries
+│   (small, fast)     │     Generates search queries
 └─────────────────────┘
           │
           ▼ search queries
@@ -43,7 +45,7 @@ User Request
           ▼
 ┌─────────────────────────────────────┐
 │         Responder Model             │
-│       (from request: kimi-k2)       │
+│      (from user request)            │
 └─────────────────────────────────────┘
           │
           ▼ (streaming)
@@ -69,8 +71,8 @@ go run . -v
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `EXA_API_KEY` | - | Exa AI Search API key (required) |
-| `AGENT_MODEL` | `gpt-oss-120b-free` | Agent model for search decisions |
-| `SAFEGUARD_MODEL` | `gpt-oss-safeguard-120b` | Model for safety checks |
+| `AGENT_MODEL` | - | Model for search decisions (small, fast) |
+| `SAFEGUARD_MODEL` | - | Model for safety filtering |
 | `ENABLE_PII_CHECK` | `true` | Enable PII detection in search queries |
 | `ENABLE_INJECTION_CHECK` | `true` | Enable prompt injection detection in results |
 | `LISTEN_ADDR` | `:8089` | Address to listen on |
@@ -86,7 +88,7 @@ curl http://localhost:8089/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TINFOIL_API_KEY" \
   -d '{
-    "model": "kimi-k2",
+    "model": "<responder-model>",
     "messages": [{"role": "user", "content": "What is the latest news about SpaceX?"}],
     "stream": true
   }'
@@ -107,7 +109,7 @@ curl http://localhost:8089/v1/responses \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TINFOIL_API_KEY" \
   -d '{
-    "model": "kimi-k2",
+    "model": "<responder-model>",
     "input": "What is the latest news about SpaceX?"
   }'
 ```
