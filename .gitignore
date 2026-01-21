@@ -6,3 +6,5 @@ evals/.env
 evals/venv/
 evals/__pycache__/
 evals/**/__pycache__/
+evals/*_checkpoint.json
+evals/*_results.json
