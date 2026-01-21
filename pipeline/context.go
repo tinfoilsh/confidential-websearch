@@ -17,12 +17,26 @@ const (
 	FormatResponses
 )
 
+// ReasoningSummaryPart represents a part of the reasoning summary (mirrors agent.ReasoningSummaryPart)
+type ReasoningSummaryPart struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// ReasoningItem represents a reasoning item from the Responses API (mirrors agent.ReasoningItem)
+type ReasoningItem struct {
+	ID      string                 `json:"id"`
+	Type    string                 `json:"type"`
+	Summary []ReasoningSummaryPart `json:"summary"`
+}
+
 // Message represents a chat message
 type Message struct {
-	Role            string       `json:"role"`
-	Content         string       `json:"content"`
-	Annotations     []Annotation `json:"annotations,omitempty"`
-	SearchReasoning string       `json:"search_reasoning,omitempty"`
+	Role            string          `json:"role"`
+	Content         string          `json:"content"`
+	Annotations     []Annotation    `json:"annotations,omitempty"`
+	SearchReasoning string          `json:"search_reasoning,omitempty"`
+	ReasoningItems  []ReasoningItem `json:"reasoning_items,omitempty"`
 }
 
 // Annotation represents a url_citation annotation

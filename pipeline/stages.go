@@ -2,7 +2,6 @@ package pipeline
 
 import (
 	"context"
-	"strings"
 
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/option"
@@ -21,10 +20,9 @@ type AgentRunner interface {
 	Run(ctx context.Context, userQuery string) (*agent.Result, error)
 }
 
-// AgentWithContext can receive conversation context per-request (thread-safe)
-type AgentWithContext interface {
-	AgentRunner
-	RunWithContext(ctx context.Context, userQuery string, conversationContext string) (*agent.Result, error)
+// AgentWithFullContext can receive full conversation context with reasoning items
+type AgentWithFullContext interface {
+	RunWithContext(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error)
 }
 
 // MessageBuilder defines the interface for building responder messages
@@ -105,10 +103,10 @@ func (s *AgentStage) Execute(ctx *Context) error {
 	var result *agent.Result
 	var err error
 
-	// Use RunWithContext if agent supports it (thread-safe conversation context for PII detection)
-	if agentWithCtx, ok := s.Agent.(AgentWithContext); ok {
-		conversationCtx := buildConversationContext(ctx.Request.Messages)
-		result, err = agentWithCtx.RunWithContext(ctx.Context, ctx.UserQuery, conversationCtx)
+	// Use RunWithContext if agent supports full context (system prompt + conversation + reasoning)
+	if agentWithCtx, ok := s.Agent.(AgentWithFullContext); ok {
+		systemPrompt, messages := extractAgentContext(ctx.Request.Messages)
+		result, err = agentWithCtx.RunWithContext(ctx.Context, messages, systemPrompt, nil)
 	} else {
 		result, err = s.Agent.Run(ctx.Context, ctx.UserQuery)
 	}
@@ -230,40 +228,36 @@ func BuildAnnotations(agentResult *agent.Result) []Annotation {
 	return annotations
 }
 
-// buildConversationContext formats conversation messages for the agent, including
-// search reasoning and sources from previous turns so it can make informed follow-up decisions.
-func buildConversationContext(messages []Message) string {
-	if len(messages) == 0 {
-		return ""
-	}
-
-	var sb strings.Builder
+// extractAgentContext extracts the system prompt and converts pipeline messages
+// to agent.ContextMessage format for the new RunWithContext method.
+func extractAgentContext(messages []Message) (systemPrompt string, agentMessages []agent.ContextMessage) {
 	for _, msg := range messages {
-		sb.WriteString(msg.Role)
-		sb.WriteString(": ")
-		sb.WriteString(msg.Content)
-		sb.WriteString("\n")
-
-		// Include search reasoning from previous assistant responses
-		if msg.Role == "assistant" && msg.SearchReasoning != "" {
-			sb.WriteString("[Previous search reasoning: ")
-			sb.WriteString(msg.SearchReasoning)
-			sb.WriteString("]\n")
+		if msg.Role == "system" {
+			systemPrompt = msg.Content
+			continue
 		}
 
-		// Include sources summary from previous searches
-		if msg.Role == "assistant" && len(msg.Annotations) > 0 {
-			sb.WriteString("[Sources used: ")
-			for i, ann := range msg.Annotations {
-				if ann.Type == "url_citation" {
-					if i > 0 {
-						sb.WriteString(", ")
-					}
-					sb.WriteString(ann.URLCitation.Title)
-				}
+		agentMsg := agent.ContextMessage{
+			Role:    msg.Role,
+			Content: msg.Content,
+		}
+
+		// Convert reasoning items from pipeline format to agent format
+		for _, ri := range msg.ReasoningItems {
+			agentRI := agent.ReasoningItem{
+				ID:   ri.ID,
+				Type: ri.Type,
 			}
-			sb.WriteString("]\n")
+			for _, s := range ri.Summary {
+				agentRI.Summary = append(agentRI.Summary, agent.ReasoningSummaryPart{
+					Type: s.Type,
+					Text: s.Text,
+				})
+			}
+			agentMsg.ReasoningItems = append(agentMsg.ReasoningItems, agentRI)
 		}
+
+		agentMessages = append(agentMessages, agentMsg)
 	}
-	return sb.String()
+	return
 }
