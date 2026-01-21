@@ -128,7 +128,7 @@ Blocks search queries that would leak sensitive personally identifiable informat
 - Bank account numbers, Credit card numbers
 - Medical record numbers, Health insurance IDs
 
-Does NOT block: names, email addresses, phone numbers, addresses (these are commonly searched).
+Also blocks email addresses and phone numbers (these uniquely identify individuals). Does NOT block: names, addresses, or dates alone (these are commonly searched and don't uniquely identify someone). Combinations that identify a specific person (e.g., "John Smith, DOB 03/15/1985") are also blocked.
 
 ### Prompt Injection Detection
 
