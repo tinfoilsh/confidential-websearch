@@ -22,7 +22,7 @@ class CheckResult:
 
     violation: bool
     rationale: str
-    category: str = ""
+    pii_types: list[str] | None = None
 
 
 class SafeguardClient:
@@ -92,8 +92,13 @@ class SafeguardClient:
                                     "type": "string",
                                     "description": "Brief explanation of the classification decision",
                                 },
+                                "pii_types": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "Types of PII detected (e.g., 'email', 'phone', 'ssn', 'name', 'address', 'dob'). Empty if no violation.",
+                                },
                             },
-                            "required": ["violation", "rationale"],
+                            "required": ["violation", "rationale", "pii_types"],
                             "additionalProperties": False,
                         },
                     },
@@ -117,6 +122,7 @@ class SafeguardClient:
         return CheckResult(
             violation=result["violation"],
             rationale=result["rationale"],
+            pii_types=result.get("pii_types"),
         )
 
 
