@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -153,39 +154,96 @@ func TestStripCitationMarkers(t *testing.T) {
 	}
 }
 
-func TestStripCitationMarkersFromChunk(t *testing.T) {
+func TestUpdateChunkContent(t *testing.T) {
 	tests := []struct {
-		name            string
-		chunkData       string
-		originalContent string
-		expectChanged   bool
+		name       string
+		chunkData  string
+		newContent string
+		wantJSON   bool
 	}{
 		{
-			name:            "content with citation",
-			chunkData:       `{"choices":[{"delta":{"content":"Hello【1】"}}]}`,
-			originalContent: "Hello【1】",
-			expectChanged:   true,
+			name:       "update content",
+			chunkData:  `{"choices":[{"delta":{"content":"Hello【1】"}}]}`,
+			newContent: "Hello",
+			wantJSON:   true,
 		},
 		{
-			name:            "content without citation",
-			chunkData:       `{"choices":[{"delta":{"content":"Hello"}}]}`,
-			originalContent: "Hello",
-			expectChanged:   false,
-		},
-		{
-			name:            "invalid json",
-			chunkData:       `not json`,
-			originalContent: "Hello【1】",
-			expectChanged:   false,
+			name:       "invalid json returns original",
+			chunkData:  `not json`,
+			newContent: "Hello",
+			wantJSON:   false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := stripCitationMarkersFromChunk(tt.chunkData, tt.originalContent)
-			changed := result != tt.chunkData
-			if changed != tt.expectChanged {
-				t.Errorf("expected changed=%v, got changed=%v", tt.expectChanged, changed)
+			result := updateChunkContent(tt.chunkData, tt.newContent)
+			if tt.wantJSON {
+				if !strings.Contains(result, tt.newContent) {
+					t.Errorf("expected result to contain %q, got %q", tt.newContent, result)
+				}
+			} else {
+				if result != tt.chunkData {
+					t.Errorf("expected unchanged chunkData, got %q", result)
+				}
+			}
+		})
+	}
+}
+
+func TestStreamingCitationStripper(t *testing.T) {
+	tests := []struct {
+		name     string
+		chunks   []string
+		expected string
+	}{
+		{
+			name:     "marker in single chunk",
+			chunks:   []string{"Hello【1】world"},
+			expected: "Helloworld",
+		},
+		{
+			name:     "marker spans two chunks",
+			chunks:   []string{"Hello【1", "†L1-L9】world"},
+			expected: "Helloworld",
+		},
+		{
+			name:     "marker spans three chunks",
+			chunks:   []string{"Hello【", "4†L1", "-L9】world"},
+			expected: "Helloworld",
+		},
+		{
+			name:     "multiple markers",
+			chunks:   []string{"A【1】B【2】C"},
+			expected: "ABC",
+		},
+		{
+			name:     "no markers",
+			chunks:   []string{"Hello ", "world"},
+			expected: "Hello world",
+		},
+		{
+			name:     "incomplete marker at end",
+			chunks:   []string{"Hello【1"},
+			expected: "Hello【1",
+		},
+		{
+			name:     "invalid marker (no digit)",
+			chunks:   []string{"Hello【abc】world"},
+			expected: "Hello【abc】world",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stripper := NewStreamingCitationStripper()
+			var result strings.Builder
+			for _, chunk := range tt.chunks {
+				result.WriteString(stripper.Process(chunk))
+			}
+			result.WriteString(stripper.Flush())
+			if result.String() != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, result.String())
 			}
 		})
 	}
