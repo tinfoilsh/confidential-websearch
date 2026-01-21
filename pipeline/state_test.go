@@ -19,21 +19,17 @@ func TestNewStateTracker(t *testing.T) {
 
 func TestValidTransitions(t *testing.T) {
 	tests := []struct {
-		name     string
-		from     State
-		to       State
-		wantErr  bool
+		name    string
+		from    State
+		to      State
+		wantErr bool
 	}{
-		{"received to agent_started", StateReceived, StateAgentStarted, false},
+		{"received to processing", StateReceived, StateProcessing, false},
 		{"received to failed", StateReceived, StateFailed, false},
-		{"agent_started to search_started", StateAgentStarted, StateSearchStarted, false},
-		{"agent_started to agent_completed", StateAgentStarted, StateAgentCompleted, false},
-		{"search_started to search_completed", StateSearchStarted, StateSearchCompleted, false},
-		{"search_completed to agent_completed", StateSearchCompleted, StateAgentCompleted, false},
-		{"agent_completed to responder_started", StateAgentCompleted, StateResponderStarted, false},
-		{"responder_started to streaming", StateResponderStarted, StateResponderStreaming, false},
-		{"responder_started to completed", StateResponderStarted, StateCompleted, false},
-		{"streaming to completed", StateResponderStreaming, StateCompleted, false},
+		{"processing to responding", StateProcessing, StateResponding, false},
+		{"processing to failed", StateProcessing, StateFailed, false},
+		{"responding to completed", StateResponding, StateCompleted, false},
+		{"responding to failed", StateResponding, StateFailed, false},
 	}
 
 	for _, tt := range tests {
@@ -63,11 +59,10 @@ func TestInvalidTransitions(t *testing.T) {
 		to   State
 	}{
 		{"received to completed", StateReceived, StateCompleted},
-		{"received to responder_started", StateReceived, StateResponderStarted},
-		{"agent_started to completed", StateAgentStarted, StateCompleted},
-		{"completed to anything", StateCompleted, StateAgentStarted},
+		{"received to responding", StateReceived, StateResponding},
+		{"processing to completed", StateProcessing, StateCompleted},
+		{"completed to anything", StateCompleted, StateProcessing},
 		{"failed to anything", StateFailed, StateReceived},
-		{"search_started to agent_started", StateSearchStarted, StateAgentStarted},
 	}
 
 	for _, tt := range tests {
@@ -93,9 +88,9 @@ func TestInvalidTransitions(t *testing.T) {
 func TestTransitionHistory(t *testing.T) {
 	tracker := NewStateTracker()
 
-	tracker.Transition(StateAgentStarted, map[string]interface{}{"query": "test"})
-	tracker.Transition(StateAgentCompleted, nil)
-	tracker.Transition(StateResponderStarted, nil)
+	tracker.Transition(StateProcessing, map[string]interface{}{"query": "test"})
+	tracker.Transition(StateResponding, nil)
+	tracker.Transition(StateCompleted, nil)
 
 	history := tracker.History()
 	if len(history) != 3 {
@@ -106,9 +101,9 @@ func TestTransitionHistory(t *testing.T) {
 		from State
 		to   State
 	}{
-		{StateReceived, StateAgentStarted},
-		{StateAgentStarted, StateAgentCompleted},
-		{StateAgentCompleted, StateResponderStarted},
+		{StateReceived, StateProcessing},
+		{StateProcessing, StateResponding},
+		{StateResponding, StateCompleted},
 	}
 
 	for i, expected := range expectedTransitions {
@@ -128,7 +123,7 @@ func TestTransitionTimestamps(t *testing.T) {
 	tracker := NewStateTracker()
 
 	before := time.Now()
-	tracker.Transition(StateAgentStarted, nil)
+	tracker.Transition(StateProcessing, nil)
 	after := time.Now()
 
 	history := tracker.History()
@@ -148,7 +143,7 @@ func TestDuration(t *testing.T) {
 	// Sleep briefly to ensure measurable duration
 	time.Sleep(10 * time.Millisecond)
 
-	tracker.Transition(StateAgentStarted, nil)
+	tracker.Transition(StateProcessing, nil)
 
 	duration := tracker.Duration(StateReceived)
 	if duration < 10*time.Millisecond {
@@ -158,11 +153,11 @@ func TestDuration(t *testing.T) {
 
 func TestDurationCurrentState(t *testing.T) {
 	tracker := NewStateTracker()
-	tracker.Transition(StateAgentStarted, nil)
+	tracker.Transition(StateProcessing, nil)
 
 	time.Sleep(10 * time.Millisecond)
 
-	duration := tracker.Duration(StateAgentStarted)
+	duration := tracker.Duration(StateProcessing)
 	if duration < 10*time.Millisecond {
 		t.Errorf("expected current state duration >= 10ms, got %v", duration)
 	}
@@ -171,7 +166,7 @@ func TestDurationCurrentState(t *testing.T) {
 func TestDurationUnvisitedState(t *testing.T) {
 	tracker := NewStateTracker()
 
-	duration := tracker.Duration(StateSearchStarted)
+	duration := tracker.Duration(StateResponding)
 	if duration != 0 {
 		t.Errorf("expected 0 duration for unvisited state, got %v", duration)
 	}
@@ -180,12 +175,8 @@ func TestDurationUnvisitedState(t *testing.T) {
 func TestAnyStateCanTransitionToFailed(t *testing.T) {
 	states := []State{
 		StateReceived,
-		StateAgentStarted,
-		StateSearchStarted,
-		StateSearchCompleted,
-		StateAgentCompleted,
-		StateResponderStarted,
-		StateResponderStreaming,
+		StateProcessing,
+		StateResponding,
 	}
 
 	for _, state := range states {

@@ -10,28 +10,20 @@ import (
 type State string
 
 const (
-	StateReceived           State = "received"
-	StateAgentStarted       State = "agent_started"
-	StateSearchStarted      State = "search_started"
-	StateSearchCompleted    State = "search_completed"
-	StateAgentCompleted     State = "agent_completed"
-	StateResponderStarted   State = "responder_started"
-	StateResponderStreaming State = "responder_streaming"
-	StateCompleted          State = "completed"
-	StateFailed             State = "failed"
+	StateReceived   State = "received"
+	StateProcessing State = "processing"
+	StateResponding State = "responding"
+	StateCompleted  State = "completed"
+	StateFailed     State = "failed"
 )
 
 // validTransitions defines which state transitions are allowed
 var validTransitions = map[State][]State{
-	StateReceived:           {StateAgentStarted, StateFailed},
-	StateAgentStarted:       {StateSearchStarted, StateAgentCompleted, StateFailed},
-	StateSearchStarted:      {StateSearchCompleted, StateFailed},
-	StateSearchCompleted:    {StateAgentCompleted, StateFailed},
-	StateAgentCompleted:     {StateResponderStarted, StateFailed},
-	StateResponderStarted:   {StateResponderStreaming, StateCompleted, StateFailed},
-	StateResponderStreaming: {StateCompleted, StateFailed},
-	StateCompleted:          {},
-	StateFailed:             {},
+	StateReceived:   {StateProcessing, StateFailed},
+	StateProcessing: {StateResponding, StateFailed},
+	StateResponding: {StateCompleted, StateFailed},
+	StateCompleted:  {},
+	StateFailed:     {},
 }
 
 // StateTransition records a state change
