@@ -31,8 +31,7 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 
 from client import ArbiterClient, CheckResult, SafeguardClient
-from data_loaders import load_pii_dataset, load_pint_dataset
-from data_loaders.pint import load_deepset_injection_dataset
+from data_loaders import load_deepset_injection_dataset, load_injection_dataset, load_pii_dataset
 from metrics import EvalMetrics, calculate_metrics
 from prompts import PII_LEAKAGE_POLICY, PROMPT_INJECTION_POLICY
 
@@ -69,8 +68,8 @@ def run_prompt_injection_eval(
         print("Loading deepset/prompt-injections dataset...")
         samples = load_deepset_injection_dataset(max_samples=max_samples)
     else:
-        print("Loading PINT benchmark dataset...")
-        samples = load_pint_dataset(max_samples=max_samples)
+        print("Loading injection dataset with Common Crawl negatives...")
+        samples = load_injection_dataset(max_samples=max_samples)
 
     print(f"Loaded {len(samples)} samples")
     if arbiter:
