@@ -22,9 +22,6 @@ class PIISample:
     source: str
 
 
-NAME_ONLY_LABELS = {"GIVENNAME", "SURNAME"}
-
-
 def load_pii_dataset(
     max_samples: int | None = None,
     include_negatives: bool = True,
@@ -54,9 +51,7 @@ def _load_ai4privacy_samples(max_samples: int = 500) -> list[PIISample]:
     Load samples from the ai4privacy dataset.
 
     Uses the dataset's native `privacy_mask` annotations.
-    Labels based on policy:
-    - Name only (GIVENNAME/SURNAME) → not a violation
-    - Any other PII (or name + other PII) → violation
+    All samples are labeled as containing sensitive PII (ground truth from dataset).
     """
     dataset = load_dataset("ai4privacy/pii-masking-400k", split="train")
 
@@ -72,13 +67,12 @@ def _load_ai4privacy_samples(max_samples: int = 500) -> list[PIISample]:
             continue
 
         labels = {entity["label"] for entity in privacy_mask}
-        has_only_name = labels.issubset(NAME_ONLY_LABELS)
-        pii_type = next(iter(labels - NAME_ONLY_LABELS), next(iter(labels)))
+        pii_type = next(iter(labels))
 
         samples.append(
             PIISample(
                 text=text,
-                has_sensitive_pii=not has_only_name,
+                has_sensitive_pii=True,
                 pii_type=pii_type,
                 source="ai4privacy",
             )
