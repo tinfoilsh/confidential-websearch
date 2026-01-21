@@ -30,7 +30,7 @@ import random
 from dotenv import load_dotenv
 from tqdm import tqdm
 
-from client import ArbiterClient, CheckResult, SafeguardClient
+from client import CheckResult, DeepSeekLabelerClient, SafeguardClient
 from data_loaders import load_deepset_injection_dataset, load_injection_dataset, load_pii_dataset
 from metrics import EvalMetrics, calculate_metrics
 from prompts import PII_LEAKAGE_POLICY, PROMPT_INJECTION_POLICY
@@ -44,7 +44,7 @@ def run_prompt_injection_eval(
     use_deepset: bool = False,
     seed: int = 0,
     mimic_production_wrapper: bool = True,
-    arbiter: ArbiterClient | None = None,
+    labeler: DeepSeekLabelerClient | None = None,
 ) -> tuple[EvalMetrics, list[dict]]:
     """
     Evaluate the prompt injection detection policy.
@@ -55,7 +55,7 @@ def run_prompt_injection_eval(
         use_deepset: Use deepset dataset instead of PINT
         seed: Random seed for shuffling
         mimic_production_wrapper: Wrap content in Title/URL/Content format
-        arbiter: Optional arbiter client to resolve disagreements
+        labeler: Optional DeepSeek labeler for ground truth when classifier disagrees
 
     Returns:
         Tuple of (metrics, detailed_results)
@@ -72,8 +72,8 @@ def run_prompt_injection_eval(
         samples = load_injection_dataset(max_samples=max_samples)
 
     print(f"Loaded {len(samples)} samples")
-    if arbiter:
-        print("Arbiter enabled: will resolve classifier vs dataset disagreements")
+    if labeler:
+        print("DeepSeek labeler enabled: will provide ground truth when classifier disagrees")
 
     if seed is not None:
         random.Random(seed).shuffle(samples)
@@ -82,8 +82,8 @@ def run_prompt_injection_eval(
     y_pred = []
     detailed_results = []
     error_count = 0
-    arbiter_calls = 0
-    arbiter_overrides = 0
+    labeler_calls = 0
+    labeler_overrides = 0
 
     for sample in tqdm(samples, desc="Evaluating"):
         try:
@@ -97,25 +97,23 @@ def run_prompt_injection_eval(
 
             expected = sample.is_injection
             predicted = result.violation
-            arbiter_decision = None
+            labeler_decision = None
 
-            # If classifier says safe but dataset says violation, ask arbiter
-            if arbiter and expected and not predicted:
-                arbiter_calls += 1
+            # If classifier says safe but dataset says violation, ask labeler for ground truth
+            if labeler and expected and not predicted:
+                labeler_calls += 1
                 try:
-                    classifier_correct, explanation = arbiter.arbitrate(
-                        sample.text, result.rationale, eval_type="injection"
-                    )
-                    arbiter_decision = {
-                        "classifier_correct": classifier_correct,
+                    is_injection, explanation = labeler.label_injection(sample.text)
+                    labeler_decision = {
+                        "is_injection": is_injection,
                         "explanation": explanation,
                     }
-                    if classifier_correct:
-                        # Arbiter agrees with classifier - override the expected label
+                    if not is_injection:
+                        # Labeler says not injection - override the expected label
                         expected = False
-                        arbiter_overrides += 1
+                        labeler_overrides += 1
                 except Exception as e:
-                    arbiter_decision = {"error": str(e)}
+                    labeler_decision = {"error": str(e)}
 
             y_true.append(expected)
             y_pred.append(predicted)
@@ -128,7 +126,7 @@ def run_prompt_injection_eval(
                 "correct": expected == predicted,
                 "rationale": result.rationale,
                 "source": sample.source,
-                "arbiter": arbiter_decision,
+                "labeler": labeler_decision,
             })
 
         except Exception as e:
@@ -144,8 +142,8 @@ def run_prompt_injection_eval(
 
     metrics = calculate_metrics(y_true, y_pred)
     print(metrics)
-    if arbiter:
-        print(f"\nArbiter stats: {arbiter_calls} calls, {arbiter_overrides} overrides (dataset label was wrong)")
+    if labeler:
+        print(f"\nLabeler stats: {labeler_calls} calls, {labeler_overrides} overrides (dataset label was wrong)")
     if error_count:
         print(f"Note: {error_count} samples failed to evaluate and were excluded from metrics.")
 
@@ -156,7 +154,7 @@ def run_pii_eval(
     client: SafeguardClient,
     max_samples: int | None = None,
     seed: int = 0,
-    arbiter: ArbiterClient | None = None,
+    labeler: DeepSeekLabelerClient | None = None,
 ) -> tuple[EvalMetrics, list[dict]]:
     """
     Evaluate the PII leakage detection policy.
@@ -164,7 +162,7 @@ def run_pii_eval(
     Args:
         client: Safeguard client instance
         max_samples: Maximum samples to evaluate
-        arbiter: Optional arbiter client to resolve disagreements
+        labeler: Optional DeepSeek labeler for ground truth when classifier disagrees
 
     Returns:
         Tuple of (metrics, detailed_results)
@@ -176,8 +174,8 @@ def run_pii_eval(
     print("Loading PII dataset...")
     samples = load_pii_dataset(max_samples=max_samples)
     print(f"Loaded {len(samples)} samples")
-    if arbiter:
-        print("Arbiter enabled: will resolve classifier vs dataset disagreements")
+    if labeler:
+        print("DeepSeek labeler enabled: will provide ground truth when classifier disagrees")
 
     if seed is not None:
         random.Random(seed).shuffle(samples)
@@ -186,8 +184,8 @@ def run_pii_eval(
     y_pred = []
     detailed_results = []
     error_count = 0
-    arbiter_calls = 0
-    arbiter_overrides = 0
+    labeler_calls = 0
+    labeler_overrides = 0
 
     for sample in tqdm(samples, desc="Evaluating"):
         try:
@@ -195,25 +193,23 @@ def run_pii_eval(
 
             expected = sample.has_sensitive_pii
             predicted = result.violation
-            arbiter_decision = None
+            labeler_decision = None
 
-            # If classifier says safe but dataset says violation, ask arbiter
-            if arbiter and expected and not predicted:
-                arbiter_calls += 1
+            # If classifier says safe but dataset says violation, ask labeler for ground truth
+            if labeler and expected and not predicted:
+                labeler_calls += 1
                 try:
-                    classifier_correct, explanation = arbiter.arbitrate(
-                        sample.text, result.rationale
-                    )
-                    arbiter_decision = {
-                        "classifier_correct": classifier_correct,
+                    contains_pii, explanation = labeler.label_pii(sample.text)
+                    labeler_decision = {
+                        "contains_pii": contains_pii,
                         "explanation": explanation,
                     }
-                    if classifier_correct:
-                        # Arbiter agrees with classifier - override the expected label
+                    if not contains_pii:
+                        # Labeler says no PII - override the expected label
                         expected = False
-                        arbiter_overrides += 1
+                        labeler_overrides += 1
                 except Exception as e:
-                    arbiter_decision = {"error": str(e)}
+                    labeler_decision = {"error": str(e)}
 
             y_true.append(expected)
             y_pred.append(predicted)
@@ -227,7 +223,7 @@ def run_pii_eval(
                 "correct": expected == predicted,
                 "rationale": result.rationale,
                 "source": sample.source,
-                "arbiter": arbiter_decision,
+                "labeler": labeler_decision,
             })
 
         except Exception as e:
@@ -243,8 +239,8 @@ def run_pii_eval(
 
     metrics = calculate_metrics(y_true, y_pred)
     print(metrics)
-    if arbiter:
-        print(f"\nArbiter stats: {arbiter_calls} calls, {arbiter_overrides} overrides (dataset label was wrong)")
+    if labeler:
+        print(f"\nLabeler stats: {labeler_calls} calls, {labeler_overrides} overrides (dataset label was wrong)")
     if error_count:
         print(f"Note: {error_count} samples failed to evaluate and were excluded from metrics.")
 
@@ -328,9 +324,9 @@ def main():
         help="Do NOT mimic production Title/URL/Content wrapper for prompt-injection eval",
     )
     parser.add_argument(
-        "--no-arbiter",
+        "--no-labeler",
         action="store_true",
-        help="Disable kimi-k2-thinking arbiter (arbiter is ON by default for both evals)",
+        help="Disable DeepSeek R1 labeler (labeler is ON by default for both evals)",
     )
     args = parser.parse_args()
 
@@ -347,7 +343,7 @@ def main():
         "evaluations": {},
     }
 
-    arbiter = None if args.no_arbiter else ArbiterClient()
+    labeler = None if args.no_labeler else DeepSeekLabelerClient()
 
     if args.eval in ("prompt-injection", "all"):
         metrics, results = run_prompt_injection_eval(
@@ -356,7 +352,7 @@ def main():
             use_deepset=args.use_deepset,
             seed=None if args.seed == -1 else args.seed,
             mimic_production_wrapper=not args.no_prod_wrapper,
-            arbiter=arbiter,
+            labeler=labeler,
         )
         all_results["evaluations"]["prompt_injection"] = {
             "metrics": asdict(metrics),
@@ -370,7 +366,7 @@ def main():
             client,
             max_samples=args.max_samples,
             seed=None if args.seed == -1 else args.seed,
-            arbiter=arbiter,
+            labeler=labeler,
         )
         all_results["evaluations"]["pii"] = {
             "metrics": asdict(metrics),
