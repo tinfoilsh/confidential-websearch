@@ -440,8 +440,8 @@ def main():
     parser.add_argument(
         "--dataset-dir",
         type=str,
-        default=str(Path.home() / "Desktop/pii-analysis/pii_dataset"),
-        help="Path to customer chat dataset directory",
+        default=None,
+        help="Path to customer chat dataset directory (auto-downloads if not specified)",
     )
     parser.add_argument(
         "--max-conversations",
