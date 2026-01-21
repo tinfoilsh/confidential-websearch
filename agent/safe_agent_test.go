@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
@@ -106,10 +107,10 @@ func TestCreatePIIFilter_EmptyQueries(t *testing.T) {
 }
 
 func TestCreatePIIFilter_AllowsCleanQueries(t *testing.T) {
-	checkCount := 0
+	var checkCount atomic.Int32
 	mockClient := &MockSafeguardClient{
 		CheckFunc: func(ctx context.Context, policy, content string) (*safeguard.CheckResult, error) {
-			checkCount++
+			checkCount.Add(1)
 			return &safeguard.CheckResult{Violation: false, Rationale: "no PII detected"}, nil
 		},
 	}
@@ -128,8 +129,8 @@ func TestCreatePIIFilter_AllowsCleanQueries(t *testing.T) {
 		t.Errorf("expected 2 queries allowed, got %d", len(result))
 	}
 
-	if checkCount != 2 {
-		t.Errorf("expected 2 checks, got %d", checkCount)
+	if checkCount.Load() != 2 {
+		t.Errorf("expected 2 checks, got %d", checkCount.Load())
 	}
 }
 
