@@ -134,9 +134,14 @@ func (a *Agent) runWithContext(ctx context.Context, messages []ContextMessage, s
 	var reasoningItems []ReasoningItem
 
 	if onChunk != nil {
-		stream := a.client.Responses.NewStreaming(ctx, params)
+		// Create cancellable context for early abort
+		streamCtx, cancelStream := context.WithCancel(ctx)
+		defer cancelStream()
+
+		stream := a.client.Responses.NewStreaming(streamCtx, params)
 
 		var currentReasoningItem *ReasoningItem
+		aborted := false
 
 		for stream.Next() {
 			event := stream.Current()
@@ -159,6 +164,11 @@ func (a *Agent) runWithContext(ctx context.Context, messages []ContextMessage, s
 						ID:   ri.ID,
 						Type: "reasoning",
 					}
+				} else if event.Item.Type == "message" {
+					// Agent is generating content instead of tool calls - abort early
+					log.Debug("Agent starting content generation, aborting (no search needed)")
+					cancelStream()
+					aborted = true
 				}
 
 			case "response.output_item.done":
@@ -186,9 +196,16 @@ func (a *Agent) runWithContext(ctx context.Context, messages []ContextMessage, s
 					functionCalls[idx].arguments.WriteString(args)
 				}
 			}
+
+			if aborted {
+				break
+			}
 		}
-		if err := stream.Err(); err != nil {
-			return nil, fmt.Errorf("agent streaming failed: %w", err)
+		// Only check for errors if we didn't abort intentionally
+		if !aborted {
+			if err := stream.Err(); err != nil {
+				return nil, fmt.Errorf("agent streaming failed: %w", err)
+			}
 		}
 	} else {
 		resp, err := a.client.Responses.New(ctx, params)
