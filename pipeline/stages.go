@@ -168,8 +168,11 @@ func (s *ResponderStage) Execute(ctx *Context) error {
 	if ctx.IsStreaming() {
 		ctx.State.Transition(StateResponderStreaming, nil)
 
-		// Emit search completion events before streaming response content
+		// Emit blocked search events first, then completed events
 		if ctx.AgentResult != nil && ctx.Emitter != nil {
+			for _, bq := range ctx.AgentResult.BlockedQueries {
+				ctx.Emitter.EmitSearchCall(bq.ID, "blocked", bq.Query, bq.Reason)
+			}
 			for _, tc := range ctx.AgentResult.ToolCalls {
 				ctx.Emitter.EmitSearchCall(tc.ID, "completed", tc.Query, "")
 			}
