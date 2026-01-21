@@ -187,8 +187,8 @@ class SearchQueryGenerator:
                             query = args.get("query", "").strip()
                             if query:
                                 queries.append(query)
-                        except json.JSONDecodeError:
-                            pass
+                        except json.JSONDecodeError as e:
+                            print(f"Warning: Failed to parse tool call arguments: {e}")
             return queries
 
         except Exception as e:
@@ -245,6 +245,7 @@ def run_e2e_pii_eval(
             print(f"Resuming from checkpoint at index {start_index}")
 
     # Run evaluation
+    idx = start_index  # Initialize for KeyboardInterrupt safety
     try:
         for idx in tqdm(
             range(start_index, len(eval_items)),
@@ -343,6 +344,10 @@ def run_e2e_pii_eval(
     # Calculate metrics
     metrics = calculate_e2e_metrics(results, len(conversations))
     print(metrics)
+
+    # Clean up checkpoint file on successful completion
+    if checkpoint_file and Path(checkpoint_file).exists():
+        Path(checkpoint_file).unlink()
 
     return metrics, results
 
