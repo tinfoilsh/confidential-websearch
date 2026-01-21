@@ -15,13 +15,8 @@ type Stage interface {
 	Execute(ctx *Context) error
 }
 
-// AgentRunner defines the interface for running the agent
+// AgentRunner defines the interface for running the agent with full context
 type AgentRunner interface {
-	Run(ctx context.Context, userQuery string) (*agent.Result, error)
-}
-
-// AgentWithFullContext can receive full conversation context with reasoning items
-type AgentWithFullContext interface {
 	RunWithContext(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error)
 }
 
@@ -98,36 +93,20 @@ type AgentStage struct {
 func (s *AgentStage) Name() string { return "agent" }
 
 func (s *AgentStage) Execute(ctx *Context) error {
-	ctx.State.Transition(StateAgentStarted, map[string]interface{}{"query": ctx.UserQuery})
+	ctx.State.Transition(StateProcessing, map[string]interface{}{"query": ctx.UserQuery})
 
-	var result *agent.Result
-	var err error
-
-	// Use RunWithContext if agent supports full context (system prompt + conversation + reasoning)
-	if agentWithCtx, ok := s.Agent.(AgentWithFullContext); ok {
-		systemPrompt, messages := extractAgentContext(ctx.Request.Messages)
-		// Fallback for Responses API: if messages is empty, use ctx.UserQuery
-		if len(messages) == 0 && ctx.UserQuery != "" {
-			messages = []agent.ContextMessage{{Role: "user", Content: ctx.UserQuery}}
-		}
-		result, err = agentWithCtx.RunWithContext(ctx.Context, messages, systemPrompt, nil)
-	} else {
-		result, err = s.Agent.Run(ctx.Context, ctx.UserQuery)
+	systemPrompt, messages := extractAgentContext(ctx.Request.Messages)
+	// Fallback for Responses API: if messages is empty, use ctx.UserQuery
+	if len(messages) == 0 && ctx.UserQuery != "" {
+		messages = []agent.ContextMessage{{Role: "user", Content: ctx.UserQuery}}
 	}
 
+	result, err := s.Agent.RunWithContext(ctx.Context, messages, systemPrompt, nil)
 	if err != nil {
 		return &AgentError{Err: err}
 	}
 
 	ctx.AgentResult = result
-
-	// Track search state transitions
-	if len(result.ToolCalls) > 0 {
-		ctx.State.Transition(StateSearchStarted, map[string]interface{}{"count": len(result.ToolCalls)})
-		ctx.State.Transition(StateSearchCompleted, map[string]interface{}{"results": len(result.ToolCalls)})
-	}
-
-	ctx.State.Transition(StateAgentCompleted, nil)
 	return nil
 }
 
@@ -158,7 +137,7 @@ type ResponderStage struct {
 func (s *ResponderStage) Name() string { return "responder" }
 
 func (s *ResponderStage) Execute(ctx *Context) error {
-	ctx.State.Transition(StateResponderStarted, nil)
+	ctx.State.Transition(StateResponding, nil)
 
 	params := ResponderParams{
 		Model:       ctx.Request.Model,
@@ -168,7 +147,6 @@ func (s *ResponderStage) Execute(ctx *Context) error {
 	}
 
 	if ctx.IsStreaming() {
-		ctx.State.Transition(StateResponderStreaming, nil)
 
 		// Emit blocked search events first, then completed events
 		if ctx.AgentResult != nil && ctx.Emitter != nil {

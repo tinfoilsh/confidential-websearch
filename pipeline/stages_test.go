@@ -14,12 +14,12 @@ import (
 
 // MockAgentRunner implements AgentRunner for testing
 type MockAgentRunner struct {
-	RunFunc func(ctx context.Context, userQuery string) (*agent.Result, error)
+	RunWithContextFunc func(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error)
 }
 
-func (m *MockAgentRunner) Run(ctx context.Context, userQuery string) (*agent.Result, error) {
-	if m.RunFunc != nil {
-		return m.RunFunc(ctx, userQuery)
+func (m *MockAgentRunner) RunWithContext(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error) {
+	if m.RunWithContextFunc != nil {
+		return m.RunWithContextFunc(ctx, messages, systemPrompt, onChunk)
 	}
 	return &agent.Result{}, nil
 }
@@ -232,7 +232,7 @@ func TestValidateStage_ResponsesAPI_MissingInput(t *testing.T) {
 
 func TestAgentStage_Success(t *testing.T) {
 	mockAgent := &MockAgentRunner{
-		RunFunc: func(ctx context.Context, userQuery string) (*agent.Result, error) {
+		RunWithContextFunc: func(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error) {
 			return &agent.Result{
 				AgentReasoning: "searched for info",
 				ToolCalls: []agent.ToolCall{
@@ -246,6 +246,7 @@ func TestAgentStage_Success(t *testing.T) {
 	ctx := &Context{
 		Context:   context.Background(),
 		UserQuery: "test query",
+		Request:   &Request{Messages: []Message{{Role: "user", Content: "test query"}}},
 		State:     NewStateTracker(),
 	}
 
@@ -262,14 +263,14 @@ func TestAgentStage_Success(t *testing.T) {
 		t.Errorf("expected 1 tool call, got %d", len(ctx.AgentResult.ToolCalls))
 	}
 
-	if ctx.State.Current() != StateAgentCompleted {
-		t.Errorf("expected state AgentCompleted, got %s", ctx.State.Current())
+	if ctx.State.Current() != StateProcessing {
+		t.Errorf("expected state Processing, got %s", ctx.State.Current())
 	}
 }
 
 func TestAgentStage_NoSearch(t *testing.T) {
 	mockAgent := &MockAgentRunner{
-		RunFunc: func(ctx context.Context, userQuery string) (*agent.Result, error) {
+		RunWithContextFunc: func(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error) {
 			return &agent.Result{
 				AgentReasoning: "no search needed",
 				ToolCalls:      []agent.ToolCall{},
@@ -281,6 +282,7 @@ func TestAgentStage_NoSearch(t *testing.T) {
 	ctx := &Context{
 		Context:   context.Background(),
 		UserQuery: "hello",
+		Request:   &Request{Messages: []Message{{Role: "user", Content: "hello"}}},
 		State:     NewStateTracker(),
 	}
 
@@ -289,14 +291,14 @@ func TestAgentStage_NoSearch(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if ctx.State.Current() != StateAgentCompleted {
-		t.Errorf("expected state AgentCompleted, got %s", ctx.State.Current())
+	if ctx.State.Current() != StateProcessing {
+		t.Errorf("expected state Processing, got %s", ctx.State.Current())
 	}
 }
 
 func TestAgentStage_Error(t *testing.T) {
 	mockAgent := &MockAgentRunner{
-		RunFunc: func(ctx context.Context, userQuery string) (*agent.Result, error) {
+		RunWithContextFunc: func(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error) {
 			return nil, errors.New("agent failed")
 		},
 	}
@@ -305,6 +307,7 @@ func TestAgentStage_Error(t *testing.T) {
 	ctx := &Context{
 		Context:   context.Background(),
 		UserQuery: "test",
+		Request:   &Request{Messages: []Message{{Role: "user", Content: "test"}}},
 		State:     NewStateTracker(),
 	}
 
@@ -372,8 +375,7 @@ func TestResponderStage_NonStreaming(t *testing.T) {
 		AgentResult: &agent.Result{},
 		State:       NewStateTracker(),
 	}
-	ctx.State.Transition(StateAgentStarted, nil)
-	ctx.State.Transition(StateAgentCompleted, nil)
+	ctx.State.Transition(StateProcessing, nil)
 
 	err := stage.Execute(ctx)
 	if err != nil {
@@ -419,8 +421,7 @@ func TestResponderStage_Streaming(t *testing.T) {
 		State:       NewStateTracker(),
 		Emitter:     emitter,
 	}
-	ctx.State.Transition(StateAgentStarted, nil)
-	ctx.State.Transition(StateAgentCompleted, nil)
+	ctx.State.Transition(StateProcessing, nil)
 
 	err := stage.Execute(ctx)
 	if err != nil {
@@ -447,8 +448,7 @@ func TestResponderStage_Error(t *testing.T) {
 		AgentResult:       &agent.Result{},
 		State:             NewStateTracker(),
 	}
-	ctx.State.Transition(StateAgentStarted, nil)
-	ctx.State.Transition(StateAgentCompleted, nil)
+	ctx.State.Transition(StateProcessing, nil)
 
 	err := stage.Execute(ctx)
 	if err == nil {

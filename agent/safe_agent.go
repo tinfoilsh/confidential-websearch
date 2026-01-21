@@ -44,7 +44,7 @@ func (s *SafeAgent) SetInjectionCheckEnabled(enabled bool) {
 	s.enableInjectionCheck = enabled
 }
 
-// RunWithContext implements AgentWithFullContext interface.
+// RunWithContext implements AgentRunner interface.
 // It forwards full conversation context to the base agent while applying safety filters.
 func (s *SafeAgent) RunWithContext(ctx context.Context, messages []ContextMessage, systemPrompt string, onChunk ChunkCallback) (*Result, error) {
 	// Create PII filter if enabled
@@ -54,7 +54,7 @@ func (s *SafeAgent) RunWithContext(ctx context.Context, messages []ContextMessag
 	}
 
 	// Run the base agent with full context and the filter
-	result, err := s.agent.RunWithContextAndFilter(ctx, messages, systemPrompt, onChunk, filter)
+	result, err := s.agent.RunWithFilter(ctx, messages, systemPrompt, onChunk, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -70,16 +70,6 @@ func (s *SafeAgent) RunWithContext(ctx context.Context, messages []ContextMessag
 // createPIIFilter creates a PII filter that checks query content
 func (s *SafeAgent) createPIIFilter(ctx context.Context) SearchFilter {
 	return s.createPIIFilterWithClient(ctx, s.safeguardClient)
-}
-
-// Run executes the agent with safety checks (non-streaming, legacy method)
-func (s *SafeAgent) Run(ctx context.Context, userQuery string) (*Result, error) {
-	return s.RunWithContext(ctx, []ContextMessage{{Role: "user", Content: userQuery}}, "", nil)
-}
-
-// RunStreaming executes the agent with safety checks and streaming support
-func (s *SafeAgent) RunStreaming(ctx context.Context, userQuery string, onChunk ChunkCallback) (*Result, error) {
-	return s.RunWithContext(ctx, []ContextMessage{{Role: "user", Content: userQuery}}, "", onChunk)
 }
 
 // createPIIFilterWithClient returns a SearchFilter using the provided checker (for testing)
