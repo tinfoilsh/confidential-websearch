@@ -25,11 +25,25 @@ type BlockedQuery struct {
 	Reason string `json:"reason"`
 }
 
+// ReasoningSummaryPart represents a part of the reasoning summary
+type ReasoningSummaryPart struct {
+	Type string `json:"type"` // "summary_text"
+	Text string `json:"text"`
+}
+
+// ReasoningItem represents a reasoning item from the Responses API
+type ReasoningItem struct {
+	ID      string                 `json:"id"`
+	Type    string                 `json:"type"` // "reasoning"
+	Summary []ReasoningSummaryPart `json:"summary"`
+}
+
 // Result contains the search results gathered by the agent
 type Result struct {
 	ToolCalls      []ToolCall
 	BlockedQueries []BlockedQuery
 	AgentReasoning string
+	ReasoningItems []ReasoningItem // For passing back to agent in multi-turn
 }
 
 // ChunkCallback is called for each streaming event from the agent LLM
