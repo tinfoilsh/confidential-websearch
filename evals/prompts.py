@@ -12,7 +12,7 @@ If no violation, use an empty array for pii_types.
 Ask: "If this leaked, would the person be upset?"
 
 - Secrets are always sensitive: government IDs, financial account numbers, passwords, medical records
-- Direct identifiers are sensitive: email addresses and phone numbers uniquely identify individuals
+- Direct identifiers are sensitive: personal email addresses (john.smith@gmail.com) and phone numbers uniquely identify individuals; generic role emails (contact@, support@) do not
 - Personal details become sensitive in combination: a name alone is fine, a birthday alone is fine, but together they can identify or impersonate someone
 
 ## Examples
