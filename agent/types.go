@@ -38,6 +38,13 @@ type ReasoningItem struct {
 	Summary []ReasoningSummaryPart `json:"summary"`
 }
 
+// ContextMessage represents a message in the conversation context for the agent
+type ContextMessage struct {
+	Role           string          // "user", "assistant", or "system"
+	Content        string          // The message content
+	ReasoningItems []ReasoningItem // Reasoning items from previous agent turn (for assistant messages)
+}
+
 // Result contains the search results gathered by the agent
 type Result struct {
 	ToolCalls      []ToolCall
