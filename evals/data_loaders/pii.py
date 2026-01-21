@@ -36,7 +36,7 @@ def load_pii_dataset(
     Returns:
         List of PIISample objects
     """
-    samples = _load_ai4privacy_samples(max_samples=500 if max_samples is None else max_samples)
+    samples = _load_ai4privacy_samples(max_samples=5000 if max_samples is None else max_samples)
 
     if include_negatives:
         positive_count = len(samples)
