@@ -92,8 +92,11 @@ func TestCreatePIIFilter_EmptyQueries(t *testing.T) {
 	filter := sa.createPIIFilterWithClient(context.Background(), "", mockClient)
 
 	result := filter(context.Background(), []string{})
-	if len(result) != 0 {
-		t.Errorf("expected empty result for empty input, got %d items", len(result))
+	if len(result.Allowed) != 0 {
+		t.Errorf("expected empty result for empty input, got %d items", len(result.Allowed))
+	}
+	if len(result.Blocked) != 0 {
+		t.Errorf("expected no blocked queries for empty input, got %d items", len(result.Blocked))
 	}
 }
 
@@ -116,8 +119,12 @@ func TestCreatePIIFilter_AllowsCleanQueries(t *testing.T) {
 	queries := []string{"weather in paris", "stock price of AAPL"}
 	result := filter(context.Background(), queries)
 
-	if len(result) != 2 {
-		t.Errorf("expected 2 queries allowed, got %d", len(result))
+	if len(result.Allowed) != 2 {
+		t.Errorf("expected 2 queries allowed, got %d", len(result.Allowed))
+	}
+
+	if len(result.Blocked) != 0 {
+		t.Errorf("expected no blocked queries, got %d", len(result.Blocked))
 	}
 
 	if checkCount.Load() != 2 {
@@ -146,15 +153,26 @@ func TestCreatePIIFilter_BlocksPIIQueries(t *testing.T) {
 	queries := []string{"weather in paris", "my SSN is 123-45-6789", "stock price"}
 	result := filter(context.Background(), queries)
 
-	if len(result) != 2 {
-		t.Errorf("expected 2 queries allowed (1 blocked), got %d", len(result))
+	if len(result.Allowed) != 2 {
+		t.Errorf("expected 2 queries allowed (1 blocked), got %d", len(result.Allowed))
 	}
 
-	// Verify the blocked query is not in results
-	for _, q := range result {
+	// Verify the blocked query is not in allowed results
+	for _, q := range result.Allowed {
 		if strings.Contains(q, "SSN") {
 			t.Error("SSN query should have been blocked")
 		}
+	}
+
+	// Verify blocked query info
+	if len(result.Blocked) != 1 {
+		t.Fatalf("expected 1 blocked query, got %d", len(result.Blocked))
+	}
+	if !strings.Contains(result.Blocked[0].Query, "SSN") {
+		t.Error("blocked query should contain SSN")
+	}
+	if result.Blocked[0].Reason != "SSN detected" {
+		t.Errorf("expected reason 'SSN detected', got '%s'", result.Blocked[0].Reason)
 	}
 }
 
@@ -176,8 +194,11 @@ func TestCreatePIIFilter_FailOpenOnError(t *testing.T) {
 	result := filter(context.Background(), queries)
 
 	// Fail-open: all queries should be allowed when service errors
-	if len(result) != 2 {
-		t.Errorf("expected all queries allowed on error (fail-open), got %d", len(result))
+	if len(result.Allowed) != 2 {
+		t.Errorf("expected all queries allowed on error (fail-open), got %d", len(result.Allowed))
+	}
+	if len(result.Blocked) != 0 {
+		t.Errorf("expected no blocked queries on error (fail-open), got %d", len(result.Blocked))
 	}
 }
 

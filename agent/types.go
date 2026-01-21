@@ -18,9 +18,17 @@ type ToolCall struct {
 	Results []search.Result `json:"results"`
 }
 
+// BlockedQuery represents a search query that was blocked by a filter
+type BlockedQuery struct {
+	ID     string `json:"id"`
+	Query  string `json:"query"`
+	Reason string `json:"reason"`
+}
+
 // Result contains the search results gathered by the agent
 type Result struct {
 	ToolCalls      []ToolCall
+	BlockedQueries []BlockedQuery
 	AgentReasoning string
 }
 
