@@ -84,6 +84,13 @@ func (a *Agent) RunWithContext(ctx context.Context, messages []ContextMessage, s
 	return a.runWithContext(ctx, messages, systemPrompt, onChunk, a.getSearchFilter())
 }
 
+// RunWithContextAndFilter executes the agent with full context and a custom search filter.
+// This allows callers to provide their own filter (e.g., for PII checking) while still
+// getting full conversation context support.
+func (a *Agent) RunWithContextAndFilter(ctx context.Context, messages []ContextMessage, systemPrompt string, onChunk ChunkCallback, filter SearchFilter) (*Result, error) {
+	return a.runWithContext(ctx, messages, systemPrompt, onChunk, filter)
+}
+
 // runWithContext is the internal implementation for context-aware agent execution
 func (a *Agent) runWithContext(ctx context.Context, messages []ContextMessage, systemPrompt string, onChunk ChunkCallback, filter SearchFilter) (*Result, error) {
 	searchTool := responses.ToolParamOfFunction(
@@ -370,7 +377,6 @@ func (a *Agent) runWithFilter(ctx context.Context, userQuery string, onChunk Chu
 
 	params := responses.ResponseNewParams{
 		Model:           shared.ResponsesModel(a.model),
-		Instructions:    openai.String(`You are a research assistant. Use the search tool for current information or facts you're uncertain about. You can call search multiple times in parallel for complex queries.`),
 		Input:           responses.ResponseNewParamsInputUnion{OfString: openai.String(userQuery)},
 		Tools:           []responses.ToolUnionParam{searchTool},
 		Temperature:     openai.Float(config.AgentTemperature),

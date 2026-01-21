@@ -89,7 +89,7 @@ func TestCreatePIIFilter_EmptyQueries(t *testing.T) {
 
 	// Create a wrapper to test the filter function
 	// Since we can't easily inject the mock, we'll test the filter behavior directly
-	filter := sa.createPIIFilterWithClient(context.Background(), "", mockClient)
+	filter := sa.createPIIFilterWithClient(context.Background(), mockClient)
 
 	result := filter(context.Background(), []string{})
 	if len(result.Allowed) != 0 {
@@ -114,7 +114,7 @@ func TestCreatePIIFilter_AllowsCleanQueries(t *testing.T) {
 		enableInjectionCheck: true,
 	}
 
-	filter := sa.createPIIFilterWithClient(context.Background(), "", mockClient)
+	filter := sa.createPIIFilterWithClient(context.Background(), mockClient)
 
 	queries := []string{"weather in paris", "stock price of AAPL"}
 	result := filter(context.Background(), queries)
@@ -148,7 +148,7 @@ func TestCreatePIIFilter_BlocksPIIQueries(t *testing.T) {
 		enableInjectionCheck: true,
 	}
 
-	filter := sa.createPIIFilterWithClient(context.Background(), "", mockClient)
+	filter := sa.createPIIFilterWithClient(context.Background(), mockClient)
 
 	queries := []string{"weather in paris", "my SSN is 123-45-6789", "stock price"}
 	result := filter(context.Background(), queries)
@@ -188,7 +188,7 @@ func TestCreatePIIFilter_FailOpenOnError(t *testing.T) {
 		enableInjectionCheck: true,
 	}
 
-	filter := sa.createPIIFilterWithClient(context.Background(), "", mockClient)
+	filter := sa.createPIIFilterWithClient(context.Background(), mockClient)
 
 	queries := []string{"query1", "query2"}
 	result := filter(context.Background(), queries)
@@ -202,7 +202,7 @@ func TestCreatePIIFilter_FailOpenOnError(t *testing.T) {
 	}
 }
 
-func TestCreatePIIFilter_WithConversationContext(t *testing.T) {
+func TestCreatePIIFilter_QueryOnly(t *testing.T) {
 	var receivedContent string
 	mockClient := &MockSafeguardClient{
 		CheckFunc: func(ctx context.Context, policy, content string) (*safeguard.CheckResult, error) {
@@ -216,19 +216,13 @@ func TestCreatePIIFilter_WithConversationContext(t *testing.T) {
 		enableInjectionCheck: true,
 	}
 
-	conversationCtx := "user: Hi, I'm John\nassistant: Hello John!"
-	filter := sa.createPIIFilterWithClient(context.Background(), conversationCtx, mockClient)
+	filter := sa.createPIIFilterWithClient(context.Background(), mockClient)
 
 	filter(context.Background(), []string{"test query"})
 
-	if !strings.Contains(receivedContent, "Conversation context:") {
-		t.Error("expected conversation context to be included")
-	}
-	if !strings.Contains(receivedContent, conversationCtx) {
-		t.Error("expected actual conversation content")
-	}
-	if !strings.Contains(receivedContent, "test query") {
-		t.Error("expected query to be included")
+	// PII filter should only receive the query, not any conversation context
+	if receivedContent != "test query" {
+		t.Errorf("expected only query content, got '%s'", receivedContent)
 	}
 }
 
