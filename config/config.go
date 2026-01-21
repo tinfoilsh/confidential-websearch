@@ -9,6 +9,7 @@ import (
 const (
 	AgentTemperature     = 0.3
 	AgentMaxTokens       = 1024
+	AgentMaxTurns        = 3 // Max conversation turns to send to agent
 	SafeguardTemperature = 0.0
 	SafeguardMaxTokens   = 256
 )
