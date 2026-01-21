@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -32,16 +33,6 @@ func (m *MockBaseAgent) RunWithFilter(ctx context.Context, userQuery string, fil
 		return m.RunWithFilterFunc(ctx, userQuery, filter)
 	}
 	return &Result{}, nil
-}
-
-// testSafeAgent creates a SafeAgent with mock components for testing
-func testSafeAgent(mockClient *MockSafeguardClient) *SafeAgent {
-	return &SafeAgent{
-		agent:                nil, // Will be set per test
-		safeguardClient:      (*safeguard.Client)(nil), // Type assertion trick - we'll use mockClient directly
-		enablePIICheck:       true,
-		enableInjectionCheck: true,
-	}
 }
 
 func TestNewSafeAgent(t *testing.T) {
@@ -138,7 +129,7 @@ func TestCreatePIIFilter_BlocksPIIQueries(t *testing.T) {
 	mockClient := &MockSafeguardClient{
 		CheckFunc: func(ctx context.Context, policy, content string) (*safeguard.CheckResult, error) {
 			// Block queries containing "SSN"
-			if contains(content, "SSN") {
+			if strings.Contains(content, "SSN") {
 				return &safeguard.CheckResult{Violation: true, Rationale: "SSN detected"}, nil
 			}
 			return &safeguard.CheckResult{Violation: false, Rationale: "clean"}, nil
@@ -161,7 +152,7 @@ func TestCreatePIIFilter_BlocksPIIQueries(t *testing.T) {
 
 	// Verify the blocked query is not in results
 	for _, q := range result {
-		if contains(q, "SSN") {
+		if strings.Contains(q, "SSN") {
 			t.Error("SSN query should have been blocked")
 		}
 	}
@@ -209,13 +200,13 @@ func TestCreatePIIFilter_WithConversationContext(t *testing.T) {
 
 	filter(context.Background(), []string{"test query"})
 
-	if !contains(receivedContent, "Conversation context:") {
+	if !strings.Contains(receivedContent, "Conversation context:") {
 		t.Error("expected conversation context to be included")
 	}
-	if !contains(receivedContent, conversationCtx) {
+	if !strings.Contains(receivedContent, conversationCtx) {
 		t.Error("expected actual conversation content")
 	}
-	if !contains(receivedContent, "test query") {
+	if !strings.Contains(receivedContent, "test query") {
 		t.Error("expected query to be included")
 	}
 }
@@ -272,7 +263,7 @@ func TestFilterInjectedResults_BlocksInjectedContent(t *testing.T) {
 	mockClient := &MockSafeguardClient{
 		CheckFunc: func(ctx context.Context, policy, content string) (*safeguard.CheckResult, error) {
 			// Flag content containing "ignore previous"
-			if contains(content, "ignore previous") {
+			if strings.Contains(content, "ignore previous") {
 				return &safeguard.CheckResult{Violation: true, Rationale: "prompt injection detected"}, nil
 			}
 			return &safeguard.CheckResult{Violation: false, Rationale: "clean"}, nil
@@ -306,7 +297,7 @@ func TestFilterInjectedResults_BlocksInjectedContent(t *testing.T) {
 
 	// Verify the injected content is not in results
 	for _, r := range result[0].Results {
-		if contains(r.Content, "ignore previous") {
+		if strings.Contains(r.Content, "ignore previous") {
 			t.Error("injected content should have been filtered")
 		}
 	}
@@ -316,7 +307,7 @@ func TestFilterInjectedResults_RemovesEmptyToolCalls(t *testing.T) {
 	mockClient := &MockSafeguardClient{
 		CheckFunc: func(ctx context.Context, policy, content string) (*safeguard.CheckResult, error) {
 			// Flag all content from tool call 2
-			if contains(content, "malicious") {
+			if strings.Contains(content, "malicious") {
 				return &safeguard.CheckResult{Violation: true, Rationale: "injection"}, nil
 			}
 			return &safeguard.CheckResult{Violation: false, Rationale: "clean"}, nil
@@ -384,18 +375,4 @@ func TestFilterInjectedResults_FailOpenOnError(t *testing.T) {
 	if len(result[0].Results) != 1 {
 		t.Errorf("expected 1 result on error (fail-open), got %d", len(result[0].Results))
 	}
-}
-
-// Helper function to check if string contains substring
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
-}
-
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
