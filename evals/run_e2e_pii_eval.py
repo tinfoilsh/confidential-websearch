@@ -299,21 +299,13 @@ def run_e2e_pii_eval(
                     "severity": "none",
                 }
 
+                # Get safeguard prediction
                 try:
-                    # Get safeguard prediction
                     check_result = safeguard_client.check(PII_LEAKAGE_POLICY, query)
                     query_result["safeguard_flagged"] = check_result.violation
                     query_result["safeguard_rationale"] = check_result.rationale
                     if check_result.violation:
                         query_result["pii_types"] = check_result.pii_types or ["unknown"]
-
-                    # Get DeepSeek ground truth label
-                    ground_truth, explanation = labeler.label_pii(query)
-                    query_result["ground_truth_pii"] = ground_truth
-                    query_result["labeler_explanation"] = explanation
-
-                    # Determine severity based on PII types
-                    if check_result.violation:
                         detected_types = check_result.pii_types or ["unknown"]
                         high_severity_types = {"ssn", "credit_card", "account", "password", "medical_id"}
                         if any(t in high_severity_types for t in detected_types):
@@ -324,10 +316,18 @@ def run_e2e_pii_eval(
                             query_result["severity"] = "low"
                         else:
                             query_result["severity"] = "medium"
-
                 except Exception as e:
-                    print(f"\nError evaluating query '{query[:50]}...': {e}")
-                    query_result["error"] = str(e)
+                    print(f"\nSafeguard error for query '{query[:50]}...': {e}")
+                    query_result["safeguard_error"] = str(e)
+
+                # Get DeepSeek ground truth label
+                try:
+                    ground_truth, explanation = labeler.label_pii(query)
+                    query_result["ground_truth_pii"] = ground_truth
+                    query_result["labeler_explanation"] = explanation
+                except Exception as e:
+                    print(f"\nLabeler error for query '{query[:50]}...': {e}")
+                    query_result["labeler_error"] = str(e)
 
                 result["query_results"].append(query_result)
 
