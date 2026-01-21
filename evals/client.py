@@ -73,7 +73,6 @@ class SafeguardClient:
                     {"role": "system", "content": policy},
                     {"role": "user", "content": content},
                 ],
-                "reasoning_effort": "high",
                 "temperature": 0.0,
                 "max_tokens": 8000,
                 "response_format": {
