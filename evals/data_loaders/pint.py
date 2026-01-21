@@ -21,7 +21,7 @@ class PromptInjectionSample:
     source: str
 
 
-def load_pint_dataset(
+def load_injection_dataset(
     max_samples: int | None = None,
     include_common_crawl: bool = True,
 ) -> list[PromptInjectionSample]:
