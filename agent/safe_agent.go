@@ -11,6 +11,11 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/search"
 )
 
+// SafeguardChecker is an interface for safety checking (allows mocking in tests)
+type SafeguardChecker interface {
+	Check(ctx context.Context, policy, content string) (*safeguard.CheckResult, error)
+}
+
 // SafeAgent wraps the base Agent with safety checks for PII and prompt injection
 type SafeAgent struct {
 	agent                *Agent
@@ -68,8 +73,17 @@ func (s *SafeAgent) RunWithContext(ctx context.Context, userQuery string, conver
 
 // createPIIFilter returns a SearchFilter that checks queries for PII
 func (s *SafeAgent) createPIIFilter(ctx context.Context, conversationContext string) SearchFilter {
+	return s.createPIIFilterWithClient(ctx, conversationContext, s.safeguardClient)
+}
+
+// createPIIFilterWithClient returns a SearchFilter using the provided checker (for testing)
+func (s *SafeAgent) createPIIFilterWithClient(ctx context.Context, conversationContext string, client SafeguardChecker) SearchFilter {
 	return func(filterCtx context.Context, queries []string) []string {
 		if len(queries) == 0 {
+			return queries
+		}
+
+		if client == nil {
 			return queries
 		}
 
@@ -93,7 +107,7 @@ func (s *SafeAgent) createPIIFilter(ctx context.Context, conversationContext str
 					content = fmt.Sprintf("Conversation context:\n%s\n\nSearch query to evaluate:\n%s", conversationContext, q)
 				}
 
-				checkResult, err := s.safeguardClient.Check(filterCtx, safeguard.PIILeakagePolicy, content)
+				checkResult, err := client.Check(filterCtx, safeguard.PIILeakagePolicy, content)
 				if err != nil {
 					log.Errorf("PII check failed: %v", err)
 					// On error, allow the query to proceed
@@ -145,6 +159,15 @@ func (s *SafeAgent) createPIIFilter(ctx context.Context, conversationContext str
 
 // filterInjectedResults checks search results for prompt injection and removes flagged ones
 func (s *SafeAgent) filterInjectedResults(ctx context.Context, toolCalls []ToolCall) []ToolCall {
+	return s.filterInjectedResultsWithClient(ctx, toolCalls, s.safeguardClient)
+}
+
+// filterInjectedResultsWithClient checks results using the provided checker (for testing)
+func (s *SafeAgent) filterInjectedResultsWithClient(ctx context.Context, toolCalls []ToolCall, client SafeguardChecker) []ToolCall {
+	if client == nil {
+		return toolCalls
+	}
+
 	// Flatten all results for parallel checking
 	type resultRef struct {
 		toolCallIdx int
@@ -181,7 +204,7 @@ func (s *SafeAgent) filterInjectedResults(ctx context.Context, toolCalls []ToolC
 		go func(r resultRef) {
 			defer wg.Done()
 
-			check, err := s.safeguardClient.Check(ctx, safeguard.PromptInjectionPolicy, r.content)
+			check, err := client.Check(ctx, safeguard.PromptInjectionPolicy, r.content)
 			if err != nil {
 				log.Errorf("Injection check failed: %v", err)
 				// On error, allow the result to proceed
