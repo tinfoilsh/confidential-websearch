@@ -96,8 +96,17 @@ func (a *Agent) runWithContext(ctx context.Context, messages []ContextMessage, s
 	// Build Responses API input from conversation context
 	var input []responses.ResponseInputItemUnionParam
 
+	// Limit to last N turns to avoid draining context in long conversations
+	// A turn is a user-assistant pair, so maxTurns*2 messages
+	maxMessages := config.AgentMaxTurns * 2
+	startIdx := 0
+	if len(messages) > maxMessages {
+		startIdx = len(messages) - maxMessages
+	}
+	recentMessages := messages[startIdx:]
+
 	// Add conversation history
-	for _, msg := range messages {
+	for _, msg := range recentMessages {
 		switch msg.Role {
 		case "user":
 			input = append(input, responses.ResponseInputItemParamOfMessage(msg.Content, responses.EasyInputMessageRoleUser))
