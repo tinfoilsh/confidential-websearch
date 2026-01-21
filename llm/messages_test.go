@@ -86,9 +86,9 @@ func TestBuildWithAgentResults(t *testing.T) {
 
 	result := builder.Build(messages, agentResult)
 
-	// Should have: user message + assistant (tool calls) + tool result + user prompt
-	if len(result) != 4 {
-		t.Fatalf("expected 4 messages, got %d", len(result))
+	// Should have: user message + user message with search results
+	if len(result) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(result))
 	}
 
 	// Check user message
@@ -96,22 +96,16 @@ func TestBuildWithAgentResults(t *testing.T) {
 		t.Error("expected user message at index 0")
 	}
 
-	// Check assistant message with tool calls
-	if result[1].OfAssistant == nil {
-		t.Error("expected assistant message with tool calls at index 1")
+	// Check search results message (as user message with plain text)
+	if result[1].OfUser == nil {
+		t.Error("expected user message with search results at index 1")
 	}
-	if len(result[1].OfAssistant.ToolCalls) != 1 {
-		t.Error("expected 1 tool call")
+	content := result[1].OfUser.Content.OfString.Value
+	if !strings.Contains(content, "Search results:") {
+		t.Error("search results message should contain 'Search results:'")
 	}
-
-	// Check tool result message
-	if result[2].OfTool == nil {
-		t.Error("expected tool message at index 2")
-	}
-
-	// Check final user prompt
-	if result[3].OfUser == nil {
-		t.Error("expected user message at index 3")
+	if !strings.Contains(content, "News Article 1") {
+		t.Error("search results message should contain first result")
 	}
 }
 
@@ -143,22 +137,18 @@ func TestBuildWithMultipleToolCalls(t *testing.T) {
 
 	result := builder.Build(messages, agentResult)
 
-	// Should have: user message + assistant (2 tool calls) + tool result 1 + tool result 2 + user prompt
-	if len(result) != 5 {
-		t.Fatalf("expected 5 messages, got %d", len(result))
+	// Should have: user message + user message with all search results combined
+	if len(result) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(result))
 	}
 
-	// Check assistant has 2 tool calls
-	if result[1].OfAssistant == nil || len(result[1].OfAssistant.ToolCalls) != 2 {
-		t.Error("expected 2 tool calls in assistant message")
+	// Check search results contain both results
+	content := result[1].OfUser.Content.OfString.Value
+	if !strings.Contains(content, "NYC Weather") {
+		t.Error("search results should contain NYC weather")
 	}
-
-	// Check both tool results
-	if result[2].OfTool == nil {
-		t.Error("expected first tool message at index 2")
-	}
-	if result[3].OfTool == nil {
-		t.Error("expected second tool message at index 3")
+	if !strings.Contains(content, "LA Weather") {
+		t.Error("search results should contain LA weather")
 	}
 }
 
@@ -253,7 +243,7 @@ func TestBuildWithNilAgentResult(t *testing.T) {
 	}
 }
 
-func TestToolResultContainsSearchResults(t *testing.T) {
+func TestSearchResultsContainFormattedResults(t *testing.T) {
 	builder := NewMessageBuilder()
 
 	messages := []pipeline.Message{
@@ -275,25 +265,24 @@ func TestToolResultContainsSearchResults(t *testing.T) {
 
 	result := builder.Build(messages, agentResult)
 
-	// Get the tool result message
-	toolMsg := result[2].OfTool
-	if toolMsg == nil {
-		t.Fatal("expected tool message")
+	// Get the search results message (now a user message with plain text)
+	if result[1].OfUser == nil {
+		t.Fatal("expected user message with search results")
 	}
 
-	content := toolMsg.Content.OfString.Value
+	content := result[1].OfUser.Content.OfString.Value
 	if !strings.Contains(content, "[1] Result 1") {
-		t.Error("tool content should contain first result")
+		t.Error("search results should contain first result")
 	}
 	if !strings.Contains(content, "[2] Result 2") {
-		t.Error("tool content should contain second result")
+		t.Error("search results should contain second result")
 	}
 	if !strings.Contains(content, "https://example.com/1") {
-		t.Error("tool content should contain first URL")
+		t.Error("search results should contain first URL")
 	}
 }
 
-func TestFinalUserPromptAddedWithSearchResults(t *testing.T) {
+func TestSearchResultsMessageContainsPrompt(t *testing.T) {
 	builder := NewMessageBuilder()
 
 	messages := []pipeline.Message{
@@ -308,14 +297,17 @@ func TestFinalUserPromptAddedWithSearchResults(t *testing.T) {
 
 	result := builder.Build(messages, agentResult)
 
-	// Last message should be the prompt to use search results
+	// Last message should contain both search results and the prompt
 	lastMsg := result[len(result)-1]
 	if lastMsg.OfUser == nil {
 		t.Fatal("expected user message as last message")
 	}
 
 	content := lastMsg.OfUser.Content.OfString.Value
-	if content != "Answer using the search results above." {
-		t.Errorf("expected final prompt, got %q", content)
+	if !strings.Contains(content, "Search results:") {
+		t.Error("message should contain search results header")
+	}
+	if !strings.Contains(content, "Answer using these search results.") {
+		t.Errorf("message should contain answer prompt, got %q", content)
 	}
 }

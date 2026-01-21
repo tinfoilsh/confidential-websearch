@@ -37,39 +37,17 @@ func (b *MessageBuilder) Build(inputMessages []pipeline.Message, agentResult *ag
 		}
 	}
 
-	// If we have search results, append tool calls and tool results
+	// If we have search results, include them as plain text context.
+	// We avoid tool call format because the responder LLM doesn't have tools configured
+	// and may try to echo/reproduce tool call syntax, breaking the response.
 	if agentResult != nil && len(agentResult.ToolCalls) > 0 {
-		toolCalls := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(agentResult.ToolCalls))
+		var searchResults string
 		for _, tc := range agentResult.ToolCalls {
-			toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnionParam{
-				OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
-					ID: tc.ID,
-					Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
-						Name:      "search",
-						Arguments: fmt.Sprintf(`{"query": %q}`, tc.Query),
-					},
-				},
-			})
-		}
-
-		assistantMsg := openai.ChatCompletionAssistantMessageParam{ToolCalls: toolCalls}
-		if agentResult.AgentReasoning != "" {
-			assistantMsg.Content = openai.ChatCompletionAssistantMessageParamContentUnion{
-				OfString: openai.Opt(agentResult.AgentReasoning),
-			}
-		}
-		messages = append(messages, openai.ChatCompletionMessageParamUnion{OfAssistant: &assistantMsg})
-
-		// Add tool results
-		for _, tc := range agentResult.ToolCalls {
-			var toolContent string
 			for i, sr := range tc.Results {
-				toolContent += FormatSearchResult(i+1, sr.Title, sr.URL, sr.Content)
+				searchResults += FormatSearchResult(i+1, sr.Title, sr.URL, sr.Content)
 			}
-			messages = append(messages, openai.ToolMessage(toolContent, tc.ID))
 		}
-
-		messages = append(messages, openai.UserMessage("Answer using the search results above."))
+		messages = append(messages, openai.UserMessage("Search results:\n\n"+searchResults+"\nAnswer using these search results."))
 	}
 
 	return messages
