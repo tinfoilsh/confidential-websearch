@@ -44,42 +44,17 @@ func (s *SafeAgent) SetInjectionCheckEnabled(enabled bool) {
 	s.enableInjectionCheck = enabled
 }
 
-// Run executes the agent with safety checks (non-streaming)
-func (s *SafeAgent) Run(ctx context.Context, userQuery string) (*Result, error) {
-	return s.RunWithContext(ctx, userQuery, "")
-}
-
-// RunStreaming executes the agent with safety checks and streaming support
-func (s *SafeAgent) RunStreaming(ctx context.Context, userQuery string, onChunk ChunkCallback) (*Result, error) {
-	return s.RunStreamingWithContext(ctx, userQuery, "", onChunk)
-}
-
-// RunWithContext executes the agent with safety checks and conversation context for PII detection
-func (s *SafeAgent) RunWithContext(ctx context.Context, userQuery string, conversationContext string) (*Result, error) {
-	return s.runWithContextAndStreaming(ctx, userQuery, conversationContext, nil)
-}
-
-// RunStreamingWithContext executes the agent with safety checks, streaming, and conversation context
-func (s *SafeAgent) RunStreamingWithContext(ctx context.Context, userQuery string, conversationContext string, onChunk ChunkCallback) (*Result, error) {
-	return s.runWithContextAndStreaming(ctx, userQuery, conversationContext, onChunk)
-}
-
-// runWithContextAndStreaming is the internal implementation supporting both streaming and non-streaming modes
-func (s *SafeAgent) runWithContextAndStreaming(ctx context.Context, userQuery string, conversationContext string, onChunk ChunkCallback) (*Result, error) {
-	// Create PII filter if enabled (passed as parameter for thread-safety)
+// RunWithContext implements AgentWithFullContext interface.
+// It forwards full conversation context to the base agent while applying safety filters.
+func (s *SafeAgent) RunWithContext(ctx context.Context, messages []ContextMessage, systemPrompt string, onChunk ChunkCallback) (*Result, error) {
+	// Create PII filter if enabled
 	var filter SearchFilter
 	if s.enablePIICheck && s.safeguardClient != nil {
-		filter = s.createPIIFilter(ctx, conversationContext)
+		filter = s.createPIIFilter(ctx)
 	}
 
-	// Run the base agent with the filter and optional streaming
-	var result *Result
-	var err error
-	if onChunk != nil {
-		result, err = s.agent.RunStreamingWithFilter(ctx, userQuery, onChunk, filter)
-	} else {
-		result, err = s.agent.RunWithFilter(ctx, userQuery, filter)
-	}
+	// Run the base agent with full context and the filter
+	result, err := s.agent.RunWithContextAndFilter(ctx, messages, systemPrompt, onChunk, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -92,13 +67,23 @@ func (s *SafeAgent) runWithContextAndStreaming(ctx context.Context, userQuery st
 	return result, nil
 }
 
-// createPIIFilter returns a SearchFilter that checks queries for PII
-func (s *SafeAgent) createPIIFilter(ctx context.Context, conversationContext string) SearchFilter {
-	return s.createPIIFilterWithClient(ctx, conversationContext, s.safeguardClient)
+// createPIIFilter creates a PII filter that checks query content
+func (s *SafeAgent) createPIIFilter(ctx context.Context) SearchFilter {
+	return s.createPIIFilterWithClient(ctx, s.safeguardClient)
+}
+
+// Run executes the agent with safety checks (non-streaming, legacy method)
+func (s *SafeAgent) Run(ctx context.Context, userQuery string) (*Result, error) {
+	return s.RunWithContext(ctx, []ContextMessage{{Role: "user", Content: userQuery}}, "", nil)
+}
+
+// RunStreaming executes the agent with safety checks and streaming support
+func (s *SafeAgent) RunStreaming(ctx context.Context, userQuery string, onChunk ChunkCallback) (*Result, error) {
+	return s.RunWithContext(ctx, []ContextMessage{{Role: "user", Content: userQuery}}, "", onChunk)
 }
 
 // createPIIFilterWithClient returns a SearchFilter using the provided checker (for testing)
-func (s *SafeAgent) createPIIFilterWithClient(ctx context.Context, conversationContext string, client SafeguardChecker) SearchFilter {
+func (s *SafeAgent) createPIIFilterWithClient(ctx context.Context, client SafeguardChecker) SearchFilter {
 	return func(filterCtx context.Context, queries []string) FilterResult {
 		if len(queries) == 0 {
 			return FilterResult{Allowed: queries}
@@ -123,13 +108,7 @@ func (s *SafeAgent) createPIIFilterWithClient(ctx context.Context, conversationC
 			go func(idx int, q string) {
 				defer wg.Done()
 
-				// Build content with conversation context if available
-				content := q
-				if conversationContext != "" {
-					content = fmt.Sprintf("Conversation context:\n%s\n\nSearch query to evaluate:\n%s", conversationContext, q)
-				}
-
-				check, err := client.Check(filterCtx, safeguard.PIILeakagePolicy, content)
+				check, err := client.Check(filterCtx, safeguard.PIILeakagePolicy, q)
 				if err != nil {
 					log.Errorf("PII check failed: %v", err)
 					// On error, allow the query to proceed
