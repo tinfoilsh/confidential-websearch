@@ -8,6 +8,13 @@ from dataclasses import dataclass
 
 import httpx
 
+from constants import (
+    ARBITER_BASE_URL,
+    ARBITER_MODEL,
+    SAFEGUARD_BASE_URL,
+    SAFEGUARD_MODEL,
+)
+
 
 @dataclass
 class CheckResult:
@@ -21,8 +28,8 @@ class CheckResult:
 class SafeguardClient:
     """Client for the safeguard model API."""
 
-    DEFAULT_BASE_URL = "https://gpt-oss-safeguard-120b.inf5.tinfoil.sh"
-    DEFAULT_MODEL = "gpt-oss-safeguard-120b"
+    DEFAULT_BASE_URL = SAFEGUARD_BASE_URL
+    DEFAULT_MODEL = SAFEGUARD_MODEL
 
     def __init__(
         self,
@@ -165,8 +172,8 @@ Output JSON: {{"classifier_correct": true/false, "explanation": "one sentence"}}
 class ArbiterClient:
     """Client for the arbiter model (kimi-k2-thinking) to resolve disagreements."""
 
-    DEFAULT_BASE_URL = "https://kimi-k2-thinking.inf5.tinfoil.sh"
-    DEFAULT_MODEL = "kimi-k2-thinking"
+    DEFAULT_BASE_URL = ARBITER_BASE_URL
+    DEFAULT_MODEL = ARBITER_MODEL
 
     def __init__(
         self,
