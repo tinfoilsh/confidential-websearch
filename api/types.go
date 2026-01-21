@@ -112,9 +112,11 @@ type ResponsesOutput struct {
 
 // ResponsesContent represents content in Responses API message output
 type ResponsesContent struct {
-	Type        string           `json:"type"`
-	Text        string           `json:"text"`
-	Annotations []FlatAnnotation `json:"annotations,omitempty"`
+	Type            string           `json:"type"`
+	Text            string           `json:"text"`
+	Annotations     []FlatAnnotation `json:"annotations,omitempty"`
+	SearchReasoning string           `json:"search_reasoning,omitempty"`
+	ReasoningItems  []ReasoningItem  `json:"reasoning_items,omitempty"`
 }
 
 // ResponsesRequest represents the incoming request for the Responses API
