@@ -69,7 +69,7 @@ func TestSSEEmitter_EmitSearchCall(t *testing.T) {
 	w := httptest.NewRecorder()
 	emitter, _ := NewSSEEmitter(w)
 
-	err := emitter.EmitSearchCall("call_123", "in_progress", "test query")
+	err := emitter.EmitSearchCall("call_123", "in_progress", "test query", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestSSEEmitter_EmitSearchCall_NoQuery(t *testing.T) {
 	w := httptest.NewRecorder()
 	emitter, _ := NewSSEEmitter(w)
 
-	err := emitter.EmitSearchCall("call_123", "completed", "")
+	err := emitter.EmitSearchCall("call_123", "completed", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -104,6 +104,27 @@ func TestSSEEmitter_EmitSearchCall_NoQuery(t *testing.T) {
 	body := w.Body.String()
 	if strings.Contains(body, `"action"`) {
 		t.Error("expected no action when query is empty")
+	}
+}
+
+func TestSSEEmitter_EmitSearchCall_Blocked(t *testing.T) {
+	w := httptest.NewRecorder()
+	emitter, _ := NewSSEEmitter(w)
+
+	err := emitter.EmitSearchCall("call_123", "blocked", "john.smith@gmail.com", "email identifies individual")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "blocked") {
+		t.Error("expected blocked status")
+	}
+	if !strings.Contains(body, "john.smith@gmail.com") {
+		t.Error("expected query in action")
+	}
+	if !strings.Contains(body, "email identifies individual") {
+		t.Error("expected reason")
 	}
 }
 
@@ -243,8 +264,8 @@ func TestSSEEmitter_MultipleEvents(t *testing.T) {
 	emitter, _ := NewSSEEmitter(w)
 
 	// Emit multiple events in sequence
-	emitter.EmitSearchCall("call_1", "in_progress", "query 1")
-	emitter.EmitSearchCall("call_1", "completed", "")
+	emitter.EmitSearchCall("call_1", "in_progress", "query 1", "")
+	emitter.EmitSearchCall("call_1", "completed", "", "")
 	emitter.EmitChunk([]byte(`{"content":"hello"}`))
 	emitter.EmitDone()
 

@@ -46,6 +46,7 @@ type WebSearchCall struct {
 	ID     string           `json:"id"`
 	Status string           `json:"status"`
 	Action *WebSearchAction `json:"action,omitempty"`
+	Reason string           `json:"reason,omitempty"`
 }
 
 // StreamingDelta represents a delta in a streaming chunk

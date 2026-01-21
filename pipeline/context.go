@@ -97,8 +97,8 @@ func (c *Context) IsStreaming() bool {
 
 // EventEmitter handles streaming output events
 type EventEmitter interface {
-	// EmitSearchCall emits a web search call event
-	EmitSearchCall(id, status, query string) error
+	// EmitSearchCall emits a web search call event (reason is optional, used for blocked status)
+	EmitSearchCall(id, status, query, reason string) error
 
 	// EmitMetadata emits annotations and reasoning before content
 	EmitMetadata(annotations []Annotation, reasoning string) error
