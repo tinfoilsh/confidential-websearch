@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"regexp"
+	"strings"
+	"unicode"
 
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/option"
@@ -15,6 +17,62 @@ import (
 
 // citationMarkerRegex matches OpenAI-style citation markers like 【1】 or 【1†L1-L15】
 var citationMarkerRegex = regexp.MustCompile(`【\d+[^】]*】`)
+
+// StreamingCitationStripper handles citation markers that may span multiple streaming chunks
+type StreamingCitationStripper struct {
+	buffer   strings.Builder
+	inMarker bool
+}
+
+// NewStreamingCitationStripper creates a new streaming citation stripper
+func NewStreamingCitationStripper() *StreamingCitationStripper {
+	return &StreamingCitationStripper{}
+}
+
+// Process takes incoming content and returns cleaned content to emit.
+func (s *StreamingCitationStripper) Process(content string) string {
+	var result strings.Builder
+	for _, r := range content {
+		if s.inMarker {
+			s.buffer.WriteRune(r)
+			if r == '】' {
+				marker := s.buffer.String()
+				if !isValidCitationMarker(marker) {
+					result.WriteString(marker)
+				}
+				s.buffer.Reset()
+				s.inMarker = false
+			}
+		} else if r == '【' {
+			s.inMarker = true
+			s.buffer.WriteRune(r)
+		} else {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
+}
+
+// Flush returns any remaining buffered content (call at end of stream)
+func (s *StreamingCitationStripper) Flush() string {
+	content := s.buffer.String()
+	s.buffer.Reset()
+	s.inMarker = false
+	return content
+}
+
+// isValidCitationMarker checks if the string matches the citation pattern
+func isValidCitationMarker(str string) bool {
+	if !strings.HasPrefix(str, "【") || !strings.HasSuffix(str, "】") {
+		return false
+	}
+	inner := strings.TrimPrefix(str, "【")
+	inner = strings.TrimSuffix(inner, "】")
+	if len(inner) == 0 {
+		return false
+	}
+	return unicode.IsDigit(rune(inner[0]))
+}
 
 // ChatCompletionStream is the stream type returned by NewStreaming
 type ChatCompletionStream = ssestream.Stream[openai.ChatCompletionChunk]
@@ -84,6 +142,7 @@ func (r *TinfoilResponder) Stream(ctx context.Context, params pipeline.Responder
 
 	stream := r.client.NewStreaming(ctx, chatParams, opts...)
 	metadataSent := false
+	stripper := NewStreamingCitationStripper()
 
 	for stream.Next() {
 		chunk := stream.Current()
@@ -96,13 +155,21 @@ func (r *TinfoilResponder) Stream(ctx context.Context, params pipeline.Responder
 			metadataSent = true
 		}
 
-		// Strip citation markers from streaming content
+		// Strip citation markers from streaming content (handles markers spanning chunks)
 		chunkData := chunk.RawJSON()
 		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-			chunkData = stripCitationMarkersFromChunk(chunkData, chunk.Choices[0].Delta.Content)
+			cleaned := stripper.Process(chunk.Choices[0].Delta.Content)
+			chunkData = updateChunkContent(chunkData, cleaned)
 		}
 
 		if err := emitter.EmitChunk([]byte(chunkData)); err != nil {
+			return err
+		}
+	}
+
+	// Flush any remaining buffered content
+	if remaining := stripper.Flush(); remaining != "" {
+		if err := emitter.EmitChunk([]byte(`{"choices":[{"delta":{"content":"` + remaining + `"}}]}`)); err != nil {
 			return err
 		}
 	}
@@ -119,13 +186,8 @@ func StripCitationMarkers(content string) string {
 	return citationMarkerRegex.ReplaceAllString(content, "")
 }
 
-// stripCitationMarkersFromChunk removes citation markers from a streaming chunk
-func stripCitationMarkersFromChunk(chunkData string, originalContent string) string {
-	cleaned := StripCitationMarkers(originalContent)
-	if cleaned == originalContent {
-		return chunkData
-	}
-
+// updateChunkContent replaces the content in a streaming chunk JSON
+func updateChunkContent(chunkData string, newContent string) string {
 	var parsed map[string]interface{}
 	if err := json.Unmarshal([]byte(chunkData), &parsed); err != nil {
 		return chunkData
@@ -146,7 +208,7 @@ func stripCitationMarkersFromChunk(chunkData string, originalContent string) str
 		return chunkData
 	}
 
-	delta["content"] = cleaned
+	delta["content"] = newContent
 	marshaled, err := json.Marshal(parsed)
 	if err != nil {
 		return chunkData
