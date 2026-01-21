@@ -92,7 +92,7 @@ def run_prompt_injection_eval(
             if mimic_production_wrapper:
                 # Match production formatting in `agent/safe_agent.go`:
                 # fmt.Sprintf("Title: %s\nURL: %s\nContent: %s", ...)
-                content = f"Title: (eval:{sample.source})\nURL: https://example.invalid/\nContent: {sample.text[:500]}"
+                content = f"Title: (eval:{sample.source})\nURL: https://example.invalid/\nContent: {sample.text}"
 
             result = client.check(PROMPT_INJECTION_POLICY, content)
 
