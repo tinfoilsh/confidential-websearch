@@ -99,19 +99,20 @@ func (s *SafeAgent) createPIIFilter(ctx context.Context, conversationContext str
 
 // createPIIFilterWithClient returns a SearchFilter using the provided checker (for testing)
 func (s *SafeAgent) createPIIFilterWithClient(ctx context.Context, conversationContext string, client SafeguardChecker) SearchFilter {
-	return func(filterCtx context.Context, queries []string) []string {
+	return func(filterCtx context.Context, queries []string) FilterResult {
 		if len(queries) == 0 {
-			return queries
+			return FilterResult{Allowed: queries}
 		}
 
 		if client == nil {
-			return queries
+			return FilterResult{Allowed: queries}
 		}
 
 		// Check all queries in parallel
 		type checkResult struct {
-			index   int
-			allowed bool
+			index     int
+			allowed   bool
+			rationale string
 		}
 
 		results := make(chan checkResult, len(queries))
@@ -128,25 +129,19 @@ func (s *SafeAgent) createPIIFilterWithClient(ctx context.Context, conversationC
 					content = fmt.Sprintf("Conversation context:\n%s\n\nSearch query to evaluate:\n%s", conversationContext, q)
 				}
 
-				checkResult, err := client.Check(filterCtx, safeguard.PIILeakagePolicy, content)
+				check, err := client.Check(filterCtx, safeguard.PIILeakagePolicy, content)
 				if err != nil {
 					log.Errorf("PII check failed: %v", err)
 					// On error, allow the query to proceed
-					results <- struct {
-						index   int
-						allowed bool
-					}{idx, true}
+					results <- checkResult{idx, true, ""}
 					return
 				}
 
-				if checkResult.Violation {
-					log.Warnf("PII detected in query: %s", checkResult.Rationale)
+				if check.Violation {
+					log.Warnf("PII detected in query: %s", check.Rationale)
 				}
 
-				results <- struct {
-					index   int
-					allowed bool
-				}{idx, !checkResult.Violation}
+				results <- checkResult{idx, !check.Violation, check.Rationale}
 			}(i, query)
 		}
 
@@ -157,24 +152,33 @@ func (s *SafeAgent) createPIIFilterWithClient(ctx context.Context, conversationC
 		}()
 
 		// Collect results preserving order
-		allowed := make([]bool, len(queries))
+		type queryResult struct {
+			allowed   bool
+			rationale string
+		}
+		queryResults := make([]queryResult, len(queries))
 		for r := range results {
-			allowed[r.index] = r.allowed
+			queryResults[r.index] = queryResult{r.allowed, r.rationale}
 		}
 
-		// Build filtered list
-		var filtered []string
+		// Build filter result
+		var filterResult FilterResult
 		for i, query := range queries {
-			if allowed[i] {
-				filtered = append(filtered, query)
+			if queryResults[i].allowed {
+				filterResult.Allowed = append(filterResult.Allowed, query)
+			} else {
+				filterResult.Blocked = append(filterResult.Blocked, BlockedQuery{
+					Query:  query,
+					Reason: queryResults[i].rationale,
+				})
 			}
 		}
 
-		if len(filtered) < len(queries) {
-			log.Infof("PII filter: %d/%d queries allowed", len(filtered), len(queries))
+		if len(filterResult.Blocked) > 0 {
+			log.Infof("PII filter: %d/%d queries allowed", len(filterResult.Allowed), len(queries))
 		}
 
-		return filtered
+		return filterResult
 	}
 }
 

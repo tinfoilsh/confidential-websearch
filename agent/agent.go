@@ -17,9 +17,15 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/search"
 )
 
+// FilterResult contains the outcome of filtering search queries
+type FilterResult struct {
+	Allowed []string
+	Blocked []BlockedQuery
+}
+
 // SearchFilter is called with queries before search execution.
-// Returns the filtered list of queries that should proceed.
-type SearchFilter func(ctx context.Context, queries []string) []string
+// Returns the filter result containing allowed and blocked queries.
+type SearchFilter func(ctx context.Context, queries []string) FilterResult
 
 // Agent handles the tool-calling loop with the small model
 type Agent struct {
@@ -206,16 +212,31 @@ func (a *Agent) runWithFilter(ctx context.Context, userQuery string, onChunk Chu
 			queryStrings[i] = q.query
 		}
 
-		allowed := filter(ctx, queryStrings)
-		allowedSet := make(map[string]bool, len(allowed))
-		for _, q := range allowed {
+		filterResult := filter(ctx, queryStrings)
+
+		// Build allowed set for O(1) lookup
+		allowedSet := make(map[string]bool, len(filterResult.Allowed))
+		for _, q := range filterResult.Allowed {
 			allowedSet[q] = true
 		}
 
+		// Map blocked reasons by query string
+		blockedReasons := make(map[string]string)
+		for _, b := range filterResult.Blocked {
+			blockedReasons[b.Query] = b.Reason
+		}
+
+		// Separate allowed and blocked queries
 		var filtered []queryItem
 		for _, q := range queries {
 			if allowedSet[q.query] {
 				filtered = append(filtered, q)
+			} else if reason, blocked := blockedReasons[q.query]; blocked {
+				result.BlockedQueries = append(result.BlockedQueries, BlockedQuery{
+					ID:     q.id,
+					Query:  q.query,
+					Reason: reason,
+				})
 			}
 		}
 		queries = filtered
