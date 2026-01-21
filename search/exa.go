@@ -34,7 +34,8 @@ type exaRequest struct {
 }
 
 type exaContentsParam struct {
-	Text *exaTextParam `json:"text,omitempty"`
+	Text    *exaTextParam `json:"text,omitempty"`
+	Summary bool          `json:"summary,omitempty"`
 }
 
 type exaTextParam struct {
@@ -47,6 +48,7 @@ type exaResponse struct {
 		Title         string `json:"title"`
 		URL           string `json:"url"`
 		Text          string `json:"text"`
+		Summary       string `json:"summary"`
 		Favicon       string `json:"favicon"`
 		PublishedDate string `json:"publishedDate"`
 	} `json:"results"`
@@ -63,6 +65,7 @@ func (p *ExaProvider) Search(ctx context.Context, query string, maxResults int) 
 			Text: &exaTextParam{
 				MaxCharacters: config.MaxSearchContentLength,
 			},
+			Summary: true,
 		},
 	}
 
@@ -109,6 +112,7 @@ func (p *ExaProvider) Search(ctx context.Context, query string, maxResults int) 
 			Title:         item.Title,
 			URL:           item.URL,
 			Content:       item.Text,
+			Summary:       item.Summary,
 			Favicon:       item.Favicon,
 			PublishedDate: item.PublishedDate,
 		})
