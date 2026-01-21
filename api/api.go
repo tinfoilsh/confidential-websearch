@@ -268,6 +268,22 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	result := pctx.ResponderResult.(*pipeline.ResponderResultData)
 	flatAnnotations := buildFlatAnnotations(pctx.AgentResult.ToolCalls)
 
+	// Convert agent reasoning items to API format
+	var reasoningItems []ReasoningItem
+	for _, ri := range pctx.AgentResult.ReasoningItems {
+		apiRI := ReasoningItem{
+			ID:   ri.ID,
+			Type: ri.Type,
+		}
+		for _, s := range ri.Summary {
+			apiRI.Summary = append(apiRI.Summary, ReasoningSummaryPart{
+				Type: s.Type,
+				Text: s.Text,
+			})
+		}
+		reasoningItems = append(reasoningItems, apiRI)
+	}
+
 	var output []ResponsesOutput
 
 	for _, tc := range pctx.AgentResult.ToolCalls {
@@ -289,9 +305,11 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		Role:   "assistant",
 		Content: []ResponsesContent{
 			{
-				Type:        "output_text",
-				Text:        result.Content,
-				Annotations: flatAnnotations,
+				Type:            "output_text",
+				Text:            result.Content,
+				Annotations:     flatAnnotations,
+				SearchReasoning: pctx.AgentResult.AgentReasoning,
+				ReasoningItems:  reasoningItems,
 			},
 		},
 	})
