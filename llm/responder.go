@@ -128,7 +128,7 @@ func (r *TinfoilResponder) Complete(ctx context.Context, params pipeline.Respond
 }
 
 // Stream makes a streaming completion call
-func (r *TinfoilResponder) Stream(ctx context.Context, params pipeline.ResponderParams, annotations []pipeline.Annotation, reasoning string, emitter pipeline.EventEmitter, opts ...option.RequestOption) error {
+func (r *TinfoilResponder) Stream(ctx context.Context, params pipeline.ResponderParams, annotations []pipeline.Annotation, reasoning string, reasoningItems []pipeline.ReasoningItem, emitter pipeline.EventEmitter, opts ...option.RequestOption) error {
 	chatParams := openai.ChatCompletionNewParams{
 		Model:    shared.ChatModel(params.Model),
 		Messages: params.Messages,
@@ -147,9 +147,9 @@ func (r *TinfoilResponder) Stream(ctx context.Context, params pipeline.Responder
 	for stream.Next() {
 		chunk := stream.Current()
 
-		// Send metadata (annotations + reasoning) on first chunk with choices
-		if !metadataSent && len(chunk.Choices) > 0 && (len(annotations) > 0 || reasoning != "") {
-			if err := emitter.EmitMetadata(annotations, reasoning); err != nil {
+		// Send metadata (annotations + reasoning + reasoning items) on first chunk with choices
+		if !metadataSent && len(chunk.Choices) > 0 && (len(annotations) > 0 || reasoning != "" || len(reasoningItems) > 0) {
+			if err := emitter.EmitMetadata(annotations, reasoning, reasoningItems); err != nil {
 				return err
 			}
 			metadataSent = true

@@ -114,8 +114,8 @@ type EventEmitter interface {
 	// EmitSearchCall emits a web search call event (reason is optional, used for blocked status)
 	EmitSearchCall(id, status, query, reason string) error
 
-	// EmitMetadata emits annotations and reasoning before content
-	EmitMetadata(annotations []Annotation, reasoning string) error
+	// EmitMetadata emits annotations, reasoning, and reasoning items before content
+	EmitMetadata(annotations []Annotation, reasoning string, reasoningItems []ReasoningItem) error
 
 	// EmitChunk emits a raw chunk of data
 	EmitChunk(data []byte) error

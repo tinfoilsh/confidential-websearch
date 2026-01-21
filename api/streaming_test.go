@@ -143,7 +143,7 @@ func TestSSEEmitter_EmitMetadata(t *testing.T) {
 		},
 	}
 
-	err := emitter.EmitMetadata(annotations, "Search reasoning")
+	err := emitter.EmitMetadata(annotations, "Search reasoning", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestSSEEmitter_EmitMetadata_Empty(t *testing.T) {
 	w := httptest.NewRecorder()
 	emitter, _ := NewSSEEmitter(w)
 
-	err := emitter.EmitMetadata(nil, "")
+	err := emitter.EmitMetadata(nil, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

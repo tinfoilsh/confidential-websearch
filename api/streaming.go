@@ -59,10 +59,26 @@ func (e *SSEEmitter) EmitSearchCall(id, status, query, reason string) error {
 	return nil
 }
 
-// EmitMetadata emits annotations and reasoning as a custom chunk
-func (e *SSEEmitter) EmitMetadata(annotations []pipeline.Annotation, reasoning string) error {
-	if len(annotations) == 0 && reasoning == "" {
+// EmitMetadata emits annotations, reasoning, and reasoning items as a custom chunk
+func (e *SSEEmitter) EmitMetadata(annotations []pipeline.Annotation, reasoning string, reasoningItems []pipeline.ReasoningItem) error {
+	if len(annotations) == 0 && reasoning == "" && len(reasoningItems) == 0 {
 		return nil
+	}
+
+	// Convert pipeline.ReasoningItem to api.ReasoningItem
+	var apiReasoningItems []ReasoningItem
+	for _, ri := range reasoningItems {
+		apiRI := ReasoningItem{
+			ID:   ri.ID,
+			Type: ri.Type,
+		}
+		for _, s := range ri.Summary {
+			apiRI.Summary = append(apiRI.Summary, ReasoningSummaryPart{
+				Type: s.Type,
+				Text: s.Text,
+			})
+		}
+		apiReasoningItems = append(apiReasoningItems, apiRI)
 	}
 
 	chunk := StreamingChunk{
@@ -73,6 +89,7 @@ func (e *SSEEmitter) EmitMetadata(annotations []pipeline.Annotation, reasoning s
 				Delta: StreamingDelta{
 					Annotations:     annotations,
 					SearchReasoning: reasoning,
+					ReasoningItems:  apiReasoningItems,
 				},
 			},
 		},
