@@ -32,12 +32,26 @@ type IncomingRequest struct {
 	MaxTokens   *int64    `json:"max_tokens,omitempty"`
 }
 
+// ReasoningSummaryPart represents a part of the reasoning summary
+type ReasoningSummaryPart struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// ReasoningItem represents a reasoning item for multi-turn context
+type ReasoningItem struct {
+	ID      string                 `json:"id"`
+	Type    string                 `json:"type"`
+	Summary []ReasoningSummaryPart `json:"summary"`
+}
+
 // Message represents a chat message in the incoming request
 type Message struct {
 	Role            string                `json:"role"`
 	Content         string                `json:"content"`
 	Annotations     []pipeline.Annotation `json:"annotations,omitempty"`
 	SearchReasoning string                `json:"search_reasoning,omitempty"`
+	ReasoningItems  []ReasoningItem       `json:"reasoning_items,omitempty"`
 }
 
 // WebSearchCall represents a search operation in streaming output
@@ -138,4 +152,5 @@ type ChatCompletionMessageOutput struct {
 	Content         string                `json:"content"`
 	Annotations     []pipeline.Annotation `json:"annotations,omitempty"`
 	SearchReasoning string                `json:"search_reasoning,omitempty"`
+	ReasoningItems  []ReasoningItem       `json:"reasoning_items,omitempty"`
 }

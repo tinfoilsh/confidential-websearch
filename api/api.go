@@ -62,6 +62,20 @@ func convertMessages(msgs []Message) []pipeline.Message {
 			Annotations:     msg.Annotations, // Same type due to alias
 			SearchReasoning: msg.SearchReasoning,
 		}
+		// Convert reasoning items from API format to pipeline format
+		for _, ri := range msg.ReasoningItems {
+			pRI := pipeline.ReasoningItem{
+				ID:   ri.ID,
+				Type: ri.Type,
+			}
+			for _, s := range ri.Summary {
+				pRI.Summary = append(pRI.Summary, pipeline.ReasoningSummaryPart{
+					Type: s.Type,
+					Text: s.Text,
+				})
+			}
+			result[i].ReasoningItems = append(result[i].ReasoningItems, pRI)
+		}
 	}
 	return result
 }
@@ -153,6 +167,22 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 	result := pctx.ResponderResult.(*pipeline.ResponderResultData)
 	annotations := pipeline.BuildAnnotations(pctx.AgentResult)
 
+	// Convert agent reasoning items to API format
+	var reasoningItems []ReasoningItem
+	for _, ri := range pctx.AgentResult.ReasoningItems {
+		apiRI := ReasoningItem{
+			ID:   ri.ID,
+			Type: ri.Type,
+		}
+		for _, s := range ri.Summary {
+			apiRI.Summary = append(apiRI.Summary, ReasoningSummaryPart{
+				Type: s.Type,
+				Text: s.Text,
+			})
+		}
+		reasoningItems = append(reasoningItems, apiRI)
+	}
+
 	response := ChatCompletionResponse{
 		ID:      result.ID,
 		Object:  result.Object,
@@ -168,6 +198,7 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 					Content:         result.Content,
 					Annotations:     annotations,
 					SearchReasoning: pctx.AgentResult.AgentReasoning,
+					ReasoningItems:  reasoningItems,
 				},
 			},
 		},
