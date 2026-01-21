@@ -63,7 +63,7 @@ def load_customer_chats(
     xlsx_files = [f for f in xlsx_files if "__MACOSX" not in str(f)]
 
     for xlsx_path in sorted(xlsx_files):
-        if max_conversations and len(conversations) >= max_conversations:
+        if max_conversations is not None and len(conversations) >= max_conversations:
             break
 
         try:

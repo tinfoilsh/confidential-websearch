@@ -73,7 +73,7 @@ def load_deepset_injection_dataset(
 
     samples = []
     for row in train:
-        if max_samples and len(samples) >= max_samples:
+        if max_samples is not None and len(samples) >= max_samples:
             break
         samples.append(
             PromptInjectionSample(
@@ -84,7 +84,7 @@ def load_deepset_injection_dataset(
         )
 
     for row in test:
-        if max_samples and len(samples) >= max_samples:
+        if max_samples is not None and len(samples) >= max_samples:
             break
         samples.append(
             PromptInjectionSample(
