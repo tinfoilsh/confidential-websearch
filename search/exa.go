@@ -23,6 +23,7 @@ func (p *ExaProvider) Name() string {
 // See: https://docs.exa.ai/reference/search
 type exaRequest struct {
 	Query      string            `json:"query"`
+	Type       string            `json:"type,omitempty"`
 	NumResults int               `json:"numResults,omitempty"`
 	Contents   *exaContentsParam `json:"contents,omitempty"`
 }
@@ -51,9 +52,12 @@ type exaResponse struct {
 func (p *ExaProvider) Search(ctx context.Context, query string, maxResults int) ([]Result, error) {
 	reqBody := exaRequest{
 		Query:      query,
+		Type:       "fast", // Use fast type to guarantee ZDR (Exa maintains the index)
 		NumResults: maxResults,
 		Contents: &exaContentsParam{
-			Text: &exaTextParam{},
+			Text: &exaTextParam{
+				MaxCharacters: maxContentLength,
+			},
 		},
 	}
 
@@ -96,14 +100,10 @@ func (p *ExaProvider) Search(ctx context.Context, query string, maxResults int) 
 
 	results := make([]Result, 0, len(data.Results))
 	for _, item := range data.Results {
-		content := item.Text
-		if len(content) > maxContentLength {
-			content = content[:maxContentLength] + "..."
-		}
 		results = append(results, Result{
 			Title:         item.Title,
 			URL:           item.URL,
-			Content:       content,
+			Content:       item.Text,
 			Favicon:       item.Favicon,
 			PublishedDate: item.PublishedDate,
 		})

@@ -12,7 +12,7 @@ const (
 	httpMaxIdleConnsPerHost = 100
 	httpIdleConnTimeout     = 90 * time.Second
 	httpClientTimeout       = 30 * time.Second
-	maxContentLength        = 500
+	maxContentLength        = 1000 // Characters per result (passed to Exa API)
 )
 
 // Result represents a single search result
