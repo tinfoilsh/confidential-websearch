@@ -187,9 +187,9 @@ func TestBuildWithHistoricalAnnotations(t *testing.T) {
 
 	result := builder.Build(messages, nil)
 
-	// Should have: user + assistant(tool call) + tool result + assistant response + user
-	if len(result) != 5 {
-		t.Fatalf("expected 5 messages, got %d", len(result))
+	// Should have: user + assistant (with sources as text) + user
+	if len(result) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(result))
 	}
 
 	// First message should be user
@@ -197,27 +197,24 @@ func TestBuildWithHistoricalAnnotations(t *testing.T) {
 		t.Error("expected user message at index 0")
 	}
 
-	// Second should be assistant with tool calls (historical)
+	// Second should be assistant with sources embedded in content
 	if result[1].OfAssistant == nil {
 		t.Error("expected assistant message at index 1")
 	}
-	if len(result[1].OfAssistant.ToolCalls) != 1 {
-		t.Error("expected 1 tool call for historical context")
+	content := result[1].OfAssistant.Content.OfString.Value
+	if !strings.Contains(content, "The weather is sunny.") {
+		t.Error("assistant content should contain original response")
+	}
+	if !strings.Contains(content, "Sources used:") {
+		t.Error("assistant content should contain sources section")
+	}
+	if !strings.Contains(content, "Weather Report") {
+		t.Error("assistant content should contain source title")
 	}
 
-	// Third should be tool result
-	if result[2].OfTool == nil {
-		t.Error("expected tool message at index 2")
-	}
-
-	// Fourth should be assistant response
-	if result[3].OfAssistant == nil {
-		t.Error("expected assistant message at index 3")
-	}
-
-	// Fifth should be user
-	if result[4].OfUser == nil {
-		t.Error("expected user message at index 4")
+	// Third should be user
+	if result[2].OfUser == nil {
+		t.Error("expected user message at index 2")
 	}
 }
 

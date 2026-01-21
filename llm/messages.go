@@ -75,43 +75,23 @@ func (b *MessageBuilder) Build(inputMessages []pipeline.Message, agentResult *ag
 	return messages
 }
 
-// injectHistoricalSearchContext reconstructs tool call context from a historical assistant message with annotations
+// injectHistoricalSearchContext adds historical search context as plain text.
+// We avoid using tool call format here because the responder LLM (which doesn't
+// have tools configured) may try to echo/reproduce tool call syntax, breaking the response.
 func (b *MessageBuilder) injectHistoricalSearchContext(messages []openai.ChatCompletionMessageParamUnion, msg pipeline.Message) []openai.ChatCompletionMessageParamUnion {
-	toolCallID := fmt.Sprintf("historical_%d", len(messages))
-
-	// Build tool call with reasoning content
-	toolCalls := []openai.ChatCompletionMessageToolCallUnionParam{
-		{
-			OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
-				ID: toolCallID,
-				Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
-					Name:      "search",
-					Arguments: `{"query": "historical search"}`,
-				},
-			},
-		},
-	}
-
-	assistantMsg := openai.ChatCompletionAssistantMessageParam{ToolCalls: toolCalls}
-	if msg.SearchReasoning != "" {
-		assistantMsg.Content = openai.ChatCompletionAssistantMessageParamContentUnion{
-			OfString: openai.Opt(msg.SearchReasoning),
-		}
-	}
-	messages = append(messages, openai.ChatCompletionMessageParamUnion{OfAssistant: &assistantMsg})
-
-	// Build tool result from annotations
-	var toolContent string
+	var sourcesSummary string
 	for i, ann := range msg.Annotations {
 		if ann.Type == "url_citation" {
-			toolContent += FormatSearchResult(i+1, ann.URLCitation.Title, ann.URLCitation.URL, ann.URLCitation.Content)
+			sourcesSummary += fmt.Sprintf("[%d] %s (%s)\n", i+1, ann.URLCitation.Title, ann.URLCitation.URL)
 		}
 	}
-	messages = append(messages, openai.ToolMessage(toolContent, toolCallID))
 
-	// Add the actual assistant response
-	messages = append(messages, openai.AssistantMessage(msg.Content))
+	content := msg.Content
+	if sourcesSummary != "" {
+		content = fmt.Sprintf("%s\n\nSources used:\n%s", msg.Content, sourcesSummary)
+	}
 
+	messages = append(messages, openai.AssistantMessage(content))
 	return messages
 }
 
