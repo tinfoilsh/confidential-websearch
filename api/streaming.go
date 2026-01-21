@@ -29,7 +29,7 @@ func NewSSEEmitter(w http.ResponseWriter) (*SSEEmitter, error) {
 }
 
 // EmitSearchCall emits a web search call event
-func (e *SSEEmitter) EmitSearchCall(id, status, query string) error {
+func (e *SSEEmitter) EmitSearchCall(id, status, query, reason string) error {
 	event := WebSearchCall{
 		Type:   "web_search_call",
 		ID:     id,
@@ -41,6 +41,10 @@ func (e *SSEEmitter) EmitSearchCall(id, status, query string) error {
 			Type:  "search",
 			Query: query,
 		}
+	}
+
+	if reason != "" {
+		event.Reason = reason
 	}
 
 	data, err := json.Marshal(event)

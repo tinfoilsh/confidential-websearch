@@ -171,7 +171,7 @@ func (s *ResponderStage) Execute(ctx *Context) error {
 		// Emit search completion events before streaming response content
 		if ctx.AgentResult != nil && ctx.Emitter != nil {
 			for _, tc := range ctx.AgentResult.ToolCalls {
-				ctx.Emitter.EmitSearchCall(tc.ID, "completed", tc.Query)
+				ctx.Emitter.EmitSearchCall(tc.ID, "completed", tc.Query, "")
 			}
 		}
 
