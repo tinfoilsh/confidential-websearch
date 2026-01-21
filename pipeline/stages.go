@@ -230,7 +230,8 @@ func BuildAnnotations(agentResult *agent.Result) []Annotation {
 	return annotations
 }
 
-// buildConversationContext formats conversation messages for PII detection context
+// buildConversationContext formats conversation messages for the agent, including
+// search reasoning and sources from previous turns so it can make informed follow-up decisions.
 func buildConversationContext(messages []Message) string {
 	if len(messages) == 0 {
 		return ""
@@ -242,6 +243,27 @@ func buildConversationContext(messages []Message) string {
 		sb.WriteString(": ")
 		sb.WriteString(msg.Content)
 		sb.WriteString("\n")
+
+		// Include search reasoning from previous assistant responses
+		if msg.Role == "assistant" && msg.SearchReasoning != "" {
+			sb.WriteString("[Previous search reasoning: ")
+			sb.WriteString(msg.SearchReasoning)
+			sb.WriteString("]\n")
+		}
+
+		// Include sources summary from previous searches
+		if msg.Role == "assistant" && len(msg.Annotations) > 0 {
+			sb.WriteString("[Sources used: ")
+			for i, ann := range msg.Annotations {
+				if ann.Type == "url_citation" {
+					if i > 0 {
+						sb.WriteString(", ")
+					}
+					sb.WriteString(ann.URLCitation.Title)
+				}
+			}
+			sb.WriteString("]\n")
+		}
 	}
 	return sb.String()
 }
