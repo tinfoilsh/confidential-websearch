@@ -6,6 +6,10 @@ memory: 16384
 shim:
   listen-port: 443
   upstream-port: 8089
+  paths:
+    - /v1/chat/completions
+    - /v1/responses
+    - /health
 
 containers:
   - name: "websearch-proxy"
