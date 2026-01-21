@@ -52,5 +52,6 @@ func NewProvider(cfg Config) (Provider, error) {
 	return &ExaProvider{
 		apiKey:     cfg.ExaAPIKey,
 		httpClient: httpClient,
+		baseURL:    defaultExaBaseURL,
 	}, nil
 }
