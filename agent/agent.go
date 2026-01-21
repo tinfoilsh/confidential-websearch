@@ -67,6 +67,11 @@ func (a *Agent) RunWithFilter(ctx context.Context, userQuery string, filter Sear
 	return a.runWithFilter(ctx, userQuery, nil, filter)
 }
 
+// RunStreamingWithFilter executes the agent with streaming and a custom filter
+func (a *Agent) RunStreamingWithFilter(ctx context.Context, userQuery string, onChunk ChunkCallback, filter SearchFilter) (*Result, error) {
+	return a.runWithFilter(ctx, userQuery, onChunk, filter)
+}
+
 // runWithFilter is the internal implementation that accepts a filter parameter
 func (a *Agent) runWithFilter(ctx context.Context, userQuery string, onChunk ChunkCallback, filter SearchFilter) (*Result, error) {
 	searchTool := responses.ToolParamOfFunction(
