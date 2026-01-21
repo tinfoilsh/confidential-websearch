@@ -32,6 +32,7 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 
 from client import SafeguardClient
+from constants import QUERY_GEN_BASE_URL, QUERY_GEN_MODEL
 from data_loaders.customer_chats import (
     Conversation,
     get_user_turn_indices,
@@ -104,8 +105,8 @@ class E2EMetrics:
 class SearchQueryGenerator:
     """Generates search queries from conversation context using an LLM."""
 
-    DEFAULT_BASE_URL = "https://gpt-oss-120b.inf5.tinfoil.sh"
-    DEFAULT_MODEL = "gpt-oss-120b"
+    DEFAULT_BASE_URL = QUERY_GEN_BASE_URL
+    DEFAULT_MODEL = QUERY_GEN_MODEL
 
     SYSTEM_PROMPT = """You are a helpful customer support assistant. When the user asks a question that requires current information or facts you're uncertain about, use the search tool to find accurate answers. You can call search multiple times for complex queries."""
 
