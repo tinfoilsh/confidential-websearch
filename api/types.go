@@ -67,6 +67,7 @@ type WebSearchCall struct {
 type StreamingDelta struct {
 	Annotations     []pipeline.Annotation `json:"annotations,omitempty"`
 	SearchReasoning string                `json:"search_reasoning,omitempty"`
+	ReasoningItems  []ReasoningItem       `json:"reasoning_items,omitempty"`
 }
 
 // StreamingChoice represents a choice in a streaming chunk

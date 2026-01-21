@@ -39,7 +39,7 @@ func (m *MockMessageBuilder) Build(inputMessages []Message, agentResult *agent.R
 // MockResponder implements Responder for testing
 type MockResponder struct {
 	CompleteFunc func(ctx context.Context, params ResponderParams, opts ...option.RequestOption) (*ResponderResultData, error)
-	StreamFunc   func(ctx context.Context, params ResponderParams, annotations []Annotation, reasoning string, emitter EventEmitter, opts ...option.RequestOption) error
+	StreamFunc   func(ctx context.Context, params ResponderParams, annotations []Annotation, reasoning string, reasoningItems []ReasoningItem, emitter EventEmitter, opts ...option.RequestOption) error
 }
 
 func (m *MockResponder) Complete(ctx context.Context, params ResponderParams, opts ...option.RequestOption) (*ResponderResultData, error) {
@@ -49,9 +49,9 @@ func (m *MockResponder) Complete(ctx context.Context, params ResponderParams, op
 	return &ResponderResultData{Content: "test"}, nil
 }
 
-func (m *MockResponder) Stream(ctx context.Context, params ResponderParams, annotations []Annotation, reasoning string, emitter EventEmitter, opts ...option.RequestOption) error {
+func (m *MockResponder) Stream(ctx context.Context, params ResponderParams, annotations []Annotation, reasoning string, reasoningItems []ReasoningItem, emitter EventEmitter, opts ...option.RequestOption) error {
 	if m.StreamFunc != nil {
-		return m.StreamFunc(ctx, params, annotations, reasoning, emitter, opts...)
+		return m.StreamFunc(ctx, params, annotations, reasoning, reasoningItems, emitter, opts...)
 	}
 	return nil
 }
@@ -59,8 +59,9 @@ func (m *MockResponder) Stream(ctx context.Context, params ResponderParams, anno
 // MockEventEmitter implements EventEmitter for testing
 type MockEventEmitter struct {
 	MetadataCalls []struct {
-		Annotations []Annotation
-		Reasoning   string
+		Annotations    []Annotation
+		Reasoning      string
+		ReasoningItems []ReasoningItem
 	}
 	Chunks     [][]byte
 	Errors     []error
@@ -71,11 +72,12 @@ func (m *MockEventEmitter) EmitSearchCall(id, status, query, reason string) erro
 	return nil
 }
 
-func (m *MockEventEmitter) EmitMetadata(annotations []Annotation, reasoning string) error {
+func (m *MockEventEmitter) EmitMetadata(annotations []Annotation, reasoning string, reasoningItems []ReasoningItem) error {
 	m.MetadataCalls = append(m.MetadataCalls, struct {
-		Annotations []Annotation
-		Reasoning   string
-	}{annotations, reasoning})
+		Annotations    []Annotation
+		Reasoning      string
+		ReasoningItems []ReasoningItem
+	}{annotations, reasoning, reasoningItems})
 	return nil
 }
 
@@ -399,7 +401,7 @@ func TestResponderStage_NonStreaming(t *testing.T) {
 func TestResponderStage_Streaming(t *testing.T) {
 	emitter := &MockEventEmitter{}
 	mockResponder := &MockResponder{
-		StreamFunc: func(ctx context.Context, params ResponderParams, annotations []Annotation, reasoning string, e EventEmitter, opts ...option.RequestOption) error {
+		StreamFunc: func(ctx context.Context, params ResponderParams, annotations []Annotation, reasoning string, reasoningItems []ReasoningItem, e EventEmitter, opts ...option.RequestOption) error {
 			e.EmitChunk([]byte(`{"content": "test"}`))
 			e.EmitDone()
 			return nil

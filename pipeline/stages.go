@@ -51,7 +51,7 @@ type ResponderResultData struct {
 // Responder defines the interface for making responder LLM calls
 type Responder interface {
 	Complete(ctx context.Context, params ResponderParams, opts ...option.RequestOption) (*ResponderResultData, error)
-	Stream(ctx context.Context, params ResponderParams, annotations []Annotation, reasoning string, emitter EventEmitter, opts ...option.RequestOption) error
+	Stream(ctx context.Context, params ResponderParams, annotations []Annotation, reasoning string, reasoningItems []ReasoningItem, emitter EventEmitter, opts ...option.RequestOption) error
 }
 
 // ValidateStage validates the incoming request
@@ -106,6 +106,10 @@ func (s *AgentStage) Execute(ctx *Context) error {
 	// Use RunWithContext if agent supports full context (system prompt + conversation + reasoning)
 	if agentWithCtx, ok := s.Agent.(AgentWithFullContext); ok {
 		systemPrompt, messages := extractAgentContext(ctx.Request.Messages)
+		// Fallback for Responses API: if messages is empty, use ctx.UserQuery
+		if len(messages) == 0 && ctx.UserQuery != "" {
+			messages = []agent.ContextMessage{{Role: "user", Content: ctx.UserQuery}}
+		}
 		result, err = agentWithCtx.RunWithContext(ctx.Context, messages, systemPrompt, nil)
 	} else {
 		result, err = s.Agent.Run(ctx.Context, ctx.UserQuery)
@@ -178,11 +182,20 @@ func (s *ResponderStage) Execute(ctx *Context) error {
 
 		annotations := BuildAnnotations(ctx.AgentResult)
 		reasoning := ""
+		var reasoningItems []ReasoningItem
 		if ctx.AgentResult != nil {
 			reasoning = ctx.AgentResult.AgentReasoning
+			// Convert agent reasoning items to pipeline format
+			for _, ri := range ctx.AgentResult.ReasoningItems {
+				pRI := ReasoningItem{ID: ri.ID, Type: ri.Type}
+				for _, s := range ri.Summary {
+					pRI.Summary = append(pRI.Summary, ReasoningSummaryPart{Type: s.Type, Text: s.Text})
+				}
+				reasoningItems = append(reasoningItems, pRI)
+			}
 		}
 
-		err := s.Responder.Stream(ctx.Context, params, annotations, reasoning, ctx.Emitter, ctx.ReqOpts...)
+		err := s.Responder.Stream(ctx.Context, params, annotations, reasoning, reasoningItems, ctx.Emitter, ctx.ReqOpts...)
 		if err != nil {
 			return &ResponderError{Err: err}
 		}
