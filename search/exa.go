@@ -11,10 +11,13 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/config"
 )
 
+const defaultExaBaseURL = "https://api.exa.ai"
+
 // ExaProvider handles web searches using Exa AI
 type ExaProvider struct {
 	apiKey     string
 	httpClient *http.Client
+	baseURL    string
 }
 
 func (p *ExaProvider) Name() string {
@@ -68,7 +71,7 @@ func (p *ExaProvider) Search(ctx context.Context, query string, maxResults int) 
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.exa.ai/search", bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/search", bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, err
 	}
