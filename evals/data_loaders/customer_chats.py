@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import urllib.request
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
+
+DATASET_URL = "https://huggingface.co/datasets/AIxBlock/stimulated-chatbot-conversations-PII-detection-7languages/resolve/main/Comprehend%20PII%20detection.zip"
+DEFAULT_DATASET_DIR = Path(__file__).parent.parent / "data" / "customer_chats"
 
 
 @dataclass
@@ -26,12 +31,48 @@ class Conversation:
     file: str
 
 
+def download_customer_chats(target_dir: Path) -> Path:
+    """
+    Download the customer chat dataset from HuggingFace.
+
+    Args:
+        target_dir: Directory to extract the dataset to
+
+    Returns:
+        Path to the extracted dataset directory
+    """
+    target_dir = Path(target_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    zip_path = target_dir / "dataset.zip"
+    extracted_dir = target_dir / "Comprehend PII detection"
+
+    if extracted_dir.exists():
+        print(f"Dataset already exists at {extracted_dir}")
+        return extracted_dir
+
+    print(f"Downloading dataset from HuggingFace...")
+    urllib.request.urlretrieve(DATASET_URL, zip_path)
+
+    print("Extracting...")
+    with zipfile.ZipFile(zip_path, "r") as zip_ref:
+        zip_ref.extractall(target_dir)
+
+    zip_path.unlink()
+    print(f"Done! Dataset extracted to {extracted_dir}")
+
+    return extracted_dir
+
+
 def load_customer_chats(
-    dataset_dir: str | Path,
+    dataset_dir: str | Path | None = None,
     max_conversations: int | None = None,
 ) -> list[Conversation]:
     """
     Load customer service conversations from XLSX files.
+
+    If dataset_dir is None or doesn't exist, automatically downloads the dataset
+    from HuggingFace (AIxBlock/stimulated-chatbot-conversations-PII-detection-7languages).
 
     Expects directory structure like:
         dataset_dir/
@@ -48,15 +89,21 @@ def load_customer_chats(
     - Rows contain alternating turns
 
     Args:
-        dataset_dir: Path to the dataset directory
+        dataset_dir: Path to the dataset directory (auto-downloads if None or missing)
         max_conversations: Maximum conversations to load (None for all)
 
     Returns:
         List of Conversation objects
     """
-    dataset_path = Path(dataset_dir)
+    if dataset_dir is None:
+        dataset_path = DEFAULT_DATASET_DIR / "Comprehend PII detection"
+    else:
+        dataset_path = Path(dataset_dir)
+
     if not dataset_path.exists():
-        raise FileNotFoundError(f"Dataset directory not found: {dataset_dir}")
+        print(f"Dataset not found at {dataset_path}, downloading...")
+        download_target = dataset_path.parent if dataset_dir else DEFAULT_DATASET_DIR
+        dataset_path = download_customer_chats(download_target)
 
     conversations = []
     xlsx_files = list(dataset_path.rglob("*.xlsx"))
