@@ -127,7 +127,7 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	reqOpts := extractRequestOptions(r)
 
 	tools := convertTools(req.Tools)
-	log.Infof("Received request with tools: %v", tools)
+	log.Debugf("Request tools: %v", tools)
 
 	pipelineReq := &pipeline.Request{
 		Model:       req.Model,

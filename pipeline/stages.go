@@ -164,10 +164,10 @@ func (s *SearchStage) Execute(ctx *Context) error {
 		go func(pending agent.PendingSearch) {
 			defer wg.Done()
 
-			log.Infof("Searching: %s", pending.Query)
+			log.Debug("Executing search")
 			searchResults, err := s.Searcher.Search(ctx.Context, pending.Query, config.DefaultMaxSearchResults)
 			if err != nil {
-				log.Errorf("Search failed for %q: %v", pending.Query, err)
+				log.Errorf("Search failed: %v", err)
 				if ctx.Emitter != nil {
 					ctx.Emitter.EmitSearchCall(pending.ID, "failed", pending.Query, err.Error())
 				}

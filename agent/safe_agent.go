@@ -76,10 +76,10 @@ func (s *SafeAgent) RunWithContext(ctx context.Context, messages []ContextMessag
 		enabled = s.enablePIICheck
 	}
 
-	log.Infof("SafeAgent: tools=%v, pii_check_enabled=%v, safeguardClient=%v", tools, enabled, s.safeguardClient != nil)
+	log.Debugf("SafeAgent: tools=%v, pii_check_enabled=%v, safeguardClient=%v", tools, enabled, s.safeguardClient != nil)
 
 	if enabled && s.safeguardClient != nil {
-		log.Info("SafeAgent: Creating PII filter")
+		log.Debug("SafeAgent: Creating PII filter")
 		filter = s.createPIIFilter(ctx)
 	}
 
@@ -94,7 +94,7 @@ func (s *SafeAgent) createPIIFilter(ctx context.Context) SearchFilter {
 // createPIIFilterWithClient returns a SearchFilter using the provided checker (for testing)
 func (s *SafeAgent) createPIIFilterWithClient(ctx context.Context, client SafeguardChecker) SearchFilter {
 	return func(filterCtx context.Context, queries []string) FilterResult {
-		log.Infof("PII filter invoked with %d queries: %v", len(queries), queries)
+		log.Debugf("PII filter invoked with %d queries", len(queries))
 
 		if len(queries) == 0 {
 			return FilterResult{Allowed: queries}
@@ -129,7 +129,7 @@ func (s *SafeAgent) createPIIFilterWithClient(ctx context.Context, client Safegu
 				}
 
 				if check.Violation {
-					log.Warnf("PII detected in query: %s", check.Rationale)
+					log.Debug("PII violation detected in query")
 				}
 
 				results <- checkResult{idx, !check.Violation, check.Rationale}
