@@ -26,12 +26,12 @@ func (m *MockAgentRunner) RunWithContext(ctx context.Context, messages []agent.C
 
 // MockMessageBuilder implements MessageBuilder for testing
 type MockMessageBuilder struct {
-	BuildFunc func(inputMessages []Message, agentResult *agent.Result) []openai.ChatCompletionMessageParamUnion
+	BuildFunc func(inputMessages []Message, searchResults []agent.ToolCall) []openai.ChatCompletionMessageParamUnion
 }
 
-func (m *MockMessageBuilder) Build(inputMessages []Message, agentResult *agent.Result) []openai.ChatCompletionMessageParamUnion {
+func (m *MockMessageBuilder) Build(inputMessages []Message, searchResults []agent.ToolCall) []openai.ChatCompletionMessageParamUnion {
 	if m.BuildFunc != nil {
-		return m.BuildFunc(inputMessages, agentResult)
+		return m.BuildFunc(inputMessages, searchResults)
 	}
 	return []openai.ChatCompletionMessageParamUnion{}
 }
@@ -235,8 +235,8 @@ func TestAgentStage_Success(t *testing.T) {
 		RunWithContextFunc: func(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error) {
 			return &agent.Result{
 				AgentReasoning: "searched for info",
-				ToolCalls: []agent.ToolCall{
-					{ID: "call_1", Query: "test query", Results: []search.Result{{Title: "Result"}}},
+				PendingSearches: []agent.PendingSearch{
+					{ID: "call_1", Query: "test query"},
 				},
 			}, nil
 		},
@@ -259,8 +259,8 @@ func TestAgentStage_Success(t *testing.T) {
 		t.Fatal("expected agent result to be set")
 	}
 
-	if len(ctx.AgentResult.ToolCalls) != 1 {
-		t.Errorf("expected 1 tool call, got %d", len(ctx.AgentResult.ToolCalls))
+	if len(ctx.AgentResult.PendingSearches) != 1 {
+		t.Errorf("expected 1 pending search, got %d", len(ctx.AgentResult.PendingSearches))
 	}
 
 	if ctx.State.Current() != StateProcessing {
@@ -272,8 +272,8 @@ func TestAgentStage_NoSearch(t *testing.T) {
 	mockAgent := &MockAgentRunner{
 		RunWithContextFunc: func(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error) {
 			return &agent.Result{
-				AgentReasoning: "no search needed",
-				ToolCalls:      []agent.ToolCall{},
+				AgentReasoning:  "no search needed",
+				PendingSearches: []agent.PendingSearch{},
 			}, nil
 		},
 	}
@@ -326,7 +326,7 @@ func TestAgentStage_Error(t *testing.T) {
 
 func TestBuildMessagesStage_Success(t *testing.T) {
 	mockBuilder := &MockMessageBuilder{
-		BuildFunc: func(inputMessages []Message, agentResult *agent.Result) []openai.ChatCompletionMessageParamUnion {
+		BuildFunc: func(inputMessages []Message, searchResults []agent.ToolCall) []openai.ChatCompletionMessageParamUnion {
 			return []openai.ChatCompletionMessageParamUnion{
 				openai.UserMessage("test"),
 			}
@@ -471,20 +471,18 @@ func TestBuildAnnotations_Nil(t *testing.T) {
 }
 
 func TestBuildAnnotations_WithResults(t *testing.T) {
-	result := &agent.Result{
-		ToolCalls: []agent.ToolCall{
-			{
-				ID:    "call_1",
-				Query: "test",
-				Results: []search.Result{
-					{Title: "Title 1", URL: "https://example.com/1", Content: "Content 1"},
-					{Title: "Title 2", URL: "https://example.com/2", Content: "Content 2"},
-				},
+	searchResults := []agent.ToolCall{
+		{
+			ID:    "call_1",
+			Query: "test",
+			Results: []search.Result{
+				{Title: "Title 1", URL: "https://example.com/1", Content: "Content 1"},
+				{Title: "Title 2", URL: "https://example.com/2", Content: "Content 2"},
 			},
 		},
 	}
 
-	annotations := BuildAnnotations(result)
+	annotations := BuildAnnotations(searchResults)
 
 	if len(annotations) != 2 {
 		t.Fatalf("expected 2 annotations, got %d", len(annotations))

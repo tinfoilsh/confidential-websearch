@@ -71,7 +71,7 @@ func (ts *TestableServer) HandleChatCompletions(w http.ResponseWriter, r *http.R
 	}
 
 	result := pctx.ResponderResult.(*pipeline.ResponderResultData)
-	annotations := pipeline.BuildAnnotations(pctx.AgentResult)
+	annotations := pipeline.BuildAnnotations(pctx.SearchResults)
 
 	response := ChatCompletionResponse{
 		ID:      result.ID,
@@ -184,16 +184,16 @@ func TestHandleChatCompletions_NonStreaming_Success(t *testing.T) {
 				Context: cancelCtx,
 				Cancel:  cancel,
 				AgentResult: &agent.Result{
-					ToolCalls: []agent.ToolCall{
-						{
-							ID:    "call_123",
-							Query: "test query",
-							Results: []search.Result{
-								{Title: "Result 1", URL: "https://example.com"},
-							},
+					AgentReasoning: "Searched for test query",
+				},
+				SearchResults: []agent.ToolCall{
+					{
+						ID:    "call_123",
+						Query: "test query",
+						Results: []search.Result{
+							{Title: "Result 1", URL: "https://example.com"},
 						},
 					},
-					AgentReasoning: "Searched for test query",
 				},
 				ResponderResult: &pipeline.ResponderResultData{
 					ID:      "resp_123",
