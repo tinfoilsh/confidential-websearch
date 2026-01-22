@@ -20,5 +20,5 @@ containers:
         "EXA_API_KEY=$(awk -F': *' '$1~/^exa_api_key$/{print $2; exit}' /mnt/ramdisk/external-config.yml)",
         "-e",
         "TINFOIL_API_KEY=$(awk -F': *' '$1~/^tinfoil_api_key$/{print $2; exit}' /mnt/ramdisk/external-config.yml)",
-        "ghcr.io/tinfoilsh/confidential-websearch:0.0.26",
+        "ghcr.io/tinfoilsh/confidential-websearch:0.0.27",
       ]
