@@ -50,27 +50,29 @@ type mockSearchCall struct {
 	ID     string
 	Status string
 	Query  string
+	Reason string
 }
 
 type mockMetadataCall struct {
-	Annotations []pipeline.Annotation
-	Reasoning   string
+	Annotations    []pipeline.Annotation
+	Reasoning      string
+	ReasoningItems []pipeline.ReasoningItem
 }
 
-func (m *MockEventEmitter) EmitSearchCall(id, status, query string) error {
+func (m *MockEventEmitter) EmitSearchCall(id, status, query, reason string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.SearchCalls = append(m.SearchCalls, mockSearchCall{ID: id, Status: status, Query: query})
+	m.SearchCalls = append(m.SearchCalls, mockSearchCall{ID: id, Status: status, Query: query, Reason: reason})
 	return nil
 }
 
-func (m *MockEventEmitter) EmitMetadata(annotations []pipeline.Annotation, reasoning string) error {
+func (m *MockEventEmitter) EmitMetadata(annotations []pipeline.Annotation, reasoning string, reasoningItems []pipeline.ReasoningItem) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.EmitMetadataErr != nil {
 		return m.EmitMetadataErr
 	}
-	m.MetadataCalls = append(m.MetadataCalls, mockMetadataCall{Annotations: annotations, Reasoning: reasoning})
+	m.MetadataCalls = append(m.MetadataCalls, mockMetadataCall{Annotations: annotations, Reasoning: reasoning, ReasoningItems: reasoningItems})
 	return nil
 }
 
