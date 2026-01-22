@@ -55,36 +55,33 @@ func TestBuildSimpleMessages(t *testing.T) {
 	}
 }
 
-func TestBuildWithAgentResults(t *testing.T) {
+func TestBuildWithSearchResults(t *testing.T) {
 	builder := NewMessageBuilder()
 
 	messages := []pipeline.Message{
 		{Role: "user", Content: "What is the latest news?"},
 	}
 
-	agentResult := &agent.Result{
-		AgentReasoning: "I should search for news",
-		ToolCalls: []agent.ToolCall{
-			{
-				ID:    "call_123",
-				Query: "latest news today",
-				Results: []search.Result{
-					{
-						Title:   "News Article 1",
-						URL:     "https://news.example.com/1",
-						Content: "Breaking news content",
-					},
-					{
-						Title:   "News Article 2",
-						URL:     "https://news.example.com/2",
-						Content: "More news content",
-					},
+	searchResults := []agent.ToolCall{
+		{
+			ID:    "call_123",
+			Query: "latest news today",
+			Results: []search.Result{
+				{
+					Title:   "News Article 1",
+					URL:     "https://news.example.com/1",
+					Content: "Breaking news content",
+				},
+				{
+					Title:   "News Article 2",
+					URL:     "https://news.example.com/2",
+					Content: "More news content",
 				},
 			},
 		},
 	}
 
-	result := builder.Build(messages, agentResult)
+	result := builder.Build(messages, searchResults)
 
 	// Should have: user message + user message with search results
 	if len(result) != 2 {
@@ -116,26 +113,24 @@ func TestBuildWithMultipleToolCalls(t *testing.T) {
 		{Role: "user", Content: "Compare weather in NYC and LA"},
 	}
 
-	agentResult := &agent.Result{
-		ToolCalls: []agent.ToolCall{
-			{
-				ID:    "call_1",
-				Query: "weather NYC",
-				Results: []search.Result{
-					{Title: "NYC Weather", URL: "https://weather.com/nyc", Content: "Cold"},
-				},
+	searchResults := []agent.ToolCall{
+		{
+			ID:    "call_1",
+			Query: "weather NYC",
+			Results: []search.Result{
+				{Title: "NYC Weather", URL: "https://weather.com/nyc", Content: "Cold"},
 			},
-			{
-				ID:    "call_2",
-				Query: "weather LA",
-				Results: []search.Result{
-					{Title: "LA Weather", URL: "https://weather.com/la", Content: "Warm"},
-				},
+		},
+		{
+			ID:    "call_2",
+			Query: "weather LA",
+			Results: []search.Result{
+				{Title: "LA Weather", URL: "https://weather.com/la", Content: "Warm"},
 			},
 		},
 	}
 
-	result := builder.Build(messages, agentResult)
+	result := builder.Build(messages, searchResults)
 
 	// Should have: user message + user message with all search results combined
 	if len(result) != 2 {
@@ -208,28 +203,25 @@ func TestBuildWithHistoricalAnnotations(t *testing.T) {
 	}
 }
 
-func TestBuildWithEmptyAgentResult(t *testing.T) {
+func TestBuildWithEmptySearchResults(t *testing.T) {
 	builder := NewMessageBuilder()
 
 	messages := []pipeline.Message{
 		{Role: "user", Content: "Hello"},
 	}
 
-	// Empty agent result (no tool calls)
-	agentResult := &agent.Result{
-		AgentReasoning: "No search needed",
-		ToolCalls:      []agent.ToolCall{},
-	}
+	// Empty search results
+	searchResults := []agent.ToolCall{}
 
-	result := builder.Build(messages, agentResult)
+	result := builder.Build(messages, searchResults)
 
-	// Should only have the user message (no tool call injection)
+	// Should only have the user message (no search results injection)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(result))
 	}
 }
 
-func TestBuildWithNilAgentResult(t *testing.T) {
+func TestBuildWithNilSearchResults(t *testing.T) {
 	builder := NewMessageBuilder()
 
 	messages := []pipeline.Message{
@@ -250,20 +242,18 @@ func TestSearchResultsContainFormattedResults(t *testing.T) {
 		{Role: "user", Content: "Search test"},
 	}
 
-	agentResult := &agent.Result{
-		ToolCalls: []agent.ToolCall{
-			{
-				ID:    "call_1",
-				Query: "test query",
-				Results: []search.Result{
-					{Title: "Result 1", URL: "https://example.com/1", Content: "Content 1"},
-					{Title: "Result 2", URL: "https://example.com/2", Content: "Content 2"},
-				},
+	searchResults := []agent.ToolCall{
+		{
+			ID:    "call_1",
+			Query: "test query",
+			Results: []search.Result{
+				{Title: "Result 1", URL: "https://example.com/1", Content: "Content 1"},
+				{Title: "Result 2", URL: "https://example.com/2", Content: "Content 2"},
 			},
 		},
 	}
 
-	result := builder.Build(messages, agentResult)
+	result := builder.Build(messages, searchResults)
 
 	// Get the search results message (now a user message with plain text)
 	if result[1].OfUser == nil {
@@ -289,13 +279,11 @@ func TestSearchResultsMessageContainsPrompt(t *testing.T) {
 		{Role: "user", Content: "Search for something"},
 	}
 
-	agentResult := &agent.Result{
-		ToolCalls: []agent.ToolCall{
-			{ID: "call_1", Query: "something", Results: []search.Result{{Title: "T", URL: "U", Content: "C"}}},
-		},
+	searchResults := []agent.ToolCall{
+		{ID: "call_1", Query: "something", Results: []search.Result{{Title: "T", URL: "U", Content: "C"}}},
 	}
 
-	result := builder.Build(messages, agentResult)
+	result := builder.Build(messages, searchResults)
 
 	// Last message should contain both search results and the prompt
 	lastMsg := result[len(result)-1]
