@@ -15,6 +15,12 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/config"
 )
 
+const agentInstructions = `You are a search routing agent. Analyze the conversation and decide if a web search would help answer the user's question.
+
+If a search IS needed: Call the search tool with an appropriate query. You may call it multiple times for complex questions.
+
+If NO search is needed: Do not call any tools and do not output any text.`
+
 // FilterResult contains the outcome of filtering search queries
 type FilterResult struct {
 	Allowed []string
@@ -86,10 +92,7 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 		MaxOutputTokens: openai.Int(config.AgentMaxTokens),
 	}
 
-	// Use system prompt as instructions
-	if systemPrompt != "" {
-		params.Instructions = openai.String(systemPrompt)
-	}
+	params.Instructions = openai.String(agentInstructions)
 
 	// Track function calls by output index
 	type functionCall struct {
