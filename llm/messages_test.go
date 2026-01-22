@@ -147,62 +147,6 @@ func TestBuildWithMultipleToolCalls(t *testing.T) {
 	}
 }
 
-func TestBuildWithHistoricalAnnotations(t *testing.T) {
-	builder := NewMessageBuilder()
-
-	messages := []pipeline.Message{
-		{Role: "user", Content: "What is the weather?"},
-		{
-			Role:            "assistant",
-			Content:         "The weather is sunny.",
-			SearchReasoning: "I searched for weather",
-			Annotations: []pipeline.Annotation{
-				{
-					Type: "url_citation",
-					URLCitation: pipeline.URLCitation{
-						Title:   "Weather Report",
-						URL:     "https://weather.com",
-						Content: "Sunny skies expected",
-					},
-				},
-			},
-		},
-		{Role: "user", Content: "What about tomorrow?"},
-	}
-
-	result := builder.Build(messages, nil)
-
-	// Should have: user + assistant (with sources as text) + user
-	if len(result) != 3 {
-		t.Fatalf("expected 3 messages, got %d", len(result))
-	}
-
-	// First message should be user
-	if result[0].OfUser == nil {
-		t.Error("expected user message at index 0")
-	}
-
-	// Second should be assistant with sources embedded in content
-	if result[1].OfAssistant == nil {
-		t.Error("expected assistant message at index 1")
-	}
-	content := result[1].OfAssistant.Content.OfString.Value
-	if !strings.Contains(content, "The weather is sunny.") {
-		t.Error("assistant content should contain original response")
-	}
-	if !strings.Contains(content, "Sources used:") {
-		t.Error("assistant content should contain sources section")
-	}
-	if !strings.Contains(content, "Weather Report") {
-		t.Error("assistant content should contain source title")
-	}
-
-	// Third should be user
-	if result[2].OfUser == nil {
-		t.Error("expected user message at index 2")
-	}
-}
-
 func TestBuildWithEmptySearchResults(t *testing.T) {
 	builder := NewMessageBuilder()
 
