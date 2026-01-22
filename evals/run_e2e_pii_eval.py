@@ -348,13 +348,14 @@ def run_e2e_pii_eval(
     # Track completed indices to find the highest contiguous completed index.
     # This ensures checkpointing doesn't skip items when higher indices finish early.
     completed_indices = set(range(start_index))
+    contiguous_completed = start_index
 
     def get_contiguous_completed() -> int:
         """Find the highest index where all previous indices are complete."""
-        idx = 0
-        while idx in completed_indices:
-            idx += 1
-        return idx
+        nonlocal contiguous_completed
+        while contiguous_completed in completed_indices:
+            contiguous_completed += 1
+        return contiguous_completed
 
     # Run evaluation in parallel
     try:
