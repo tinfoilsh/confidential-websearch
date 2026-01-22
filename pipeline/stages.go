@@ -2,11 +2,15 @@ package pipeline
 
 import (
 	"context"
+	"sync"
 
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/option"
+	log "github.com/sirupsen/logrus"
 
 	"github.com/tinfoilsh/confidential-websearch/agent"
+	"github.com/tinfoilsh/confidential-websearch/config"
+	"github.com/tinfoilsh/confidential-websearch/search"
 )
 
 // Stage represents a single processing step in the pipeline
@@ -22,7 +26,7 @@ type AgentRunner interface {
 
 // MessageBuilder defines the interface for building responder messages
 type MessageBuilder interface {
-	Build(inputMessages []Message, agentResult *agent.Result) []openai.ChatCompletionMessageParamUnion
+	Build(inputMessages []Message, searchResults []agent.ToolCall) []openai.ChatCompletionMessageParamUnion
 }
 
 // ResponderParams contains parameters for a responder LLM call
@@ -110,6 +114,72 @@ func (s *AgentStage) Execute(ctx *Context) error {
 	return nil
 }
 
+// SearchStage executes pending searches from the agent
+type SearchStage struct {
+	Searcher search.Provider
+}
+
+func (s *SearchStage) Name() string { return "search" }
+
+func (s *SearchStage) Execute(ctx *Context) error {
+	if ctx.AgentResult == nil || len(ctx.AgentResult.PendingSearches) == 0 {
+		return nil
+	}
+
+	// Emit blocked query events first
+	if ctx.Emitter != nil {
+		for _, bq := range ctx.AgentResult.BlockedQueries {
+			ctx.Emitter.EmitSearchCall(bq.ID, "blocked", bq.Query, bq.Reason)
+		}
+	}
+
+	// Emit in_progress events for all pending searches
+	if ctx.Emitter != nil {
+		for _, ps := range ctx.AgentResult.PendingSearches {
+			ctx.Emitter.EmitSearchCall(ps.ID, "in_progress", ps.Query, "")
+		}
+	}
+
+	// Execute searches in parallel
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var results []agent.ToolCall
+
+	for _, ps := range ctx.AgentResult.PendingSearches {
+		wg.Add(1)
+		go func(pending agent.PendingSearch) {
+			defer wg.Done()
+
+			log.Infof("Searching: %s", pending.Query)
+			searchResults, err := s.Searcher.Search(ctx.Context, pending.Query, config.DefaultMaxSearchResults)
+			if err != nil {
+				log.Errorf("Search failed for %q: %v", pending.Query, err)
+				if ctx.Emitter != nil {
+					ctx.Emitter.EmitSearchCall(pending.ID, "failed", pending.Query, err.Error())
+				}
+				return
+			}
+
+			mu.Lock()
+			results = append(results, agent.ToolCall{
+				ID:      pending.ID,
+				Query:   pending.Query,
+				Results: searchResults,
+			})
+			mu.Unlock()
+
+			// Emit completed event
+			if ctx.Emitter != nil {
+				ctx.Emitter.EmitSearchCall(pending.ID, "completed", pending.Query, "")
+			}
+		}(ps)
+	}
+
+	wg.Wait()
+	ctx.SearchResults = results
+	return nil
+}
+
 // BuildMessagesStage constructs the messages for the responder LLM
 type BuildMessagesStage struct {
 	Builder MessageBuilder
@@ -125,7 +195,7 @@ func (s *BuildMessagesStage) Execute(ctx *Context) error {
 		messages = []Message{{Role: "user", Content: ctx.UserQuery}}
 	}
 
-	ctx.ResponderMessages = s.Builder.Build(messages, ctx.AgentResult)
+	ctx.ResponderMessages = s.Builder.Build(messages, ctx.SearchResults)
 	return nil
 }
 
@@ -147,18 +217,7 @@ func (s *ResponderStage) Execute(ctx *Context) error {
 	}
 
 	if ctx.IsStreaming() {
-
-		// Emit blocked search events first, then completed events
-		if ctx.AgentResult != nil && ctx.Emitter != nil {
-			for _, bq := range ctx.AgentResult.BlockedQueries {
-				ctx.Emitter.EmitSearchCall(bq.ID, "blocked", bq.Query, bq.Reason)
-			}
-			for _, tc := range ctx.AgentResult.ToolCalls {
-				ctx.Emitter.EmitSearchCall(tc.ID, "completed", tc.Query, "")
-			}
-		}
-
-		annotations := BuildAnnotations(ctx.AgentResult)
+		annotations := BuildAnnotations(ctx.SearchResults)
 		reasoning := ""
 		var reasoningItems []ReasoningItem
 		if ctx.AgentResult != nil {
@@ -191,14 +250,14 @@ func (s *ResponderStage) Execute(ctx *Context) error {
 	return nil
 }
 
-// BuildAnnotations creates URL citations from agent tool calls
-func BuildAnnotations(agentResult *agent.Result) []Annotation {
-	if agentResult == nil {
+// BuildAnnotations creates URL citations from search results
+func BuildAnnotations(searchResults []agent.ToolCall) []Annotation {
+	if len(searchResults) == 0 {
 		return nil
 	}
 
 	var annotations []Annotation
-	for _, tc := range agentResult.ToolCalls {
+	for _, tc := range searchResults {
 		for _, r := range tc.Results {
 			// Use Summary for display if available, otherwise fall back to Content
 			displayContent := r.Summary
