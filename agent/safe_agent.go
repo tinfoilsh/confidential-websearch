@@ -2,13 +2,11 @@ package agent
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	log "github.com/sirupsen/logrus"
 
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
-	"github.com/tinfoilsh/confidential-websearch/search"
 )
 
 // SafeguardChecker is an interface for safety checking (allows mocking in tests)
@@ -16,21 +14,19 @@ type SafeguardChecker interface {
 	Check(ctx context.Context, policy, content string) (*safeguard.CheckResult, error)
 }
 
-// SafeAgent wraps the base Agent with safety checks for PII and prompt injection
+// SafeAgent wraps the base Agent with PII filtering on search queries
 type SafeAgent struct {
-	agent                *Agent
-	safeguardClient      *safeguard.Client
-	enablePIICheck       bool
-	enableInjectionCheck bool
+	agent           *Agent
+	safeguardClient *safeguard.Client
+	enablePIICheck  bool
 }
 
 // NewSafeAgent creates a new SafeAgent wrapper
 func NewSafeAgent(agent *Agent, safeguardClient *safeguard.Client) *SafeAgent {
 	return &SafeAgent{
-		agent:                agent,
-		safeguardClient:      safeguardClient,
-		enablePIICheck:       true,
-		enableInjectionCheck: true,
+		agent:           agent,
+		safeguardClient: safeguardClient,
+		enablePIICheck:  true,
 	}
 }
 
@@ -39,32 +35,15 @@ func (s *SafeAgent) SetPIICheckEnabled(enabled bool) {
 	s.enablePIICheck = enabled
 }
 
-// SetInjectionCheckEnabled enables or disables prompt injection checking
-func (s *SafeAgent) SetInjectionCheckEnabled(enabled bool) {
-	s.enableInjectionCheck = enabled
-}
-
 // RunWithContext implements AgentRunner interface.
-// It forwards full conversation context to the base agent while applying safety filters.
+// It forwards full conversation context to the base agent while applying PII filtering.
 func (s *SafeAgent) RunWithContext(ctx context.Context, messages []ContextMessage, systemPrompt string, onChunk ChunkCallback) (*Result, error) {
-	// Create PII filter if enabled
 	var filter SearchFilter
 	if s.enablePIICheck && s.safeguardClient != nil {
 		filter = s.createPIIFilter(ctx)
 	}
 
-	// Run the base agent with full context and the filter
-	result, err := s.agent.RunWithFilter(ctx, messages, systemPrompt, onChunk, filter)
-	if err != nil {
-		return nil, err
-	}
-
-	// Apply injection filtering if enabled
-	if s.enableInjectionCheck && s.safeguardClient != nil && len(result.ToolCalls) > 0 {
-		result.ToolCalls = s.filterInjectedResults(ctx, result.ToolCalls)
-	}
-
-	return result, nil
+	return s.agent.RunWithFilter(ctx, messages, systemPrompt, onChunk, filter)
 }
 
 // createPIIFilter creates a PII filter that checks query content
@@ -149,116 +128,4 @@ func (s *SafeAgent) createPIIFilterWithClient(ctx context.Context, client Safegu
 
 		return filterResult
 	}
-}
-
-// filterInjectedResults checks search results for prompt injection and removes flagged ones
-func (s *SafeAgent) filterInjectedResults(ctx context.Context, toolCalls []ToolCall) []ToolCall {
-	return s.filterInjectedResultsWithClient(ctx, toolCalls, s.safeguardClient)
-}
-
-// filterInjectedResultsWithClient checks results using the provided checker (for testing)
-func (s *SafeAgent) filterInjectedResultsWithClient(ctx context.Context, toolCalls []ToolCall, client SafeguardChecker) []ToolCall {
-	if client == nil {
-		return toolCalls
-	}
-
-	// Flatten all results for parallel checking
-	type resultRef struct {
-		toolCallIdx int
-		resultIdx   int
-		content     string
-	}
-
-	var allResults []resultRef
-	for ti, tc := range toolCalls {
-		for ri, r := range tc.Results {
-			allResults = append(allResults, resultRef{
-				toolCallIdx: ti,
-				resultIdx:   ri,
-				content:     fmt.Sprintf("Title: %s\nURL: %s\nContent: %s", r.Title, r.URL, r.Content),
-			})
-		}
-	}
-
-	if len(allResults) == 0 {
-		return toolCalls
-	}
-
-	// Check all results in parallel
-	type checkResult struct {
-		ref     resultRef
-		flagged bool
-	}
-
-	results := make(chan checkResult, len(allResults))
-	var wg sync.WaitGroup
-
-	for _, ref := range allResults {
-		wg.Add(1)
-		go func(r resultRef) {
-			defer wg.Done()
-
-			check, err := client.Check(ctx, safeguard.PromptInjectionPolicy, r.content)
-			if err != nil {
-				log.Errorf("Injection check failed: %v", err)
-				// On error, allow the result to proceed
-				results <- checkResult{ref: r, flagged: false}
-				return
-			}
-
-			if check.Violation {
-				log.Warnf("Prompt injection detected in result from %s: %s",
-					toolCalls[r.toolCallIdx].Results[r.resultIdx].URL,
-					check.Rationale)
-			}
-
-			results <- checkResult{ref: r, flagged: check.Violation}
-		}(ref)
-	}
-
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	// Build set of flagged results
-	flagged := make(map[string]bool)
-	for r := range results {
-		if r.flagged {
-			key := fmt.Sprintf("%d-%d", r.ref.toolCallIdx, r.ref.resultIdx)
-			flagged[key] = true
-		}
-	}
-
-	if len(flagged) == 0 {
-		return toolCalls
-	}
-
-	// Filter out flagged results
-	var filtered []ToolCall
-	totalFiltered := 0
-	for ti, tc := range toolCalls {
-		var cleanResults []search.Result
-		for ri, r := range tc.Results {
-			key := fmt.Sprintf("%d-%d", ti, ri)
-			if !flagged[key] {
-				cleanResults = append(cleanResults, r)
-			} else {
-				totalFiltered++
-			}
-		}
-
-		// Only include tool call if it has remaining results
-		if len(cleanResults) > 0 {
-			filtered = append(filtered, ToolCall{
-				ID:      tc.ID,
-				Query:   tc.Query,
-				Results: cleanResults,
-			})
-		}
-	}
-
-	log.Infof("Injection filter: removed %d flagged results", totalFiltered)
-
-	return filtered
 }
