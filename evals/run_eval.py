@@ -30,7 +30,7 @@ import random
 from dotenv import load_dotenv
 from tqdm import tqdm
 
-from client import CheckResult, DeepSeekLabelerClient, SafeguardClient
+from client import CheckResult, LabelerClient, SafeguardClient
 from data_loaders import load_deepset_injection_dataset, load_injection_dataset, load_pii_dataset
 from metrics import EvalMetrics, calculate_metrics
 from prompts import PII_LEAKAGE_POLICY, PROMPT_INJECTION_POLICY
@@ -44,7 +44,7 @@ def run_prompt_injection_eval(
     use_deepset: bool = False,
     seed: int = 0,
     mimic_production_wrapper: bool = True,
-    labeler: DeepSeekLabelerClient | None = None,
+    labeler: LabelerClient | None = None,
 ) -> tuple[EvalMetrics, list[dict]]:
     """
     Evaluate the prompt injection detection policy.
@@ -154,7 +154,7 @@ def run_pii_eval(
     client: SafeguardClient,
     max_samples: int | None = None,
     seed: int = 0,
-    labeler: DeepSeekLabelerClient | None = None,
+    labeler: LabelerClient | None = None,
 ) -> tuple[EvalMetrics, list[dict]]:
     """
     Evaluate the PII leakage detection policy.
@@ -343,7 +343,7 @@ def main():
         "evaluations": {},
     }
 
-    labeler = None if args.no_labeler else DeepSeekLabelerClient()
+    labeler = None if args.no_labeler else LabelerClient()
 
     if args.eval in ("prompt-injection", "all"):
         metrics, results = run_prompt_injection_eval(
