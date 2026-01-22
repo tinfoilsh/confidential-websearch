@@ -43,23 +43,23 @@ func main() {
 		log.Fatalf("Failed to create search provider: %v", err)
 	}
 
-	baseAgent := agent.New(client, cfg.AgentModel, searcher)
+	baseAgent := agent.New(client, cfg.AgentModel)
 	responder := llm.NewTinfoilResponder(&client.Chat.Completions)
 	messageBuilder := llm.NewMessageBuilder()
 
-	// Wrap agent with safety checks if enabled
+	// Wrap agent with PII filtering if enabled
 	var agentRunner pipeline.AgentRunner = baseAgent
-	if cfg.EnablePIICheck || cfg.EnableInjectionCheck {
+	if cfg.EnablePIICheck {
 		safeguardClient := safeguard.NewClient(client, cfg.SafeguardModel)
 		safeAgent := agent.NewSafeAgent(baseAgent, safeguardClient)
 		safeAgent.SetPIICheckEnabled(cfg.EnablePIICheck)
-		safeAgent.SetInjectionCheckEnabled(cfg.EnableInjectionCheck)
 		agentRunner = safeAgent
 	}
 
 	p := pipeline.NewPipeline([]pipeline.Stage{
 		&pipeline.ValidateStage{},
 		&pipeline.AgentStage{Agent: agentRunner},
+		&pipeline.SearchStage{Searcher: searcher},
 		&pipeline.BuildMessagesStage{Builder: messageBuilder},
 		&pipeline.ResponderStage{Responder: responder},
 	}, api.RequestTimeout)
