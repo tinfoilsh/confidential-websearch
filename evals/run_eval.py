@@ -55,7 +55,7 @@ def run_prompt_injection_eval(
         use_deepset: Use deepset dataset instead of PINT
         seed: Random seed for shuffling
         mimic_production_wrapper: Wrap content in Title/URL/Content format
-        labeler: Optional DeepSeek labeler for ground truth when classifier disagrees
+        labeler: Optional labeler for ground truth when classifier disagrees
 
     Returns:
         Tuple of (metrics, detailed_results)
@@ -73,7 +73,7 @@ def run_prompt_injection_eval(
 
     print(f"Loaded {len(samples)} samples")
     if labeler:
-        print("DeepSeek labeler enabled: will provide ground truth when classifier disagrees")
+        print("Labeler enabled: will provide ground truth when classifier disagrees")
 
     if seed is not None:
         random.Random(seed).shuffle(samples)
@@ -162,7 +162,7 @@ def run_pii_eval(
     Args:
         client: Safeguard client instance
         max_samples: Maximum samples to evaluate
-        labeler: Optional DeepSeek labeler for ground truth when classifier disagrees
+        labeler: Optional labeler for ground truth when classifier disagrees
 
     Returns:
         Tuple of (metrics, detailed_results)
@@ -175,7 +175,7 @@ def run_pii_eval(
     samples = load_pii_dataset(max_samples=max_samples)
     print(f"Loaded {len(samples)} samples")
     if labeler:
-        print("DeepSeek labeler enabled: will provide ground truth when classifier disagrees")
+        print("Labeler enabled: will provide ground truth when classifier disagrees")
 
     if seed is not None:
         random.Random(seed).shuffle(samples)
@@ -326,7 +326,7 @@ def main():
     parser.add_argument(
         "--no-labeler",
         action="store_true",
-        help="Disable DeepSeek R1 labeler (labeler is ON by default for both evals)",
+        help="Disable labeler (labeler is ON by default for both evals)",
     )
     args = parser.parse_args()
 
