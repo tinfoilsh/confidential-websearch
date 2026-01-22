@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"github.com/openai/openai-go/v2/responses"
+	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/tinfoilsh/confidential-websearch/search"
 )

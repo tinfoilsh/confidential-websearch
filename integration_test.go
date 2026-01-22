@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openai/openai-go/v2/option"
+	"github.com/openai/openai-go/v3/option"
 	"github.com/tinfoilsh/tinfoil-go"
 
 	"github.com/tinfoilsh/confidential-websearch/agent"

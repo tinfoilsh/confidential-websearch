@@ -6,9 +6,9 @@ replace github.com/google/go-sev-guest => github.com/tinfoilsh/go-sev-guest v0.0
 
 require (
 	github.com/google/uuid v1.6.0
-	github.com/openai/openai-go/v2 v2.7.1
+	github.com/openai/openai-go/v3 v3.16.0
 	github.com/sirupsen/logrus v1.9.3
-	github.com/tinfoilsh/tinfoil-go v0.10.3
+	github.com/tinfoilsh/tinfoil-go v0.11.0
 )
 
 require (

@@ -3,7 +3,7 @@ package llm
 import (
 	"fmt"
 
-	"github.com/openai/openai-go/v2"
+	"github.com/openai/openai-go/v3"
 
 	"github.com/tinfoilsh/confidential-websearch/agent"
 	"github.com/tinfoilsh/confidential-websearch/pipeline"
