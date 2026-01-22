@@ -346,7 +346,7 @@ func TestJsonErrorResponse(t *testing.T) {
 func TestConvertMessages(t *testing.T) {
 	msgs := []Message{
 		{Role: "user", Content: "Hello"},
-		{Role: "assistant", Content: "Hi there", SearchReasoning: "No search needed"},
+		{Role: "assistant", Content: "Hi there"},
 		{Role: "user", Content: "Search for something"},
 	}
 
@@ -360,9 +360,6 @@ func TestConvertMessages(t *testing.T) {
 	}
 	if result[1].Role != "assistant" || result[1].Content != "Hi there" {
 		t.Error("second message mismatch")
-	}
-	if result[1].SearchReasoning != "No search needed" {
-		t.Error("search reasoning not preserved")
 	}
 }
 

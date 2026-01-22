@@ -47,10 +47,9 @@ type ReasoningItem struct {
 
 // Message represents a chat message in the incoming request
 type Message struct {
-	Role            string                `json:"role"`
-	Content         string                `json:"content"`
-	Annotations     []pipeline.Annotation `json:"annotations,omitempty"`
-	SearchReasoning string                `json:"search_reasoning,omitempty"`
+	Role        string                `json:"role"`
+	Content     string                `json:"content"`
+	Annotations []pipeline.Annotation `json:"annotations,omitempty"`
 }
 
 // WebSearchCall represents a search operation in streaming output

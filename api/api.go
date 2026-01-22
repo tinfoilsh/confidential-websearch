@@ -57,10 +57,9 @@ func convertMessages(msgs []Message) []pipeline.Message {
 	result := make([]pipeline.Message, len(msgs))
 	for i, msg := range msgs {
 		result[i] = pipeline.Message{
-			Role:            msg.Role,
-			Content:         msg.Content,
-			Annotations:     msg.Annotations,
-			SearchReasoning: msg.SearchReasoning,
+			Role:        msg.Role,
+			Content:     msg.Content,
+			Annotations: msg.Annotations,
 		}
 	}
 	return result

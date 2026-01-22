@@ -32,10 +32,9 @@ type ReasoningItem struct {
 
 // Message represents a chat message
 type Message struct {
-	Role            string       `json:"role"`
-	Content         string       `json:"content"`
-	Annotations     []Annotation `json:"annotations,omitempty"`
-	SearchReasoning string       `json:"search_reasoning,omitempty"`
+	Role        string       `json:"role"`
+	Content     string       `json:"content"`
+	Annotations []Annotation `json:"annotations,omitempty"`
 }
 
 // Annotation represents a url_citation annotation

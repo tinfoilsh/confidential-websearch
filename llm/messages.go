@@ -21,7 +21,6 @@ func NewMessageBuilder() *MessageBuilder {
 func (b *MessageBuilder) Build(inputMessages []pipeline.Message, searchResults []agent.ToolCall) []openai.ChatCompletionMessageParamUnion {
 	var messages []openai.ChatCompletionMessageParamUnion
 
-	// Add input messages, injecting historical search context for assistant messages with annotations
 	for _, msg := range inputMessages {
 		switch msg.Role {
 		case "system":
