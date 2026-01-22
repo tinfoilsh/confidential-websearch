@@ -48,13 +48,8 @@ func main() {
 	messageBuilder := llm.NewMessageBuilder()
 	safeguardClient := safeguard.NewClient(client, cfg.SafeguardModel)
 
-	// Wrap agent with PII filtering if enabled
-	var agentRunner pipeline.AgentRunner = baseAgent
-	if cfg.EnablePIICheck {
-		safeAgent := agent.NewSafeAgent(baseAgent, safeguardClient)
-		safeAgent.SetPIICheckEnabled(cfg.EnablePIICheck)
-		agentRunner = safeAgent
-	}
+	// Wrap agent with SafeAgent to support per-request PII filtering via tools
+	agentRunner := agent.NewSafeAgent(baseAgent, safeguardClient)
 
 	p := pipeline.NewPipeline([]pipeline.Stage{
 		&pipeline.ValidateStage{},

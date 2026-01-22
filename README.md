@@ -73,8 +73,7 @@ go run . -v
 | `EXA_API_KEY` | - | Exa AI Search API key (required) |
 | `AGENT_MODEL` | - | Model for search decisions (small, fast) |
 | `SAFEGUARD_MODEL` | - | Model for safety filtering |
-| `ENABLE_PII_CHECK` | `true` | Enable PII detection in search queries |
-| `ENABLE_INJECTION_CHECK` | `true` | Enable prompt injection detection in results |
+| `ENABLE_INJECTION_CHECK` | `false` | Default for prompt injection detection (can be overridden per-request via tools) |
 | `LISTEN_ADDR` | `:8089` | Address to listen on |
 
 ## API Endpoints
@@ -163,15 +162,7 @@ docker run -p 8089:8089 \
   websearch-proxy
 ```
 
-To disable safety checks:
-
-```bash
-docker run -p 8089:8089 \
-  -e EXA_API_KEY=$EXA_API_KEY \
-  -e ENABLE_PII_CHECK=false \
-  -e ENABLE_INJECTION_CHECK=false \
-  websearch-proxy
-```
+Safety checks are controlled per-request via the `tools` array. Include `{ "type": "pii_check" }` to enable PII filtering on search queries, and `{ "type": "injection_check" }` to filter prompt injection from search results.
 
 ## Security
 

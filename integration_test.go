@@ -46,7 +46,6 @@ func setupIntegrationServer(t *testing.T) *api.Server {
 		AgentModel:           "gpt-oss-120b-free",
 		ExaAPIKey:            exaKey,
 		SafeguardModel:       "gpt-oss-safeguard-120b",
-		EnablePIICheck:       true,
 		EnableInjectionCheck: true,
 	}
 
@@ -61,12 +60,7 @@ func setupIntegrationServer(t *testing.T) *api.Server {
 
 	safeguardClient := safeguard.NewClient(client, cfg.SafeguardModel)
 
-	var agentRunner pipeline.AgentRunner = baseAgent
-	if cfg.EnablePIICheck {
-		safeAgent := agent.NewSafeAgent(baseAgent, safeguardClient)
-		safeAgent.SetPIICheckEnabled(cfg.EnablePIICheck)
-		agentRunner = safeAgent
-	}
+	agentRunner := agent.NewSafeAgent(baseAgent, safeguardClient)
 
 	p := pipeline.NewPipeline([]pipeline.Stage{
 		&pipeline.ValidateStage{},
