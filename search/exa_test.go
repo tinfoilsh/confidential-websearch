@@ -47,7 +47,6 @@ func TestExaProvider_Search_Success(t *testing.T) {
 				Title         string `json:"title"`
 				URL           string `json:"url"`
 				Text          string `json:"text"`
-				Summary       string `json:"summary"`
 				Favicon       string `json:"favicon"`
 				PublishedDate string `json:"publishedDate"`
 			}{
@@ -55,7 +54,6 @@ func TestExaProvider_Search_Success(t *testing.T) {
 					Title:         "Result 1",
 					URL:           "https://example.com/1",
 					Text:          "Content 1",
-					Summary:       "Summary 1",
 					Favicon:       "https://example.com/favicon.ico",
 					PublishedDate: "2024-01-01",
 				},
@@ -63,7 +61,6 @@ func TestExaProvider_Search_Success(t *testing.T) {
 					Title:         "Result 2",
 					URL:           "https://example.com/2",
 					Text:          "Content 2",
-					Summary:       "Summary 2",
 					Favicon:       "",
 					PublishedDate: "",
 				},
@@ -99,9 +96,6 @@ func TestExaProvider_Search_Success(t *testing.T) {
 	if results[0].PublishedDate != "2024-01-01" {
 		t.Errorf("expected date '2024-01-01', got '%s'", results[0].PublishedDate)
 	}
-	if results[0].Summary != "Summary 1" {
-		t.Errorf("expected summary 'Summary 1', got '%s'", results[0].Summary)
-	}
 }
 
 func TestExaProvider_Search_EmptyResults(t *testing.T) {
@@ -111,7 +105,6 @@ func TestExaProvider_Search_EmptyResults(t *testing.T) {
 				Title         string `json:"title"`
 				URL           string `json:"url"`
 				Text          string `json:"text"`
-				Summary       string `json:"summary"`
 				Favicon       string `json:"favicon"`
 				PublishedDate string `json:"publishedDate"`
 			}{},
@@ -269,8 +262,5 @@ func TestExaProvider_Search_RequestBody(t *testing.T) {
 	}
 	if receivedReq.Contents == nil || receivedReq.Contents.Text == nil {
 		t.Error("expected contents.text to be set")
-	}
-	if !receivedReq.Contents.Summary {
-		t.Error("expected contents.summary to be true")
 	}
 }
