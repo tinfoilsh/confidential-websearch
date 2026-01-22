@@ -55,22 +55,28 @@ func setupIntegrationServer(t *testing.T) *api.Server {
 		t.Fatalf("Failed to create search provider: %v", err)
 	}
 
-	baseAgent := agent.New(client, cfg.AgentModel, searcher)
+	baseAgent := agent.New(client, cfg.AgentModel)
 	responder := llm.NewTinfoilResponder(&client.Chat.Completions)
 	messageBuilder := llm.NewMessageBuilder()
 
+	safeguardClient := safeguard.NewClient(client, cfg.SafeguardModel)
+
 	var agentRunner pipeline.AgentRunner = baseAgent
-	if cfg.EnablePIICheck || cfg.EnableInjectionCheck {
-		safeguardClient := safeguard.NewClient(client, cfg.SafeguardModel)
+	if cfg.EnablePIICheck {
 		safeAgent := agent.NewSafeAgent(baseAgent, safeguardClient)
 		safeAgent.SetPIICheckEnabled(cfg.EnablePIICheck)
-		safeAgent.SetInjectionCheckEnabled(cfg.EnableInjectionCheck)
 		agentRunner = safeAgent
 	}
 
 	p := pipeline.NewPipeline([]pipeline.Stage{
 		&pipeline.ValidateStage{},
 		&pipeline.AgentStage{Agent: agentRunner},
+		&pipeline.SearchStage{Searcher: searcher},
+		&pipeline.FilterResultsStage{
+			Checker: safeguardClient,
+			Policy:  safeguard.PromptInjectionPolicy,
+			Enabled: cfg.EnableInjectionCheck,
+		},
 		&pipeline.BuildMessagesStage{Builder: messageBuilder},
 		&pipeline.ResponderStage{Responder: responder},
 	}, api.RequestTimeout)
