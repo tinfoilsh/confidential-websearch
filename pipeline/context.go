@@ -81,6 +81,7 @@ type Context struct {
 
 	// Intermediate results
 	AgentResult       *agent.Result
+	SearchResults     []agent.ToolCall // Executed search results
 	ResponderMessages []openai.ChatCompletionMessageParamUnion
 	ResponderResult   interface{} // Holds *llm.ResponderResult for non-streaming
 
