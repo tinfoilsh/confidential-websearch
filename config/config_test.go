@@ -7,7 +7,7 @@ import (
 
 func TestLoad_Defaults(t *testing.T) {
 	// Clear relevant env vars
-	envVars := []string{"AGENT_MODEL", "EXA_API_KEY", "LISTEN_ADDR", "SAFEGUARD_MODEL", "ENABLE_PII_CHECK", "ENABLE_INJECTION_CHECK"}
+	envVars := []string{"AGENT_MODEL", "EXA_API_KEY", "LISTEN_ADDR", "SAFEGUARD_MODEL", "ENABLE_INJECTION_CHECK"}
 	originalValues := make(map[string]string)
 	for _, key := range envVars {
 		originalValues[key] = os.Getenv(key)
@@ -32,9 +32,6 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.SafeguardModel != "gpt-oss-safeguard-120b" {
 		t.Errorf("SafeguardModel: expected 'gpt-oss-safeguard-120b', got '%s'", cfg.SafeguardModel)
 	}
-	if cfg.EnablePIICheck {
-		t.Error("EnablePIICheck: expected false by default")
-	}
 	if cfg.EnableInjectionCheck {
 		t.Error("EnableInjectionCheck: expected false by default")
 	}
@@ -49,14 +46,12 @@ func TestLoad_CustomValues(t *testing.T) {
 	os.Setenv("EXA_API_KEY", "test-api-key")
 	os.Setenv("LISTEN_ADDR", ":9000")
 	os.Setenv("SAFEGUARD_MODEL", "custom-safeguard")
-	os.Setenv("ENABLE_PII_CHECK", "false")
 	os.Setenv("ENABLE_INJECTION_CHECK", "false")
 	defer func() {
 		os.Unsetenv("AGENT_MODEL")
 		os.Unsetenv("EXA_API_KEY")
 		os.Unsetenv("LISTEN_ADDR")
 		os.Unsetenv("SAFEGUARD_MODEL")
-		os.Unsetenv("ENABLE_PII_CHECK")
 		os.Unsetenv("ENABLE_INJECTION_CHECK")
 	}()
 
@@ -73,9 +68,6 @@ func TestLoad_CustomValues(t *testing.T) {
 	}
 	if cfg.SafeguardModel != "custom-safeguard" {
 		t.Errorf("SafeguardModel: expected 'custom-safeguard', got '%s'", cfg.SafeguardModel)
-	}
-	if cfg.EnablePIICheck {
-		t.Error("EnablePIICheck: expected false")
 	}
 	if cfg.EnableInjectionCheck {
 		t.Error("EnableInjectionCheck: expected false")
