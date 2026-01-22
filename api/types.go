@@ -116,6 +116,7 @@ type ResponsesOutput struct {
 	Type    string             `json:"type"`
 	ID      string             `json:"id"`
 	Status  string             `json:"status"`
+	Reason  string             `json:"reason,omitempty"`
 	Role    string             `json:"role,omitempty"`
 	Content []ResponsesContent `json:"content,omitempty"`
 	Action  *WebSearchAction   `json:"action,omitempty"`
@@ -160,6 +161,13 @@ type ChatCompletionChoiceOutput struct {
 	Message      ChatCompletionMessageOutput  `json:"message"`
 }
 
+// BlockedSearch represents a search that was blocked by a filter
+type BlockedSearch struct {
+	ID     string `json:"id"`
+	Query  string `json:"query"`
+	Reason string `json:"reason,omitempty"`
+}
+
 // ChatCompletionMessageOutput represents the assistant message with annotations
 type ChatCompletionMessageOutput struct {
 	Role            string                `json:"role"`
@@ -167,4 +175,5 @@ type ChatCompletionMessageOutput struct {
 	Annotations     []pipeline.Annotation `json:"annotations,omitempty"`
 	SearchReasoning string                `json:"search_reasoning,omitempty"`
 	ReasoningItems  []ReasoningItem       `json:"reasoning_items,omitempty"`
+	BlockedSearches []BlockedSearch       `json:"blocked_searches,omitempty"`
 }

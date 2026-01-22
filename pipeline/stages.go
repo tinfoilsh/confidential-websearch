@@ -136,15 +136,15 @@ type SearchStage struct {
 func (s *SearchStage) Name() string { return "search" }
 
 func (s *SearchStage) Execute(ctx *Context) error {
-	if ctx.AgentResult == nil || len(ctx.AgentResult.PendingSearches) == 0 {
-		return nil
-	}
-
-	// Emit blocked query events first
-	if ctx.Emitter != nil {
+	// Emit blocked query events first (before early return check)
+	if ctx.AgentResult != nil && ctx.Emitter != nil {
 		for _, bq := range ctx.AgentResult.BlockedQueries {
 			ctx.Emitter.EmitSearchCall(bq.ID, "blocked", bq.Query, bq.Reason)
 		}
+	}
+
+	if ctx.AgentResult == nil || len(ctx.AgentResult.PendingSearches) == 0 {
+		return nil
 	}
 
 	// Emit in_progress events for all pending searches
