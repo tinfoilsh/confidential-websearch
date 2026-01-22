@@ -25,6 +25,12 @@ type BlockedQuery struct {
 	Reason string `json:"reason"`
 }
 
+// PendingSearch represents a search query to be executed by the pipeline
+type PendingSearch struct {
+	ID    string `json:"id"`
+	Query string `json:"query"`
+}
+
 // ReasoningSummaryPart represents a part of the reasoning summary
 type ReasoningSummaryPart struct {
 	Type string `json:"type"` // "summary_text"
@@ -45,12 +51,12 @@ type ContextMessage struct {
 	ReasoningItems []ReasoningItem // Reasoning items from previous agent turn (for assistant messages)
 }
 
-// Result contains the search results gathered by the agent
+// Result contains the agent's decision about what to search
 type Result struct {
-	ToolCalls      []ToolCall
-	BlockedQueries []BlockedQuery
-	AgentReasoning string
-	ReasoningItems []ReasoningItem // For passing back to agent in multi-turn
+	PendingSearches []PendingSearch // Searches to execute (after PII filtering)
+	BlockedQueries  []BlockedQuery  // Queries blocked by PII filter
+	AgentReasoning  string
+	ReasoningItems  []ReasoningItem // For passing back to agent in multi-turn
 }
 
 // ChunkCallback is called for each streaming event from the agent LLM
