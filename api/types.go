@@ -23,6 +23,18 @@ type Server struct {
 	Pipeline *pipeline.Pipeline
 }
 
+// Tool represents a tool in the request
+type Tool struct {
+	Type string `json:"type"`
+}
+
+// Tool type constants
+const (
+	ToolTypeWebSearch      = "web_search"
+	ToolTypePIICheck       = "pii_check"
+	ToolTypeInjectionCheck = "injection_check"
+)
+
 // IncomingRequest represents the incoming chat request
 type IncomingRequest struct {
 	Model       string    `json:"model"`
@@ -30,6 +42,7 @@ type IncomingRequest struct {
 	Stream      bool      `json:"stream"`
 	Temperature *float64  `json:"temperature,omitempty"`
 	MaxTokens   *int64    `json:"max_tokens,omitempty"`
+	Tools       []Tool    `json:"tools,omitempty"`
 }
 
 // ReasoningSummaryPart represents a part of the reasoning summary

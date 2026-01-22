@@ -103,6 +103,11 @@ type AgentStage struct {
 func (s *AgentStage) Name() string { return "agent" }
 
 func (s *AgentStage) Execute(ctx *Context) error {
+	// Skip agent if web_search tool is not enabled
+	if !ctx.Request.HasTool(ToolTypeWebSearch) {
+		return nil
+	}
+
 	ctx.State.Transition(StateProcessing, map[string]interface{}{"query": ctx.UserQuery})
 
 	systemPrompt, messages := extractAgentContext(ctx.Request.Messages)
@@ -111,7 +116,10 @@ func (s *AgentStage) Execute(ctx *Context) error {
 		messages = []agent.ContextMessage{{Role: "user", Content: ctx.UserQuery}}
 	}
 
-	result, err := s.Agent.RunWithContext(ctx.Context, messages, systemPrompt, nil)
+	// Pass tools to agent via context for per-request safeguard settings
+	agentCtx := agent.WithTools(ctx.Context, ctx.Request.Tools)
+
+	result, err := s.Agent.RunWithContext(agentCtx, messages, systemPrompt, nil)
 	if err != nil {
 		return &AgentError{Err: err}
 	}
@@ -196,7 +204,12 @@ type FilterResultsStage struct {
 func (s *FilterResultsStage) Name() string { return "filter_results" }
 
 func (s *FilterResultsStage) Execute(ctx *Context) error {
-	if !s.Enabled || s.Checker == nil || len(ctx.SearchResults) == 0 {
+	// Check if injection_check tool is enabled in request, fall back to stage default
+	enabled := s.Enabled
+	if ctx.Request != nil && len(ctx.Request.Tools) > 0 {
+		enabled = ctx.Request.HasTool(ToolTypeInjectionCheck)
+	}
+	if !enabled || s.Checker == nil || len(ctx.SearchResults) == 0 {
 		return nil
 	}
 

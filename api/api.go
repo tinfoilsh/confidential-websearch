@@ -65,6 +65,15 @@ func convertMessages(msgs []Message) []pipeline.Message {
 	return result
 }
 
+// convertTools converts API tools to pipeline tool types
+func convertTools(tools []Tool) []string {
+	result := make([]string, len(tools))
+	for i, t := range tools {
+		result[i] = t.Type
+	}
+	return result
+}
+
 // buildFlatAnnotations creates URL citations (Responses API format)
 func buildFlatAnnotations(toolCalls []agent.ToolCall) []FlatAnnotation {
 	var annotations []FlatAnnotation
@@ -124,6 +133,7 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		Temperature: req.Temperature,
 		MaxTokens:   req.MaxTokens,
 		Format:      pipeline.FormatChatCompletion,
+		Tools:       convertTools(req.Tools),
 	}
 
 	if req.Stream {
