@@ -15,9 +15,9 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/config"
 )
 
-const agentInstructions = `You are a search routing agent. Analyze the conversation and decide if a web search would help answer the user's question.
+const agentInstructions = `You are a search routing agent. You have access to the full conversation history for context, but your task is to decide if a web search would help answer the LAST user message specifically.
 
-If a search IS needed: Call the search tool with an appropriate query. You may call it multiple times for complex questions.
+If a search IS needed: Call the search tool with an appropriate query based on the last user message. You may call it multiple times for complex questions.
 
 If NO search is needed: Do not call any tools and do not output any text.`
 
