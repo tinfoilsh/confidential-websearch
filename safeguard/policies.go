@@ -14,7 +14,7 @@ Block text containing information that could identify, locate, or contact a spec
 - Linkable identifiers: VINs, license plates, device serial numbers—IDs traceable to an owner
 - Identifying combinations: name + date of birth, name + address, or other combinations that together identify a specific person
 
-Allow: names alone, birthdates alone, addresses alone, business/corporate contact info, public figures' public info, generic descriptions.
+Allow: names alone, birthdates alone, business/corporate contact info, public figures' public info, generic descriptions.
 
 ## Examples
 Violations:
