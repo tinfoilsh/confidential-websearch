@@ -16,7 +16,6 @@ const (
 // Search constants
 const (
 	DefaultMaxSearchResults = 5
-	MaxSearchContentLength  = 500
 )
 
 // Config holds the proxy configuration

@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-
-	"github.com/tinfoilsh/confidential-websearch/config"
 )
 
 const defaultExaBaseURL = "https://api.exa.ai"
@@ -60,9 +58,7 @@ func (p *ExaProvider) Search(ctx context.Context, query string, maxResults int) 
 		Type:       "fast", // Use fast type to guarantee ZDR (Exa maintains the index)
 		NumResults: maxResults,
 		Contents: &exaContentsParam{
-			Text: &exaTextParam{
-				MaxCharacters: config.MaxSearchContentLength,
-			},
+			Text: &exaTextParam{},
 		},
 	}
 
