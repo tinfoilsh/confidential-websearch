@@ -32,7 +32,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from tqdm import tqdm
 
-from client import DeepSeekLabelerClient, SafeguardClient
+from client import LabelerClient, SafeguardClient
 from constants import QUERY_GEN_BASE_URL, QUERY_GEN_MODEL
 from data_loaders.customer_chats import (
     Conversation,
@@ -212,7 +212,7 @@ def process_single_item(
     item: tuple[int, Conversation, int],
     query_generator: SearchQueryGenerator,
     safeguard_client: SafeguardClient,
-    labeler: DeepSeekLabelerClient,
+    labeler: LabelerClient,
 ) -> tuple[int, dict]:
     """Process a single evaluation item. Returns (index, result)."""
     idx, conv, turn_idx = item
@@ -285,7 +285,7 @@ def run_e2e_pii_eval(
     dataset_dir: str | Path,
     safeguard_client: SafeguardClient,
     query_generator: SearchQueryGenerator,
-    labeler: DeepSeekLabelerClient,
+    labeler: LabelerClient,
     max_conversations: int | None = None,
     checkpoint_file: str | None = None,
     checkpoint_interval: int = 50,
@@ -560,7 +560,7 @@ def main():
         print(f"Error: {e}")
         sys.exit(1)
 
-    labeler = DeepSeekLabelerClient()
+    labeler = LabelerClient()
 
     # Run evaluation
     checkpoint_file = None if args.no_checkpoint else args.checkpoint

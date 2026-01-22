@@ -7,9 +7,9 @@ TINFOIL_BASE_URL = "https://inference.tinfoil.sh"
 SAFEGUARD_BASE_URL = TINFOIL_BASE_URL
 SAFEGUARD_MODEL = "gpt-oss-safeguard-120b"
 
-# DeepSeek labeler model configuration (for independent ground truth labeling)
-DEEPSEEK_BASE_URL = TINFOIL_BASE_URL
-DEEPSEEK_MODEL = "deepseek-r1-0528"
+# Labeler model configuration (for independent ground truth labeling)
+LABELER_BASE_URL = TINFOIL_BASE_URL
+LABELER_MODEL = "qwen3-coder-480b"
 
 # Query generation model configuration
 QUERY_GEN_BASE_URL = TINFOIL_BASE_URL
