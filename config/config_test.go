@@ -160,4 +160,7 @@ func TestConstants(t *testing.T) {
 	if DefaultMaxSearchResults != 5 {
 		t.Errorf("DefaultMaxSearchResults: expected 5, got %d", DefaultMaxSearchResults)
 	}
+	if MaxSearchContentLength != 2000 {
+		t.Errorf("MaxSearchContentLength: expected 2000, got %d", MaxSearchContentLength)
+	}
 }
