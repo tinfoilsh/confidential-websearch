@@ -81,11 +81,11 @@ func (c *Client) Check(ctx context.Context, policy, content string) (*CheckResul
 	}
 
 	respContent := resp.Choices[0].Message.Content
-	log.Infof("Safeguard raw response: %q (len=%d, finish_reason=%s)", respContent, len(respContent), resp.Choices[0].FinishReason)
+	log.Debugf("Safeguard response: len=%d, finish_reason=%s", len(respContent), resp.Choices[0].FinishReason)
 
 	var result CheckResult
 	if err := json.Unmarshal([]byte(respContent), &result); err != nil {
-		return nil, fmt.Errorf("failed to parse safeguard response: %w (content=%q)", err, respContent)
+		return nil, fmt.Errorf("failed to parse safeguard response: %w", err)
 	}
 
 	return &result, nil
