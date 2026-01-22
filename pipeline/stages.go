@@ -374,17 +374,12 @@ func BuildAnnotations(searchResults []agent.ToolCall) []Annotation {
 	var annotations []Annotation
 	for _, tc := range searchResults {
 		for _, r := range tc.Results {
-			// Use Summary for display if available, otherwise fall back to Content
-			displayContent := r.Summary
-			if displayContent == "" {
-				displayContent = r.Content
-			}
 			annotations = append(annotations, Annotation{
 				Type: "url_citation",
 				URLCitation: URLCitation{
 					URL:           r.URL,
 					Title:         r.Title,
-					Content:       displayContent,
+					Content:       r.Content,
 					PublishedDate: r.PublishedDate,
 				},
 			})

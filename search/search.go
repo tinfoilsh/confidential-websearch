@@ -19,7 +19,6 @@ type Result struct {
 	Title         string `json:"title"`
 	URL           string `json:"url"`
 	Content       string `json:"content"`
-	Summary       string `json:"summary,omitempty"`
 	Favicon       string `json:"favicon,omitempty"`
 	PublishedDate string `json:"published_date,omitempty"`
 }
