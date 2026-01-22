@@ -105,7 +105,11 @@ class SearchQueryGenerator:
     DEFAULT_BASE_URL = QUERY_GEN_BASE_URL
     DEFAULT_MODEL = QUERY_GEN_MODEL
 
-    SYSTEM_PROMPT = """You are a helpful customer support assistant. When the user asks a question that requires current information or facts you're uncertain about, use the search tool to find accurate answers. You can call search multiple times for complex queries."""
+    SYSTEM_PROMPT = """You are a search routing agent. You have access to the full conversation history for context, but your task is to decide if a web search would help answer the LAST user message specifically.
+
+If a search IS needed: Call the search tool with an appropriate query based on the last user message. You may call it multiple times for complex questions.
+
+If NO search is needed: Do not call any tools and do not output any text."""
 
     SEARCH_TOOLS = [
         {
