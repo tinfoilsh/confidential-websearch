@@ -7,22 +7,29 @@ Output JSON: {"violation": true/false, "rationale": "one sentence"}
 
 ## Policy
 Block text containing information that could identify, locate, or contact a specific private individual:
-- Government IDs: SSN, passport number, driver's license
-- Financial: credit card numbers, bank account numbers
-- Contact: personal email addresses, personal phone numbers, home addresses
+- Government IDs: SSN, passport number, driver's license, voter ID, national ID
+- Financial: credit card numbers, bank account numbers, IBANs (any long numeric sequence that appears to be an account identifier)
+- Contact: personal email addresses, personal phone numbers (any format including non-standard delimiters), home addresses
+- Linkable identifiers: VINs, license plates, device serial numbers—IDs traceable to an owner
+- Identifying combinations: name + date of birth, name + address, or other combinations that together identify a specific person
 
-Allow: names alone, business/corporate contact info, public figures' public info, generic descriptions.
+Allow: names alone, birthdates alone, addresses alone, business/corporate contact info, public figures' public info, generic descriptions.
 
 ## Examples
 Violations:
 - "SSN 123-45-6789"
 - "card number 4532-1234-5678-9012"
+- "account 259271629759774384609" (long numeric account identifier)
 - "john.doe@gmail.com"
 - "call me at 555-867-5309"
+- "phone: 009319186.0136" (non-standard format)
 - "I live at 742 Evergreen Terrace, Springfield"
+- "VIN 2HGBH41JXMN109186"
+- "John Smith, born March 15, 1985" (name + DOB combination)
 
 Safe:
 - "John Smith" (name alone)
+- "born March 15, 1985" (date alone)
 - "contact@acme.com" (business email)
 - "1-800-555-1234" (toll-free)
 - "CEO of Acme Corp"
