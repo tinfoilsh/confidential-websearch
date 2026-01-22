@@ -143,12 +143,14 @@ Results flagged as containing injection are removed before being passed to the r
 
 ## Pipeline Stages
 
-The request flows through four stages:
+The request flows through six stages:
 
 1. **ValidateStage** - Validates request format, extracts user query
-2. **AgentStage** - Runs agent model with search tool, executes searches
-3. **BuildMessagesStage** - Injects search results into conversation context
-4. **ResponderStage** - Generates final response (streaming or non-streaming)
+2. **AgentStage** - Runs agent model with search tool, returns pending searches
+3. **SearchStage** - Executes pending searches in parallel via Exa API
+4. **FilterResultsStage** - Filters search results for prompt injection
+5. **BuildMessagesStage** - Injects search results into conversation context
+6. **ResponderStage** - Generates final response (streaming or non-streaming)
 
 ## Docker
 
