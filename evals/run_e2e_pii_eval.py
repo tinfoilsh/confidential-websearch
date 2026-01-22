@@ -344,7 +344,17 @@ def run_e2e_pii_eval(
 
     # Track errors for early detection
     error_counts = {"safeguard": 0, "labeler": 0}
-    completed = start_index
+
+    # Track completed indices to find the highest contiguous completed index.
+    # This ensures checkpointing doesn't skip items when higher indices finish early.
+    completed_indices = set(range(start_index))
+
+    def get_contiguous_completed() -> int:
+        """Find the highest index where all previous indices are complete."""
+        idx = 0
+        while idx in completed_indices:
+            idx += 1
+        return idx
 
     # Run evaluation in parallel
     try:
@@ -367,7 +377,7 @@ def run_e2e_pii_eval(
                 for future in as_completed(futures):
                     idx, result = future.result()
                     results_dict[idx] = result
-                    completed = max(completed, idx + 1)
+                    completed_indices.add(idx)
                     pbar.update(1)
 
                     # Track errors for early warning
@@ -388,10 +398,11 @@ def run_e2e_pii_eval(
                             print(f"\n⚠️  High labeler error rate: {labeler_err_rate:.1%}")
 
                     # Save checkpoint periodically
-                    if checkpoint_file and completed % checkpoint_interval == 0:
-                        ordered_results = [results_dict[i] for i in sorted(results_dict.keys()) if i in results_dict]
+                    contiguous = get_contiguous_completed()
+                    if checkpoint_file and contiguous > start_index and contiguous % checkpoint_interval == 0:
+                        ordered_results = [results_dict[i] for i in range(contiguous) if i in results_dict]
                         with open(checkpoint_file, "w") as f:
-                            json.dump({"last_index": completed, "results": ordered_results}, f)
+                            json.dump({"last_index": contiguous, "results": ordered_results}, f)
 
             # Convert dict back to ordered list
             results = [results_dict[i] for i in sorted(results_dict.keys())]
@@ -399,9 +410,10 @@ def run_e2e_pii_eval(
     except KeyboardInterrupt:
         print("\nInterrupted. Saving checkpoint...")
         if checkpoint_file:
-            ordered_results = [results_dict[i] for i in sorted(results_dict.keys()) if i in results_dict]
+            contiguous = get_contiguous_completed()
+            ordered_results = [results_dict[i] for i in range(contiguous) if i in results_dict]
             with open(checkpoint_file, "w") as f:
-                json.dump({"last_index": completed, "results": ordered_results}, f)
+                json.dump({"last_index": contiguous, "results": ordered_results}, f)
         raise
 
     # Calculate metrics
