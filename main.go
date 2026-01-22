@@ -46,11 +46,11 @@ func main() {
 	baseAgent := agent.New(client, cfg.AgentModel)
 	responder := llm.NewTinfoilResponder(&client.Chat.Completions)
 	messageBuilder := llm.NewMessageBuilder()
+	safeguardClient := safeguard.NewClient(client, cfg.SafeguardModel)
 
 	// Wrap agent with PII filtering if enabled
 	var agentRunner pipeline.AgentRunner = baseAgent
 	if cfg.EnablePIICheck {
-		safeguardClient := safeguard.NewClient(client, cfg.SafeguardModel)
 		safeAgent := agent.NewSafeAgent(baseAgent, safeguardClient)
 		safeAgent.SetPIICheckEnabled(cfg.EnablePIICheck)
 		agentRunner = safeAgent
@@ -60,6 +60,11 @@ func main() {
 		&pipeline.ValidateStage{},
 		&pipeline.AgentStage{Agent: agentRunner},
 		&pipeline.SearchStage{Searcher: searcher},
+		&pipeline.FilterResultsStage{
+			Checker: safeguardClient,
+			Policy:  safeguard.PromptInjectionPolicy,
+			Enabled: cfg.EnableInjectionCheck,
+		},
 		&pipeline.BuildMessagesStage{Builder: messageBuilder},
 		&pipeline.ResponderStage{Responder: responder},
 	}, api.RequestTimeout)
