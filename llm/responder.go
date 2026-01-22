@@ -11,6 +11,7 @@ import (
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/openai/openai-go/v3/shared"
+	log "github.com/sirupsen/logrus"
 
 	"github.com/tinfoilsh/confidential-websearch/pipeline"
 )
@@ -140,16 +141,41 @@ func (r *TinfoilResponder) Stream(ctx context.Context, params pipeline.Responder
 		chatParams.MaxTokens = openai.Int(*params.MaxTokens)
 	}
 
+	// Debug: Log message count and approximate size
+	totalMsgSize := 0
+	for _, msg := range params.Messages {
+		msgBytes, _ := json.Marshal(msg)
+		totalMsgSize += len(msgBytes)
+	}
+	log.Debugf("[Responder.Stream] Starting stream: model=%s, messages=%d, totalMsgSize=%d bytes, annotations=%d",
+		params.Model, len(params.Messages), totalMsgSize, len(annotations))
+
+	log.Debug("[Responder.Stream] Calling client.NewStreaming()...")
 	stream := r.client.NewStreaming(ctx, chatParams, opts...)
+	log.Debug("[Responder.Stream] NewStreaming() returned, entering stream loop...")
+
 	metadataSent := false
 	stripper := NewStreamingCitationStripper()
+	chunkCount := 0
 
+	log.Debug("[Responder.Stream] Calling stream.Next() for first chunk...")
 	for stream.Next() {
+		chunkCount++
+		if chunkCount == 1 {
+			log.Debug("[Responder.Stream] Received first chunk from upstream!")
+		}
+		if chunkCount <= 3 || chunkCount%100 == 0 {
+			log.Debugf("[Responder.Stream] Processing chunk #%d", chunkCount)
+		}
+
 		chunk := stream.Current()
 
 		// Send metadata (annotations + reasoning + reasoning items) on first chunk with choices
 		if !metadataSent && len(chunk.Choices) > 0 && (len(annotations) > 0 || reasoning != "" || len(reasoningItems) > 0) {
+			log.Debugf("[Responder.Stream] Emitting metadata: annotations=%d, reasoning=%d chars, reasoningItems=%d",
+				len(annotations), len(reasoning), len(reasoningItems))
 			if err := emitter.EmitMetadata(annotations, reasoning, reasoningItems); err != nil {
+				log.Errorf("[Responder.Stream] EmitMetadata failed: %v", err)
 				return err
 			}
 			metadataSent = true
@@ -163,9 +189,12 @@ func (r *TinfoilResponder) Stream(ctx context.Context, params pipeline.Responder
 		}
 
 		if err := emitter.EmitChunk([]byte(chunkData)); err != nil {
+			log.Errorf("[Responder.Stream] EmitChunk failed: %v", err)
 			return err
 		}
 	}
+
+	log.Debugf("[Responder.Stream] Stream loop ended after %d chunks", chunkCount)
 
 	// Flush any remaining buffered content
 	if remaining := stripper.Flush(); remaining != "" {
@@ -175,9 +204,11 @@ func (r *TinfoilResponder) Stream(ctx context.Context, params pipeline.Responder
 	}
 
 	if err := stream.Err(); err != nil {
+		log.Errorf("[Responder.Stream] Stream error: %v", err)
 		return emitter.EmitError(err)
 	}
 
+	log.Debug("[Responder.Stream] Stream completed successfully, emitting done")
 	return emitter.EmitDone()
 }
 
