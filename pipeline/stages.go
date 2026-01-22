@@ -10,6 +10,7 @@ import (
 
 	"github.com/tinfoilsh/confidential-websearch/agent"
 	"github.com/tinfoilsh/confidential-websearch/config"
+	"github.com/tinfoilsh/confidential-websearch/safeguard"
 	"github.com/tinfoilsh/confidential-websearch/search"
 )
 
@@ -22,6 +23,11 @@ type Stage interface {
 // AgentRunner defines the interface for running the agent with full context
 type AgentRunner interface {
 	RunWithContext(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error)
+}
+
+// SafeguardChecker defines the interface for safety checks
+type SafeguardChecker interface {
+	Check(ctx context.Context, policy, content string) (*safeguard.CheckResult, error)
 }
 
 // MessageBuilder defines the interface for building responder messages
@@ -177,6 +183,102 @@ func (s *SearchStage) Execute(ctx *Context) error {
 
 	wg.Wait()
 	ctx.SearchResults = results
+	return nil
+}
+
+// FilterResultsStage checks search results for prompt injection
+type FilterResultsStage struct {
+	Checker SafeguardChecker
+	Policy  string
+	Enabled bool
+}
+
+func (s *FilterResultsStage) Name() string { return "filter_results" }
+
+func (s *FilterResultsStage) Execute(ctx *Context) error {
+	if !s.Enabled || s.Checker == nil || len(ctx.SearchResults) == 0 {
+		return nil
+	}
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	type checkResult struct {
+		toolCallIdx int
+		resultIdx   int
+		flagged     bool
+		rationale   string
+	}
+	results := make(chan checkResult, 100)
+
+	// Check all results in parallel
+	for tcIdx, tc := range ctx.SearchResults {
+		for rIdx, r := range tc.Results {
+			wg.Add(1)
+			go func(tcI, rI int, content string) {
+				defer wg.Done()
+
+				check, err := s.Checker.Check(ctx.Context, s.Policy, content)
+				if err != nil {
+					log.Errorf("Injection check failed: %v", err)
+					// On error, allow the result to proceed
+					results <- checkResult{tcI, rI, false, ""}
+					return
+				}
+
+				if check.Violation {
+					log.Warnf("Prompt injection detected: %s", check.Rationale)
+				}
+
+				results <- checkResult{tcI, rI, check.Violation, check.Rationale}
+			}(tcIdx, rIdx, r.Content)
+		}
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect flagged results
+	flagged := make(map[int]map[int]bool)
+	for r := range results {
+		if r.flagged {
+			mu.Lock()
+			if flagged[r.toolCallIdx] == nil {
+				flagged[r.toolCallIdx] = make(map[int]bool)
+			}
+			flagged[r.toolCallIdx][r.resultIdx] = true
+			mu.Unlock()
+		}
+	}
+
+	// Filter out flagged results
+	var filtered []agent.ToolCall
+	totalFiltered := 0
+	for tcIdx, tc := range ctx.SearchResults {
+		var cleanResults []search.Result
+		for rIdx, r := range tc.Results {
+			if flagged[tcIdx] != nil && flagged[tcIdx][rIdx] {
+				totalFiltered++
+				continue
+			}
+			cleanResults = append(cleanResults, r)
+		}
+		if len(cleanResults) > 0 {
+			filtered = append(filtered, agent.ToolCall{
+				ID:      tc.ID,
+				Query:   tc.Query,
+				Results: cleanResults,
+			})
+		}
+	}
+
+	if totalFiltered > 0 {
+		log.Infof("Injection filter: removed %d results", totalFiltered)
+	}
+
+	ctx.SearchResults = filtered
 	return nil
 }
 
