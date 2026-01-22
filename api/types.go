@@ -51,7 +51,6 @@ type Message struct {
 	Content         string                `json:"content"`
 	Annotations     []pipeline.Annotation `json:"annotations,omitempty"`
 	SearchReasoning string                `json:"search_reasoning,omitempty"`
-	ReasoningItems  []ReasoningItem       `json:"reasoning_items,omitempty"`
 }
 
 // WebSearchCall represents a search operation in streaming output

@@ -59,22 +59,8 @@ func convertMessages(msgs []Message) []pipeline.Message {
 		result[i] = pipeline.Message{
 			Role:            msg.Role,
 			Content:         msg.Content,
-			Annotations:     msg.Annotations, // Same type due to alias
+			Annotations:     msg.Annotations,
 			SearchReasoning: msg.SearchReasoning,
-		}
-		// Convert reasoning items from API format to pipeline format
-		for _, ri := range msg.ReasoningItems {
-			pRI := pipeline.ReasoningItem{
-				ID:   ri.ID,
-				Type: ri.Type,
-			}
-			for _, s := range ri.Summary {
-				pRI.Summary = append(pRI.Summary, pipeline.ReasoningSummaryPart{
-					Type: s.Type,
-					Text: s.Text,
-				})
-			}
-			result[i].ReasoningItems = append(result[i].ReasoningItems, pRI)
 		}
 	}
 	return result

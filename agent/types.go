@@ -55,7 +55,7 @@ type Result struct {
 	PendingSearches []PendingSearch // Searches to execute (after PII filtering)
 	BlockedQueries  []BlockedQuery  // Queries blocked by PII filter
 	AgentReasoning  string
-	ReasoningItems  []ReasoningItem // For passing back to agent in multi-turn
+	ReasoningItems  []ReasoningItem // Included in API response for client display
 }
 
 // ChunkCallback is called for each streaming event from the agent LLM
