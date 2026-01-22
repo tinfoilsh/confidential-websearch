@@ -389,27 +389,10 @@ func extractAgentContext(messages []Message) (systemPrompt string, agentMessages
 			continue
 		}
 
-		agentMsg := agent.ContextMessage{
+		agentMessages = append(agentMessages, agent.ContextMessage{
 			Role:    msg.Role,
 			Content: msg.Content,
-		}
-
-		// Convert reasoning items from pipeline format to agent format
-		for _, ri := range msg.ReasoningItems {
-			agentRI := agent.ReasoningItem{
-				ID:   ri.ID,
-				Type: ri.Type,
-			}
-			for _, s := range ri.Summary {
-				agentRI.Summary = append(agentRI.Summary, agent.ReasoningSummaryPart{
-					Type: s.Type,
-					Text: s.Text,
-				})
-			}
-			agentMsg.ReasoningItems = append(agentMsg.ReasoningItems, agentRI)
-		}
-
-		agentMessages = append(agentMessages, agentMsg)
+		})
 	}
 	return
 }
