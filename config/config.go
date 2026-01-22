@@ -44,8 +44,8 @@ func Load() *Config {
 		ExaAPIKey:            os.Getenv("EXA_API_KEY"),
 		ListenAddr:           getEnv("LISTEN_ADDR", ":8089"),
 		SafeguardModel:       getEnv("SAFEGUARD_MODEL", "gpt-oss-safeguard-120b"),
-		EnablePIICheck:       getEnvBool("ENABLE_PII_CHECK", true),
-		EnableInjectionCheck: getEnvBool("ENABLE_INJECTION_CHECK", true),
+		EnablePIICheck:       getEnvBool("ENABLE_PII_CHECK", false),
+		EnableInjectionCheck: getEnvBool("ENABLE_INJECTION_CHECK", false),
 	}
 }
 

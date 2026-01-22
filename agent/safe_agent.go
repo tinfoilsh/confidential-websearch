@@ -9,6 +9,35 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
 )
 
+// Tool type constant for PII check
+const ToolTypePIICheck = "pii_check"
+
+type toolsKey struct{}
+
+// WithTools returns a context with the enabled tools
+func WithTools(ctx context.Context, tools []string) context.Context {
+	return context.WithValue(ctx, toolsKey{}, tools)
+}
+
+// getTools returns the tools from context, or nil if not set
+func getTools(ctx context.Context) []string {
+	if v := ctx.Value(toolsKey{}); v != nil {
+		return v.([]string)
+	}
+	return nil
+}
+
+// hasTool checks if a tool is enabled in context
+func hasTool(ctx context.Context, toolType string) bool {
+	tools := getTools(ctx)
+	for _, t := range tools {
+		if t == toolType {
+			return true
+		}
+	}
+	return false
+}
+
 // SafeguardChecker is an interface for safety checking (allows mocking in tests)
 type SafeguardChecker interface {
 	Check(ctx context.Context, policy, content string) (*safeguard.CheckResult, error)
@@ -39,7 +68,15 @@ func (s *SafeAgent) SetPIICheckEnabled(enabled bool) {
 // It forwards full conversation context to the base agent while applying PII filtering.
 func (s *SafeAgent) RunWithContext(ctx context.Context, messages []ContextMessage, systemPrompt string, onChunk ChunkCallback) (*Result, error) {
 	var filter SearchFilter
-	if s.enablePIICheck && s.safeguardClient != nil {
+
+	// Check if pii_check tool is enabled via context, fall back to default setting
+	enabled := hasTool(ctx, ToolTypePIICheck)
+	tools := getTools(ctx)
+	if !enabled && tools == nil {
+		enabled = s.enablePIICheck
+	}
+
+	if enabled && s.safeguardClient != nil {
 		filter = s.createPIIFilter(ctx)
 	}
 

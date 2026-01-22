@@ -32,11 +32,11 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.SafeguardModel != "gpt-oss-safeguard-120b" {
 		t.Errorf("SafeguardModel: expected 'gpt-oss-safeguard-120b', got '%s'", cfg.SafeguardModel)
 	}
-	if !cfg.EnablePIICheck {
-		t.Error("EnablePIICheck: expected true by default")
+	if cfg.EnablePIICheck {
+		t.Error("EnablePIICheck: expected false by default")
 	}
-	if !cfg.EnableInjectionCheck {
-		t.Error("EnableInjectionCheck: expected true by default")
+	if cfg.EnableInjectionCheck {
+		t.Error("EnableInjectionCheck: expected false by default")
 	}
 	if cfg.ExaAPIKey != "" {
 		t.Errorf("ExaAPIKey: expected empty, got '%s'", cfg.ExaAPIKey)
