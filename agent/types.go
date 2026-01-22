@@ -46,9 +46,8 @@ type ReasoningItem struct {
 
 // ContextMessage represents a message in the conversation context for the agent
 type ContextMessage struct {
-	Role           string          // "user", "assistant", or "system"
-	Content        string          // The message content
-	ReasoningItems []ReasoningItem // Reasoning items from previous agent turn (for assistant messages)
+	Role    string // "user", "assistant", or "system"
+	Content string // The message content
 }
 
 // Result contains the agent's decision about what to search

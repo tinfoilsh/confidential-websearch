@@ -15,18 +15,6 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/config"
 )
 
-// itemReferenceParam creates an item reference with the type field properly set.
-// This works around a bug in the openai-go SDK where ResponseInputItemParamOfItemReference
-// doesn't set the Type field, causing the server to fail with a 'role' KeyError.
-func itemReferenceParam(id string) responses.ResponseInputItemUnionParam {
-	return responses.ResponseInputItemUnionParam{
-		OfItemReference: &responses.ResponseInputItemItemReferenceParam{
-			ID:   id,
-			Type: "item_reference",
-		},
-	}
-}
-
 // FilterResult contains the outcome of filtering search queries
 type FilterResult struct {
 	Allowed []string
@@ -87,10 +75,6 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 			input = append(input, responses.ResponseInputItemParamOfMessage(msg.Content, responses.EasyInputMessageRoleUser))
 		case "assistant":
 			input = append(input, responses.ResponseInputItemParamOfMessage(msg.Content, responses.EasyInputMessageRoleAssistant))
-			// Add reasoning items from previous turn as item references
-			for _, ri := range msg.ReasoningItems {
-				input = append(input, itemReferenceParam(ri.ID))
-			}
 		}
 	}
 
