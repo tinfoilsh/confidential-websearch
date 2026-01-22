@@ -165,8 +165,9 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 	result := pctx.ResponderResult.(*pipeline.ResponderResultData)
 	annotations := pipeline.BuildAnnotations(pctx.SearchResults)
 
-	// Convert agent reasoning items to API format
+	// Convert agent reasoning items and blocked queries to API format
 	var reasoningItems []ReasoningItem
+	var blockedSearches []BlockedSearch
 	var agentReasoning string
 	if pctx.AgentResult != nil {
 		agentReasoning = pctx.AgentResult.AgentReasoning
@@ -182,6 +183,13 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 				})
 			}
 			reasoningItems = append(reasoningItems, apiRI)
+		}
+		for _, bq := range pctx.AgentResult.BlockedQueries {
+			blockedSearches = append(blockedSearches, BlockedSearch{
+				ID:     bq.ID,
+				Query:  bq.Query,
+				Reason: bq.Reason,
+			})
 		}
 	}
 
@@ -201,6 +209,7 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 					Annotations:     annotations,
 					SearchReasoning: agentReasoning,
 					ReasoningItems:  reasoningItems,
+					BlockedSearches: blockedSearches,
 				},
 			},
 		},
@@ -291,6 +300,22 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var output []ResponsesOutput
+
+	// Add blocked searches first
+	if pctx.AgentResult != nil {
+		for _, bq := range pctx.AgentResult.BlockedQueries {
+			output = append(output, ResponsesOutput{
+				Type:   "web_search_call",
+				ID:     "ws_" + bq.ID,
+				Status: "blocked",
+				Reason: bq.Reason,
+				Action: &WebSearchAction{
+					Type:  "search",
+					Query: bq.Query,
+				},
+			})
+		}
+	}
 
 	for _, tc := range pctx.SearchResults {
 		output = append(output, ResponsesOutput{
