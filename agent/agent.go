@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/responses"
@@ -14,7 +13,6 @@ import (
 	"github.com/tinfoilsh/tinfoil-go"
 
 	"github.com/tinfoilsh/confidential-websearch/config"
-	"github.com/tinfoilsh/confidential-websearch/search"
 )
 
 // FilterResult contains the outcome of filtering search queries
@@ -29,14 +27,13 @@ type SearchFilter func(ctx context.Context, queries []string) FilterResult
 
 // Agent handles the tool-calling loop with the LLM
 type Agent struct {
-	client   *tinfoil.Client
-	model    string
-	searcher search.Provider
+	client *tinfoil.Client
+	model  string
 }
 
 // New creates a new agent
-func New(client *tinfoil.Client, model string, searcher search.Provider) *Agent {
-	return &Agent{client: client, model: model, searcher: searcher}
+func New(client *tinfoil.Client, model string) *Agent {
+	return &Agent{client: client, model: model}
 }
 
 // RunWithContext executes the agent with conversation context and optional streaming.
@@ -299,28 +296,14 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 		}
 	}
 
-	// Execute searches in parallel
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-
+	// Return pending searches for the pipeline to execute
 	for _, q := range queries {
-		wg.Add(1)
-		go func(id, query string) {
-			defer wg.Done()
-			log.Infof("Searching: %s", query)
-
-			searchResults, err := a.searcher.Search(ctx, query, config.DefaultMaxSearchResults)
-			if err != nil {
-				log.Errorf("Search failed: %v", err)
-				return
-			}
-
-			mu.Lock()
-			result.ToolCalls = append(result.ToolCalls, ToolCall{ID: id, Query: query, Results: searchResults})
-			mu.Unlock()
-		}(q.id, q.query)
+		result.PendingSearches = append(result.PendingSearches, PendingSearch{
+			ID:    q.id,
+			Query: q.query,
+		})
 	}
-	wg.Wait()
 
+	log.Debugf("Agent returning %d pending search(es)", len(result.PendingSearches))
 	return result, nil
 }
