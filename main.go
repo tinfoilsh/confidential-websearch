@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/openai/openai-go/v3/option"
 	log "github.com/sirupsen/logrus"
 	"github.com/tinfoilsh/tinfoil-go"
 
@@ -31,7 +32,7 @@ func main() {
 
 	cfg := config.Load()
 
-	client, err := tinfoil.NewClient()
+	client, err := tinfoil.NewClient(option.WithAPIKey(cfg.TinfoilAPIKey))
 	if err != nil {
 		log.Fatalf("Failed to create Tinfoil client: %v", err)
 	}

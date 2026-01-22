@@ -25,8 +25,9 @@ type Config struct {
 	// Agent model (small model for tool use decisions)
 	AgentModel string
 
-	// Search API key
-	ExaAPIKey string
+	// API keys
+	TinfoilAPIKey string
+	ExaAPIKey     string
 
 	// Server settings
 	ListenAddr string
@@ -40,6 +41,7 @@ type Config struct {
 func Load() *Config {
 	return &Config{
 		AgentModel:           getEnv("AGENT_MODEL", "gpt-oss-120b-free"),
+		TinfoilAPIKey:        os.Getenv("TINFOIL_API_KEY"),
 		ExaAPIKey:            os.Getenv("EXA_API_KEY"),
 		ListenAddr:           getEnv("LISTEN_ADDR", ":8089"),
 		SafeguardModel:       getEnv("SAFEGUARD_MODEL", "gpt-oss-safeguard-120b"),
