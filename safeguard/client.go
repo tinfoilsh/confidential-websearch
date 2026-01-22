@@ -7,6 +7,7 @@ import (
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/shared"
+	log "github.com/sirupsen/logrus"
 	"github.com/tinfoilsh/tinfoil-go"
 
 	"github.com/tinfoilsh/confidential-websearch/config"
@@ -61,7 +62,6 @@ func (c *Client) Check(ctx context.Context, policy, content string) (*CheckResul
 			openai.UserMessage(content),
 		},
 		Temperature: openai.Float(config.SafeguardTemperature),
-		MaxTokens:   openai.Int(config.SafeguardMaxTokens),
 		ResponseFormat: openai.ChatCompletionNewParamsResponseFormatUnion{
 			OfJSONSchema: &openai.ResponseFormatJSONSchemaParam{
 				JSONSchema: openai.ResponseFormatJSONSchemaJSONSchemaParam{
@@ -80,9 +80,12 @@ func (c *Client) Check(ctx context.Context, policy, content string) (*CheckResul
 		return nil, fmt.Errorf("safeguard returned no response")
 	}
 
+	respContent := resp.Choices[0].Message.Content
+	log.Infof("Safeguard raw response: %q (len=%d, finish_reason=%s)", respContent, len(respContent), resp.Choices[0].FinishReason)
+
 	var result CheckResult
-	if err := json.Unmarshal([]byte(resp.Choices[0].Message.Content), &result); err != nil {
-		return nil, fmt.Errorf("failed to parse safeguard response: %w", err)
+	if err := json.Unmarshal([]byte(respContent), &result); err != nil {
+		return nil, fmt.Errorf("failed to parse safeguard response: %w (content=%q)", err, respContent)
 	}
 
 	return &result, nil

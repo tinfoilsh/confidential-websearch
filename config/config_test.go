@@ -157,9 +157,6 @@ func TestConstants(t *testing.T) {
 	if SafeguardTemperature != 0.0 {
 		t.Errorf("SafeguardTemperature: expected 0.0, got %f", SafeguardTemperature)
 	}
-	if SafeguardMaxTokens != 256 {
-		t.Errorf("SafeguardMaxTokens: expected 256, got %d", SafeguardMaxTokens)
-	}
 	if DefaultMaxSearchResults != 5 {
 		t.Errorf("DefaultMaxSearchResults: expected 5, got %d", DefaultMaxSearchResults)
 	}
