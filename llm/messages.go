@@ -18,7 +18,7 @@ func NewMessageBuilder() *MessageBuilder {
 }
 
 // Build creates the message array for the responder LLM call
-func (b *MessageBuilder) Build(inputMessages []pipeline.Message, agentResult *agent.Result) []openai.ChatCompletionMessageParamUnion {
+func (b *MessageBuilder) Build(inputMessages []pipeline.Message, searchResults []agent.ToolCall) []openai.ChatCompletionMessageParamUnion {
 	var messages []openai.ChatCompletionMessageParamUnion
 
 	// Add input messages, injecting historical search context for assistant messages with annotations
@@ -40,14 +40,14 @@ func (b *MessageBuilder) Build(inputMessages []pipeline.Message, agentResult *ag
 	// If we have search results, include them as plain text context.
 	// We avoid tool call format because the responder LLM doesn't have tools configured
 	// and may try to echo/reproduce tool call syntax, breaking the response.
-	if agentResult != nil && len(agentResult.ToolCalls) > 0 {
-		var searchResults string
-		for _, tc := range agentResult.ToolCalls {
+	if len(searchResults) > 0 {
+		var resultsText string
+		for _, tc := range searchResults {
 			for i, sr := range tc.Results {
-				searchResults += FormatSearchResult(i+1, sr.Title, sr.URL, sr.Content)
+				resultsText += FormatSearchResult(i+1, sr.Title, sr.URL, sr.Content)
 			}
 		}
-		messages = append(messages, openai.UserMessage("Search results:\n\n"+searchResults+"\nAnswer using these search results."))
+		messages = append(messages, openai.UserMessage("Search results:\n\n"+resultsText+"\nAnswer using these search results."))
 	}
 
 	return messages

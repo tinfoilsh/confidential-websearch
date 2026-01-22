@@ -162,10 +162,10 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 		return
 	}
 
-	log.Infof("Agent completed: %d tool calls", len(pctx.AgentResult.ToolCalls))
+	log.Infof("Agent completed: %d searches", len(pctx.SearchResults))
 
 	result := pctx.ResponderResult.(*pipeline.ResponderResultData)
-	annotations := pipeline.BuildAnnotations(pctx.AgentResult)
+	annotations := pipeline.BuildAnnotations(pctx.SearchResults)
 
 	// Convert agent reasoning items to API format
 	var reasoningItems []ReasoningItem
@@ -227,7 +227,7 @@ func (s *Server) handleStreamingChatCompletion(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	log.Infof("Streaming completed: %d tool calls", len(pctx.AgentResult.ToolCalls))
+	log.Infof("Streaming completed: %d searches", len(pctx.SearchResults))
 }
 
 func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
@@ -266,7 +266,7 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := pctx.ResponderResult.(*pipeline.ResponderResultData)
-	flatAnnotations := buildFlatAnnotations(pctx.AgentResult.ToolCalls)
+	flatAnnotations := buildFlatAnnotations(pctx.SearchResults)
 
 	// Convert agent reasoning items to API format
 	var reasoningItems []ReasoningItem
@@ -286,7 +286,7 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 
 	var output []ResponsesOutput
 
-	for _, tc := range pctx.AgentResult.ToolCalls {
+	for _, tc := range pctx.SearchResults {
 		output = append(output, ResponsesOutput{
 			Type:   "web_search_call",
 			ID:     "ws_" + tc.ID,
