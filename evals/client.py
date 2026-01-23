@@ -15,6 +15,8 @@ from constants import (
     SAFEGUARD_MODEL,
 )
 
+ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
+
 
 @dataclass
 class CheckResult:
@@ -205,12 +207,20 @@ class LabelerClient:
         model: str | None = None,
         timeout: float = 60.0,
     ):
-        self.api_key = api_key or os.environ.get("SAFEGUARD_API_KEY", "")
-        self.base_url = base_url or os.environ.get(
-            "LABELER_BASE_URL", self.DEFAULT_BASE_URL
-        )
         self.model = model or os.environ.get("LABELER_MODEL", self.DEFAULT_MODEL)
         self.timeout = timeout
+
+        # Detect if using Claude (Anthropic API) vs other models (OpenAI-compatible API)
+        self.is_claude = self.model.startswith("claude")
+
+        if self.is_claude:
+            self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+            self.base_url = ANTHROPIC_API_URL
+        else:
+            self.api_key = api_key or os.environ.get("SAFEGUARD_API_KEY", "")
+            self.base_url = base_url or os.environ.get(
+                "LABELER_BASE_URL", self.DEFAULT_BASE_URL
+            )
 
     def label_pii(self, text: str) -> tuple[bool, str]:
         """
@@ -266,7 +276,11 @@ class LabelerClient:
 
     def _call_api(self, prompt: str, schema_name: str, max_retries: int = 5) -> dict:
         """Make API call to labeler with retry logic for transient errors."""
+        import re
         import time
+
+        if self.is_claude:
+            return self._call_anthropic(prompt, max_retries)
 
         if schema_name == "pii_label":
             schema = {
@@ -354,6 +368,57 @@ class LabelerClient:
                 last_error = e
                 if e.response.status_code in (502, 503, 504, 429):
                     wait_time = (2 ** attempt) * 2 + 1  # 3, 5, 9, 17, 33 seconds
+                    time.sleep(wait_time)
+                    continue
+                raise
+
+            except (httpx.TimeoutException, httpx.ConnectError) as e:
+                last_error = e
+                wait_time = (2 ** attempt) * 2 + 1
+                time.sleep(wait_time)
+                continue
+
+        raise last_error
+
+    def _call_anthropic(self, prompt: str, max_retries: int = 5) -> dict:
+        """Simple Anthropic API call for Claude models."""
+        import re
+        import time
+
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                response = httpx.post(
+                    self.base_url,
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-api-key": self.api_key,
+                        "anthropic-version": "2023-06-01",
+                    },
+                    json={
+                        "model": self.model,
+                        "max_tokens": 1024,
+                        "messages": [
+                            {"role": "user", "content": prompt + "\n\nRespond with only valid JSON."},
+                        ],
+                    },
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+
+                data = response.json()
+                text = data["content"][0]["text"]
+
+                # Extract JSON from response
+                json_match = re.search(r'\{[^{}]*\}', text)
+                if json_match:
+                    return json.loads(json_match.group())
+                return json.loads(text)
+
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                if e.response.status_code in (502, 503, 504, 429, 529):
+                    wait_time = (2 ** attempt) * 2 + 1
                     time.sleep(wait_time)
                     continue
                 raise
