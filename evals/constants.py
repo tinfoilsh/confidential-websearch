@@ -9,7 +9,7 @@ SAFEGUARD_MODEL = "gpt-oss-safeguard-120b"
 
 # Labeler model configuration (for independent ground truth labeling)
 LABELER_BASE_URL = TINFOIL_BASE_URL
-LABELER_MODEL = "qwen3-coder-480b"
+LABELER_MODEL = "claude-opus-4-5-20251101"
 
 # Query generation model configuration
 QUERY_GEN_BASE_URL = TINFOIL_BASE_URL
