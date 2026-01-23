@@ -8,7 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/openai/openai-go/v3 v3.16.0
 	github.com/sirupsen/logrus v1.9.3
-	github.com/tinfoilsh/tinfoil-go v0.11.0
+	github.com/tinfoilsh/tinfoil-go v0.11.1
 )
 
 require (
@@ -70,7 +70,7 @@ require (
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
-	github.com/tinfoilsh/verifier v0.10.18 // indirect
+	github.com/tinfoilsh/verifier v0.10.19 // indirect
 	github.com/transparency-dev/formats v0.0.0-20251222174814-0e991b4666d9 // indirect
 	github.com/transparency-dev/merkle v0.0.2 // indirect
 	go.mongodb.org/mongo-driver v1.17.6 // indirect
