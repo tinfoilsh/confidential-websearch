@@ -46,7 +46,7 @@ func (b *MessageBuilder) Build(inputMessages []pipeline.Message, searchResults [
 				resultsText += FormatSearchResult(i+1, sr.Title, sr.URL, sr.Content)
 			}
 		}
-		messages = append(messages, openai.UserMessage("Search results:\n\n"+resultsText+"\nAnswer using these search results."))
+		messages = append(messages, openai.UserMessage("Search results:\n\n"+resultsText+"\nUse these search results to answer. When you use information from a source, cite it using the number in brackets like [1], [2], etc."))
 	}
 
 	return messages
