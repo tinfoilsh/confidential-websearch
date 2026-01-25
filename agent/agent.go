@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
@@ -15,10 +16,13 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/config"
 )
 
-const agentInstructions = `You are a search routing agent. You have access to the full conversation history for context, but your task is to decide if a web search would help answer the LAST user message specifically.
+const agentInstructions = `You are a search routing agent. Your task is to decide if a web search would help answer the user's request.
 
-If a search IS needed: Call the search tool with an appropriate query based on the last user message. You may call it multiple times for complex questions.
+Focus primarily on the most recent user message when deciding what to search for. Earlier messages provide context, but the latest message should drive your search decisions.
 
+If you're unsure whether a search would help, lean towards searching - it's better to have information available than to miss something useful.
+
+If a search IS needed: Call the search tool with an appropriate query.
 If NO search is needed: Do not call any tools and do not output any text.`
 
 // FilterResult contains the outcome of filtering search queries
@@ -92,7 +96,15 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 		MaxOutputTokens: openai.Int(config.AgentMaxTokens),
 	}
 
-	params.Instructions = openai.String(agentInstructions)
+	// Build complete instructions with context
+	var fullInstructions strings.Builder
+	fullInstructions.WriteString(agentInstructions)
+	fullInstructions.WriteString(fmt.Sprintf("\n\nCurrent date and time: %s", time.Now().Format("Monday, January 2, 2006 at 3:04 PM MST")))
+	if systemPrompt != "" {
+		fullInstructions.WriteString(fmt.Sprintf("\n\nThe user specified the following system prompt for the conversation, which you can use to draw context from in your decision:\n\"%s\"", systemPrompt))
+	}
+
+	params.Instructions = openai.String(fullInstructions.String())
 
 	// Track function calls by output index
 	type functionCall struct {
