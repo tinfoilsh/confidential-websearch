@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -8,6 +9,12 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/pipeline"
 	"github.com/tinfoilsh/confidential-websearch/search"
 )
+
+// toJSON marshals a string to json.RawMessage for tests
+func toJSON(s string) json.RawMessage {
+	b, _ := json.Marshal(s)
+	return b
+}
 
 func TestFormatSearchResult(t *testing.T) {
 	result := FormatSearchResult(1, "Test Title", "https://example.com", "Test content here")
@@ -22,10 +29,10 @@ func TestBuildSimpleMessages(t *testing.T) {
 	builder := NewMessageBuilder()
 
 	messages := []pipeline.Message{
-		{Role: "system", Content: "You are a helpful assistant."},
-		{Role: "user", Content: "Hello"},
-		{Role: "assistant", Content: "Hi there!"},
-		{Role: "user", Content: "What is the weather?"},
+		{Role: "system", Content: toJSON("You are a helpful assistant.")},
+		{Role: "user", Content: toJSON("Hello")},
+		{Role: "assistant", Content: toJSON("Hi there!")},
+		{Role: "user", Content: toJSON("What is the weather?")},
 	}
 
 	result := builder.Build(messages, nil)
@@ -59,7 +66,7 @@ func TestBuildWithSearchResults(t *testing.T) {
 	builder := NewMessageBuilder()
 
 	messages := []pipeline.Message{
-		{Role: "user", Content: "What is the latest news?"},
+		{Role: "user", Content: toJSON("What is the latest news?")},
 	}
 
 	searchResults := []agent.ToolCall{
@@ -110,7 +117,7 @@ func TestBuildWithMultipleToolCalls(t *testing.T) {
 	builder := NewMessageBuilder()
 
 	messages := []pipeline.Message{
-		{Role: "user", Content: "Compare weather in NYC and LA"},
+		{Role: "user", Content: toJSON("Compare weather in NYC and LA")},
 	}
 
 	searchResults := []agent.ToolCall{
@@ -151,7 +158,7 @@ func TestBuildWithEmptySearchResults(t *testing.T) {
 	builder := NewMessageBuilder()
 
 	messages := []pipeline.Message{
-		{Role: "user", Content: "Hello"},
+		{Role: "user", Content: toJSON("Hello")},
 	}
 
 	// Empty search results
@@ -169,7 +176,7 @@ func TestBuildWithNilSearchResults(t *testing.T) {
 	builder := NewMessageBuilder()
 
 	messages := []pipeline.Message{
-		{Role: "user", Content: "Hello"},
+		{Role: "user", Content: toJSON("Hello")},
 	}
 
 	result := builder.Build(messages, nil)
@@ -183,7 +190,7 @@ func TestSearchResultsContainFormattedResults(t *testing.T) {
 	builder := NewMessageBuilder()
 
 	messages := []pipeline.Message{
-		{Role: "user", Content: "Search test"},
+		{Role: "user", Content: toJSON("Search test")},
 	}
 
 	searchResults := []agent.ToolCall{
@@ -220,7 +227,7 @@ func TestSearchResultsMessageContainsPrompt(t *testing.T) {
 	builder := NewMessageBuilder()
 
 	messages := []pipeline.Message{
-		{Role: "user", Content: "Search for something"},
+		{Role: "user", Content: toJSON("Search for something")},
 	}
 
 	searchResults := []agent.ToolCall{

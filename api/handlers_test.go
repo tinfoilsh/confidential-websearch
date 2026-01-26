@@ -18,6 +18,12 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/search"
 )
 
+// toJSON marshals a string to json.RawMessage for tests
+func toJSON(s string) json.RawMessage {
+	b, _ := json.Marshal(s)
+	return b
+}
+
 // MockPipeline implements a test double for Pipeline
 type MockPipeline struct {
 	ExecuteFunc func(ctx context.Context, req *pipeline.Request, emitter pipeline.EventEmitter, reqOpts ...option.RequestOption) (*pipeline.Context, error)
@@ -345,9 +351,9 @@ func TestJsonErrorResponse(t *testing.T) {
 
 func TestConvertMessages(t *testing.T) {
 	msgs := []Message{
-		{Role: "user", Content: "Hello"},
-		{Role: "assistant", Content: "Hi there"},
-		{Role: "user", Content: "Search for something"},
+		{Role: "user", Content: toJSON("Hello")},
+		{Role: "assistant", Content: toJSON("Hi there")},
+		{Role: "user", Content: toJSON("Search for something")},
 	}
 
 	result := convertMessages(msgs)
@@ -355,10 +361,10 @@ func TestConvertMessages(t *testing.T) {
 	if len(result) != 3 {
 		t.Fatalf("expected 3 messages, got %d", len(result))
 	}
-	if result[0].Role != "user" || result[0].Content != "Hello" {
+	if result[0].Role != "user" || result[0].GetTextContent() != "Hello" {
 		t.Error("first message mismatch")
 	}
-	if result[1].Role != "assistant" || result[1].Content != "Hi there" {
+	if result[1].Role != "assistant" || result[1].GetTextContent() != "Hi there" {
 		t.Error("second message mismatch")
 	}
 }
@@ -437,10 +443,10 @@ func TestExtractRequestOptions_NoAuth(t *testing.T) {
 
 func TestExtractUserQuery(t *testing.T) {
 	messages := []pipeline.Message{
-		{Role: "system", Content: "You are helpful"},
-		{Role: "user", Content: "First question"},
-		{Role: "assistant", Content: "First answer"},
-		{Role: "user", Content: "Second question"},
+		{Role: "system", Content: toJSON("You are helpful")},
+		{Role: "user", Content: toJSON("First question")},
+		{Role: "assistant", Content: toJSON("First answer")},
+		{Role: "user", Content: toJSON("Second question")},
 	}
 
 	query := extractUserQuery(messages)
@@ -451,8 +457,8 @@ func TestExtractUserQuery(t *testing.T) {
 
 func TestExtractUserQuery_NoUserMessage(t *testing.T) {
 	messages := []pipeline.Message{
-		{Role: "system", Content: "You are helpful"},
-		{Role: "assistant", Content: "Hello"},
+		{Role: "system", Content: toJSON("You are helpful")},
+		{Role: "assistant", Content: toJSON("Hello")},
 	}
 
 	query := extractUserQuery(messages)
@@ -475,9 +481,9 @@ func TestExtractUserQuery_EmptyMessages(t *testing.T) {
 
 func TestExtractUserQuery_EmptyContent(t *testing.T) {
 	messages := []pipeline.Message{
-		{Role: "user", Content: ""},
-		{Role: "user", Content: "Valid content"},
-		{Role: "user", Content: ""},
+		{Role: "user", Content: toJSON("")},
+		{Role: "user", Content: toJSON("Valid content")},
+		{Role: "user", Content: toJSON("")},
 	}
 
 	query := extractUserQuery(messages)

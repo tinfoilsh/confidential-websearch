@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 
 	"github.com/openai/openai-go/v3"
@@ -76,9 +77,11 @@ func (s *ValidateStage) Execute(ctx *Context) error {
 	// Extract user query from messages (last user message)
 	if ctx.Request.Format == FormatChatCompletion {
 		for i := len(ctx.Request.Messages) - 1; i >= 0; i-- {
-			if ctx.Request.Messages[i].Role == "user" && ctx.Request.Messages[i].Content != "" {
-				ctx.UserQuery = ctx.Request.Messages[i].Content
-				break
+			if ctx.Request.Messages[i].Role == "user" {
+				if text := ctx.Request.Messages[i].GetTextContent(); text != "" {
+					ctx.UserQuery = text
+					break
+				}
 			}
 		}
 		if ctx.UserQuery == "" {
@@ -307,7 +310,8 @@ func (s *BuildMessagesStage) Execute(ctx *Context) error {
 
 	// For Responses API, construct messages from Input since Messages is empty
 	if ctx.Request.Format == FormatResponses && len(messages) == 0 {
-		messages = []Message{{Role: "user", Content: ctx.UserQuery}}
+		contentJSON, _ := json.Marshal(ctx.UserQuery)
+		messages = []Message{{Role: "user", Content: contentJSON}}
 	}
 
 	ctx.ResponderMessages = s.Builder.Build(messages, ctx.SearchResults)
@@ -390,16 +394,18 @@ func BuildAnnotations(searchResults []agent.ToolCall) []Annotation {
 
 // extractAgentContext extracts the system prompt and converts pipeline messages
 // to agent.ContextMessage format for the new RunWithContext method.
+// Only text content is passed to the agent (images are handled by the responder).
 func extractAgentContext(messages []Message) (systemPrompt string, agentMessages []agent.ContextMessage) {
 	for _, msg := range messages {
+		text := msg.GetTextContent()
 		if msg.Role == "system" {
-			systemPrompt = msg.Content
+			systemPrompt = text
 			continue
 		}
 
 		agentMessages = append(agentMessages, agent.ContextMessage{
 			Role:    msg.Role,
-			Content: msg.Content,
+			Content: text,
 		})
 	}
 	return

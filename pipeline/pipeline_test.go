@@ -2,10 +2,17 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 )
+
+// toJSON marshals a string to json.RawMessage for tests
+func toJSON(s string) json.RawMessage {
+	b, _ := json.Marshal(s)
+	return b
+}
 
 // MockStage implements Stage for testing
 type MockStage struct {
@@ -57,7 +64,7 @@ func TestPipelineExecute_AllStagesRun(t *testing.T) {
 
 	req := &Request{
 		Model:    "gpt-4",
-		Messages: []Message{{Role: "user", Content: "hello"}},
+		Messages: []Message{{Role: "user", Content: toJSON("hello")}},
 		Format:   FormatChatCompletion,
 	}
 
@@ -97,7 +104,7 @@ func TestPipelineExecute_StopsOnError(t *testing.T) {
 
 	req := &Request{
 		Model:    "gpt-4",
-		Messages: []Message{{Role: "user", Content: "hello"}},
+		Messages: []Message{{Role: "user", Content: toJSON("hello")}},
 		Format:   FormatChatCompletion,
 	}
 
@@ -147,7 +154,7 @@ func TestPipelineExecute_SetsEmitter(t *testing.T) {
 
 	req := &Request{
 		Model:    "gpt-4",
-		Messages: []Message{{Role: "user", Content: "hello"}},
+		Messages: []Message{{Role: "user", Content: toJSON("hello")}},
 		Format:   FormatChatCompletion,
 	}
 
@@ -175,7 +182,7 @@ func TestPipelineExecute_SetsStateTracker(t *testing.T) {
 
 	req := &Request{
 		Model:    "gpt-4",
-		Messages: []Message{{Role: "user", Content: "hello"}},
+		Messages: []Message{{Role: "user", Content: toJSON("hello")}},
 		Format:   FormatChatCompletion,
 	}
 
@@ -200,7 +207,7 @@ func TestPipelineExecute_PassesRequestOptions(t *testing.T) {
 
 	req := &Request{
 		Model:    "gpt-4",
-		Messages: []Message{{Role: "user", Content: "hello"}},
+		Messages: []Message{{Role: "user", Content: toJSON("hello")}},
 		Format:   FormatChatCompletion,
 	}
 
@@ -230,7 +237,7 @@ func TestPipelineExecute_SetsCancelFunc(t *testing.T) {
 
 	req := &Request{
 		Model:    "gpt-4",
-		Messages: []Message{{Role: "user", Content: "hello"}},
+		Messages: []Message{{Role: "user", Content: toJSON("hello")}},
 		Format:   FormatChatCompletion,
 	}
 
@@ -263,7 +270,7 @@ func TestPipelineExecute_ContextPassedBetweenStages(t *testing.T) {
 
 	req := &Request{
 		Model:    "gpt-4",
-		Messages: []Message{{Role: "user", Content: "hello"}},
+		Messages: []Message{{Role: "user", Content: toJSON("hello")}},
 		Format:   FormatChatCompletion,
 	}
 
@@ -278,7 +285,7 @@ func TestPipelineExecute_EmptyPipeline(t *testing.T) {
 
 	req := &Request{
 		Model:    "gpt-4",
-		Messages: []Message{{Role: "user", Content: "hello"}},
+		Messages: []Message{{Role: "user", Content: toJSON("hello")}},
 		Format:   FormatChatCompletion,
 	}
 
@@ -306,7 +313,7 @@ func TestPipelineExecute_ErrorMetadata(t *testing.T) {
 
 	req := &Request{
 		Model:    "gpt-4",
-		Messages: []Message{{Role: "user", Content: "hello"}},
+		Messages: []Message{{Role: "user", Content: toJSON("hello")}},
 		Format:   FormatChatCompletion,
 	}
 

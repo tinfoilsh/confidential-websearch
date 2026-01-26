@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -32,9 +33,32 @@ type ReasoningItem struct {
 
 // Message represents a chat message
 type Message struct {
-	Role        string       `json:"role"`
-	Content     string       `json:"content"`
-	Annotations []Annotation `json:"annotations,omitempty"`
+	Role        string          `json:"role"`
+	Content     json.RawMessage `json:"content"` // Preserved verbatim for responder; text extracted for agent
+	Annotations []Annotation    `json:"annotations,omitempty"`
+}
+
+// GetTextContent extracts text from Content (handles both string and multimodal array).
+// Only used for agent operations (search, PII, prompt injection) - not for responder.
+func (m *Message) GetTextContent() string {
+	// Try string first
+	var s string
+	if json.Unmarshal(m.Content, &s) == nil {
+		return s
+	}
+	// Try array of content parts - only extract text
+	var parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(m.Content, &parts) == nil {
+		for _, p := range parts {
+			if p.Type == "text" {
+				return p.Text
+			}
+		}
+	}
+	return ""
 }
 
 // Annotation represents a url_citation annotation

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/openai/openai-go/v3/option"
@@ -61,7 +62,7 @@ type ReasoningItem struct {
 // Message represents a chat message in the incoming request
 type Message struct {
 	Role        string                `json:"role"`
-	Content     string                `json:"content"`
+	Content     json.RawMessage       `json:"content"` // Preserved verbatim for responder
 	Annotations []pipeline.Annotation `json:"annotations,omitempty"`
 }
 

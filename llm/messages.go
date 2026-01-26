@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/openai/openai-go/v3"
@@ -24,14 +25,14 @@ func (b *MessageBuilder) Build(inputMessages []pipeline.Message, searchResults [
 	for _, msg := range inputMessages {
 		switch msg.Role {
 		case "system":
-			messages = append(messages, openai.SystemMessage(msg.Content))
+			messages = append(messages, openai.SystemMessage(contentToString(msg.Content)))
 		case "user":
-			messages = append(messages, openai.UserMessage(msg.Content))
+			messages = append(messages, buildUserMessage(msg.Content))
 		case "assistant":
 			if len(msg.Annotations) > 0 {
 				messages = b.injectHistoricalSearchContext(messages, msg)
 			} else {
-				messages = append(messages, openai.AssistantMessage(msg.Content))
+				messages = append(messages, openai.AssistantMessage(contentToString(msg.Content)))
 			}
 		}
 	}
@@ -63,9 +64,9 @@ func (b *MessageBuilder) injectHistoricalSearchContext(messages []openai.ChatCom
 		}
 	}
 
-	content := msg.Content
+	content := contentToString(msg.Content)
 	if sourcesSummary != "" {
-		content = fmt.Sprintf("%s\n\nSources used:\n%s", msg.Content, sourcesSummary)
+		content = fmt.Sprintf("%s\n\nSources used:\n%s", content, sourcesSummary)
 	}
 
 	messages = append(messages, openai.AssistantMessage(content))
@@ -75,4 +76,37 @@ func (b *MessageBuilder) injectHistoricalSearchContext(messages []openai.ChatCom
 // FormatSearchResult formats a search result for inclusion in tool message content
 func FormatSearchResult(index int, title, url, content string) string {
 	return fmt.Sprintf("[%d] %s\nURL: %s\n%s\n\n", index, title, url, content)
+}
+
+// contentToString extracts text from Content for system/assistant messages.
+func contentToString(content json.RawMessage) string {
+	var s string
+	if json.Unmarshal(content, &s) == nil {
+		return s
+	}
+	var parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(content, &parts) == nil {
+		for _, p := range parts {
+			if p.Type == "text" {
+				return p.Text
+			}
+		}
+	}
+	return ""
+}
+
+// buildUserMessage creates a user message, passing content through verbatim via SDK unmarshalling.
+func buildUserMessage(content json.RawMessage) openai.ChatCompletionMessageParamUnion {
+	var contentUnion openai.ChatCompletionUserMessageParamContentUnion
+	if err := json.Unmarshal(content, &contentUnion); err != nil {
+		return openai.UserMessage("")
+	}
+	return openai.ChatCompletionMessageParamUnion{
+		OfUser: &openai.ChatCompletionUserMessageParam{
+			Content: contentUnion,
+		},
+	}
 }
