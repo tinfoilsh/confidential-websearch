@@ -239,7 +239,7 @@ func TestSearchResultsMessageContainsPrompt(t *testing.T) {
 	if !strings.Contains(content, "Search results:") {
 		t.Error("message should contain search results header")
 	}
-	if !strings.Contains(content, "cite it using the number in brackets") {
+	if !strings.Contains(content, "cite it using lenticular brackets") {
 		t.Errorf("message should contain citation prompt, got %q", content)
 	}
 }

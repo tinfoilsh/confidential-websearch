@@ -3,9 +3,6 @@ package llm
 import (
 	"context"
 	"encoding/json"
-	"regexp"
-	"strings"
-	"unicode"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -15,65 +12,6 @@ import (
 
 	"github.com/tinfoilsh/confidential-websearch/pipeline"
 )
-
-// citationMarkerRegex matches OpenAI-style citation markers like 【1】 or 【1†L1-L15】
-var citationMarkerRegex = regexp.MustCompile(`【\d+[^】]*】`)
-
-// StreamingCitationStripper handles citation markers that may span multiple streaming chunks
-type StreamingCitationStripper struct {
-	buffer   strings.Builder
-	inMarker bool
-}
-
-// NewStreamingCitationStripper creates a new streaming citation stripper
-func NewStreamingCitationStripper() *StreamingCitationStripper {
-	return &StreamingCitationStripper{}
-}
-
-// Process takes incoming content and returns cleaned content to emit.
-func (s *StreamingCitationStripper) Process(content string) string {
-	var result strings.Builder
-	for _, r := range content {
-		if s.inMarker {
-			s.buffer.WriteRune(r)
-			if r == '】' {
-				marker := s.buffer.String()
-				if !isValidCitationMarker(marker) {
-					result.WriteString(marker)
-				}
-				s.buffer.Reset()
-				s.inMarker = false
-			}
-		} else if r == '【' {
-			s.inMarker = true
-			s.buffer.WriteRune(r)
-		} else {
-			result.WriteRune(r)
-		}
-	}
-	return result.String()
-}
-
-// Flush returns any remaining buffered content (call at end of stream)
-func (s *StreamingCitationStripper) Flush() string {
-	content := s.buffer.String()
-	s.buffer.Reset()
-	s.inMarker = false
-	return content
-}
-
-// isValidCitationMarker checks if the string matches the citation pattern
-func isValidCitationMarker(str string) bool {
-	if !strings.HasPrefix(str, "【") || !strings.HasSuffix(str, "】") {
-		return false
-	}
-	inner := strings.TrimPrefix(str, "【")
-	inner = strings.TrimSuffix(inner, "】")
-	if len(inner) == 0 {
-		return false
-	}
-	return unicode.IsDigit(rune(inner[0]))
-}
 
 // ChatCompletionStream is the stream type returned by NewStreaming
 type ChatCompletionStream = ssestream.Stream[openai.ChatCompletionChunk]
@@ -194,40 +132,4 @@ func (r *TinfoilResponder) Stream(ctx context.Context, params pipeline.Responder
 
 	log.Debug("[Responder.Stream] Stream completed successfully, emitting done")
 	return emitter.EmitDone()
-}
-
-// StripCitationMarkers removes OpenAI-style citation markers from content
-func StripCitationMarkers(content string) string {
-	return citationMarkerRegex.ReplaceAllString(content, "")
-}
-
-// updateChunkContent replaces the content in a streaming chunk JSON
-func updateChunkContent(chunkData string, newContent string) string {
-	var parsed map[string]interface{}
-	if err := json.Unmarshal([]byte(chunkData), &parsed); err != nil {
-		return chunkData
-	}
-
-	choices, ok := parsed["choices"].([]interface{})
-	if !ok || len(choices) == 0 {
-		return chunkData
-	}
-
-	choice, ok := choices[0].(map[string]interface{})
-	if !ok {
-		return chunkData
-	}
-
-	delta, ok := choice["delta"].(map[string]interface{})
-	if !ok {
-		return chunkData
-	}
-
-	delta["content"] = newContent
-	marshaled, err := json.Marshal(parsed)
-	if err != nil {
-		return chunkData
-	}
-
-	return string(marshaled)
 }
