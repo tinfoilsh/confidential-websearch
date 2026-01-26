@@ -3,7 +3,6 @@ package llm
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 
@@ -103,154 +102,6 @@ func (m *MockEventEmitter) EmitDone() error {
 	return nil
 }
 
-func TestStripCitationMarkers(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "simple citation",
-			input:    "Hello【1】world",
-			expected: "Helloworld",
-		},
-		{
-			name:     "citation with line reference",
-			input:    "Hello【1†L1-L15】world",
-			expected: "Helloworld",
-		},
-		{
-			name:     "multiple citations",
-			input:    "First【1】second【2】third【3】",
-			expected: "Firstsecondthird",
-		},
-		{
-			name:     "no citations",
-			input:    "Hello world",
-			expected: "Hello world",
-		},
-		{
-			name:     "empty string",
-			input:    "",
-			expected: "",
-		},
-		{
-			name:     "citation at start",
-			input:    "【1】Hello",
-			expected: "Hello",
-		},
-		{
-			name:     "citation at end",
-			input:    "Hello【1】",
-			expected: "Hello",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := StripCitationMarkers(tt.input)
-			if result != tt.expected {
-				t.Errorf("expected %q, got %q", tt.expected, result)
-			}
-		})
-	}
-}
-
-func TestUpdateChunkContent(t *testing.T) {
-	tests := []struct {
-		name       string
-		chunkData  string
-		newContent string
-		wantJSON   bool
-	}{
-		{
-			name:       "update content",
-			chunkData:  `{"choices":[{"delta":{"content":"Hello【1】"}}]}`,
-			newContent: "Hello",
-			wantJSON:   true,
-		},
-		{
-			name:       "invalid json returns original",
-			chunkData:  `not json`,
-			newContent: "Hello",
-			wantJSON:   false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := updateChunkContent(tt.chunkData, tt.newContent)
-			if tt.wantJSON {
-				if !strings.Contains(result, tt.newContent) {
-					t.Errorf("expected result to contain %q, got %q", tt.newContent, result)
-				}
-			} else {
-				if result != tt.chunkData {
-					t.Errorf("expected unchanged chunkData, got %q", result)
-				}
-			}
-		})
-	}
-}
-
-func TestStreamingCitationStripper(t *testing.T) {
-	tests := []struct {
-		name     string
-		chunks   []string
-		expected string
-	}{
-		{
-			name:     "marker in single chunk",
-			chunks:   []string{"Hello【1】world"},
-			expected: "Helloworld",
-		},
-		{
-			name:     "marker spans two chunks",
-			chunks:   []string{"Hello【1", "†L1-L9】world"},
-			expected: "Helloworld",
-		},
-		{
-			name:     "marker spans three chunks",
-			chunks:   []string{"Hello【", "4†L1", "-L9】world"},
-			expected: "Helloworld",
-		},
-		{
-			name:     "multiple markers",
-			chunks:   []string{"A【1】B【2】C"},
-			expected: "ABC",
-		},
-		{
-			name:     "no markers",
-			chunks:   []string{"Hello ", "world"},
-			expected: "Hello world",
-		},
-		{
-			name:     "incomplete marker at end",
-			chunks:   []string{"Hello【1"},
-			expected: "Hello【1",
-		},
-		{
-			name:     "invalid marker (no digit)",
-			chunks:   []string{"Hello【abc】world"},
-			expected: "Hello【abc】world",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			stripper := NewStreamingCitationStripper()
-			var result strings.Builder
-			for _, chunk := range tt.chunks {
-				result.WriteString(stripper.Process(chunk))
-			}
-			result.WriteString(stripper.Flush())
-			if result.String() != tt.expected {
-				t.Errorf("expected %q, got %q", tt.expected, result.String())
-			}
-		})
-	}
-}
-
 func TestTinfoilResponderComplete(t *testing.T) {
 	mockClient := &MockChatClient{
 		NewFunc: func(ctx context.Context, params openai.ChatCompletionNewParams, opts ...option.RequestOption) (*openai.ChatCompletion, error) {
@@ -290,9 +141,8 @@ func TestTinfoilResponderComplete(t *testing.T) {
 		t.Errorf("expected model gpt-4, got %s", result.Model)
 	}
 
-	// Content should have citation markers stripped
-	if result.Content != "Hello world" {
-		t.Errorf("expected content 'Hello world', got %q", result.Content)
+	if result.Content != "Hello【1】 world" {
+		t.Errorf("expected content 'Hello【1】 world', got %q", result.Content)
 	}
 }
 
