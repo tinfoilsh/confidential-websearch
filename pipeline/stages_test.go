@@ -132,7 +132,7 @@ func TestValidateStage_MissingModel(t *testing.T) {
 		Context: context.Background(),
 		Request: &Request{
 			Model:    "",
-			Messages: []Message{{Role: "user", Content: "hello"}},
+			Messages: []Message{{Role: "user", Content: toJSON("hello")}},
 			Format:   FormatChatCompletion,
 		},
 		State: NewStateTracker(),
@@ -158,7 +158,7 @@ func TestValidateStage_NoUserMessage(t *testing.T) {
 		Context: context.Background(),
 		Request: &Request{
 			Model:    "gpt-4",
-			Messages: []Message{{Role: "system", Content: "you are helpful"}},
+			Messages: []Message{{Role: "system", Content: toJSON("you are helpful")}},
 			Format:   FormatChatCompletion,
 		},
 		State: NewStateTracker(),
@@ -177,9 +177,9 @@ func TestValidateStage_ExtractsUserQuery(t *testing.T) {
 		Request: &Request{
 			Model: "gpt-4",
 			Messages: []Message{
-				{Role: "user", Content: "first message"},
-				{Role: "assistant", Content: "response"},
-				{Role: "user", Content: "latest query"},
+				{Role: "user", Content: toJSON("first message")},
+				{Role: "assistant", Content: toJSON("response")},
+				{Role: "user", Content: toJSON("latest query")},
 			},
 			Format: FormatChatCompletion,
 		},
@@ -259,7 +259,7 @@ func TestAgentStage_Success(t *testing.T) {
 	ctx := &Context{
 		Context:   context.Background(),
 		UserQuery: "test query",
-		Request:   &Request{Messages: []Message{{Role: "user", Content: "test query"}}, Tools: []string{ToolTypeWebSearch}},
+		Request:   &Request{Messages: []Message{{Role: "user", Content: toJSON("test query")}}, Tools: []string{ToolTypeWebSearch}},
 		State:     NewStateTracker(),
 	}
 
@@ -295,7 +295,7 @@ func TestAgentStage_NoSearch(t *testing.T) {
 	ctx := &Context{
 		Context:   context.Background(),
 		UserQuery: "hello",
-		Request:   &Request{Messages: []Message{{Role: "user", Content: "hello"}}, Tools: []string{ToolTypeWebSearch}},
+		Request:   &Request{Messages: []Message{{Role: "user", Content: toJSON("hello")}}, Tools: []string{ToolTypeWebSearch}},
 		State:     NewStateTracker(),
 	}
 
@@ -320,7 +320,7 @@ func TestAgentStage_Error(t *testing.T) {
 	ctx := &Context{
 		Context:   context.Background(),
 		UserQuery: "test",
-		Request:   &Request{Messages: []Message{{Role: "user", Content: "test"}}, Tools: []string{ToolTypeWebSearch}},
+		Request:   &Request{Messages: []Message{{Role: "user", Content: toJSON("test")}}, Tools: []string{ToolTypeWebSearch}},
 		State:     NewStateTracker(),
 	}
 
@@ -350,7 +350,7 @@ func TestBuildMessagesStage_Success(t *testing.T) {
 	ctx := &Context{
 		Context: context.Background(),
 		Request: &Request{
-			Messages: []Message{{Role: "user", Content: "test"}},
+			Messages: []Message{{Role: "user", Content: toJSON("test")}},
 		},
 		AgentResult: &agent.Result{},
 		State:       NewStateTracker(),
