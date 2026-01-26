@@ -12,7 +12,7 @@ import (
 func TestFormatSearchResult(t *testing.T) {
 	result := FormatSearchResult(1, "Test Title", "https://example.com", "Test content here")
 
-	expected := "[1] Test Title\nURL: https://example.com\nTest content here\n\n"
+	expected := "【1】Test Title\nURL: https://example.com\nTest content here\n\n"
 	if result != expected {
 		t.Errorf("expected %q, got %q", expected, result)
 	}
@@ -205,10 +205,10 @@ func TestSearchResultsContainFormattedResults(t *testing.T) {
 	}
 
 	content := result[1].OfUser.Content.OfString.Value
-	if !strings.Contains(content, "[1] Result 1") {
+	if !strings.Contains(content, "【1】Result 1") {
 		t.Error("search results should contain first result")
 	}
-	if !strings.Contains(content, "[2] Result 2") {
+	if !strings.Contains(content, "【2】Result 2") {
 		t.Error("search results should contain second result")
 	}
 	if !strings.Contains(content, "https://example.com/1") {

@@ -74,5 +74,5 @@ func (b *MessageBuilder) injectHistoricalSearchContext(messages []openai.ChatCom
 
 // FormatSearchResult formats a search result for inclusion in tool message content
 func FormatSearchResult(index int, title, url, content string) string {
-	return fmt.Sprintf("[%d] %s\nURL: %s\n%s\n\n", index, title, url, content)
+	return fmt.Sprintf("【%d】%s\nURL: %s\n%s\n\n", index, title, url, content)
 }
