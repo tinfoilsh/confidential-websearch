@@ -114,8 +114,7 @@ func (r *TinfoilResponder) Complete(ctx context.Context, params pipeline.Respond
 
 	var content string
 	if len(resp.Choices) > 0 {
-		// Strip citation markers from content
-		content = StripCitationMarkers(resp.Choices[0].Message.Content)
+		content = resp.Choices[0].Message.Content
 	}
 
 	return &pipeline.ResponderResultData{
@@ -155,7 +154,6 @@ func (r *TinfoilResponder) Stream(ctx context.Context, params pipeline.Responder
 	log.Debug("[Responder.Stream] NewStreaming() returned, entering stream loop...")
 
 	metadataSent := false
-	stripper := NewStreamingCitationStripper()
 	chunkCount := 0
 
 	log.Debug("[Responder.Stream] Calling stream.Next() for first chunk...")
@@ -181,27 +179,13 @@ func (r *TinfoilResponder) Stream(ctx context.Context, params pipeline.Responder
 			metadataSent = true
 		}
 
-		// Strip citation markers from streaming content (handles markers spanning chunks)
-		chunkData := chunk.RawJSON()
-		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-			cleaned := stripper.Process(chunk.Choices[0].Delta.Content)
-			chunkData = updateChunkContent(chunkData, cleaned)
-		}
-
-		if err := emitter.EmitChunk([]byte(chunkData)); err != nil {
+		if err := emitter.EmitChunk([]byte(chunk.RawJSON())); err != nil {
 			log.Errorf("[Responder.Stream] EmitChunk failed: %v", err)
 			return err
 		}
 	}
 
 	log.Debugf("[Responder.Stream] Stream loop ended after %d chunks", chunkCount)
-
-	// Flush any remaining buffered content
-	if remaining := stripper.Flush(); remaining != "" {
-		if err := emitter.EmitChunk([]byte(`{"choices":[{"delta":{"content":"` + remaining + `"}}]}`)); err != nil {
-			return err
-		}
-	}
 
 	if err := stream.Err(); err != nil {
 		log.Errorf("[Responder.Stream] Stream error: %v", err)
