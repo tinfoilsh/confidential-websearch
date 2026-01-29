@@ -59,12 +59,3 @@ func (p *Pipeline) Execute(ctx context.Context, req *Request, emitter EventEmitt
 	return pctx, nil
 }
 
-// Stages returns the pipeline's stages (for testing)
-func (p *Pipeline) Stages() []Stage {
-	return p.stages
-}
-
-// Timeout returns the pipeline's timeout (for testing)
-func (p *Pipeline) Timeout() time.Duration {
-	return p.timeout
-}
