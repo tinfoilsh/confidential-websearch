@@ -28,6 +28,15 @@ func NewSSEEmitter(w http.ResponseWriter) (*SSEEmitter, error) {
 	return &SSEEmitter{w: w, flusher: flusher}, nil
 }
 
+// emit writes SSE data and flushes
+func (e *SSEEmitter) emit(data []byte) error {
+	if _, err := fmt.Fprintf(e.w, "data: %s\n\n", data); err != nil {
+		return err
+	}
+	e.flusher.Flush()
+	return nil
+}
+
 // EmitSearchCall emits a web search call event
 func (e *SSEEmitter) EmitSearchCall(id, status, query, reason string) error {
 	event := WebSearchCall{
@@ -51,12 +60,7 @@ func (e *SSEEmitter) EmitSearchCall(id, status, query, reason string) error {
 	if err != nil {
 		return err
 	}
-
-	if _, err := fmt.Fprintf(e.w, "data: %s\n\n", data); err != nil {
-		return err
-	}
-	e.flusher.Flush()
-	return nil
+	return e.emit(data)
 }
 
 // EmitMetadata emits annotations and reasoning as a custom chunk
@@ -82,21 +86,12 @@ func (e *SSEEmitter) EmitMetadata(annotations []pipeline.Annotation, reasoning s
 	if err != nil {
 		return err
 	}
-
-	if _, err := fmt.Fprintf(e.w, "data: %s\n\n", data); err != nil {
-		return err
-	}
-	e.flusher.Flush()
-	return nil
+	return e.emit(data)
 }
 
 // EmitChunk emits a raw data chunk
 func (e *SSEEmitter) EmitChunk(data []byte) error {
-	if _, err := fmt.Fprintf(e.w, "data: %s\n\n", data); err != nil {
-		return err
-	}
-	e.flusher.Flush()
-	return nil
+	return e.emit(data)
 }
 
 // EmitError emits an error event
@@ -110,21 +105,12 @@ func (e *SSEEmitter) EmitError(err error) error {
 	if marshalErr != nil {
 		return marshalErr
 	}
-
-	if _, err := fmt.Fprintf(e.w, "data: %s\n\n", errData); err != nil {
-		return err
-	}
-	e.flusher.Flush()
-	return nil
+	return e.emit(errData)
 }
 
 // EmitDone emits the final done signal
 func (e *SSEEmitter) EmitDone() error {
-	if _, err := fmt.Fprintf(e.w, "data: [DONE]\n\n"); err != nil {
-		return err
-	}
-	e.flusher.Flush()
-	return nil
+	return e.emit([]byte("[DONE]"))
 }
 
 // Verify SSEEmitter implements EventEmitter
