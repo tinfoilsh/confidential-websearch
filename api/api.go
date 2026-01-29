@@ -34,14 +34,14 @@ func jsonError(w http.ResponseWriter, message string, code int) {
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
-func jsonErrorResponse(w http.ResponseWriter, code int, body map[string]interface{}) {
+func jsonErrorResponse(w http.ResponseWriter, code int, body map[string]any) {
 	log.WithField("code", code).Warn("error response")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(body)
 }
 
-func parseRequestBody(r *http.Request, v interface{}) error {
+func parseRequestBody(r *http.Request, v any) error {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		return fmt.Errorf("failed to read request: %w", err)
@@ -164,7 +164,7 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 
 	log.Infof("Agent completed: %d searches", len(pctx.SearchResults))
 
-	result := pctx.ResponderResult.(*pipeline.ResponderResultData)
+	result := pctx.ResponderResult
 	annotations := pipeline.BuildAnnotations(pctx.SearchResults)
 
 	// Convert agent reasoning and blocked queries to API format
@@ -263,7 +263,7 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := pctx.ResponderResult.(*pipeline.ResponderResultData)
+	result := pctx.ResponderResult
 	flatAnnotations := buildFlatAnnotations(pctx.SearchResults)
 
 	// Extract agent reasoning

@@ -101,7 +101,7 @@ func (e *SSEEmitter) EmitChunk(data []byte) error {
 
 // EmitError emits an error event
 func (e *SSEEmitter) EmitError(err error) error {
-	errData, marshalErr := json.Marshal(map[string]interface{}{
+	errData, marshalErr := json.Marshal(map[string]any{
 		"error": map[string]string{
 			"message": err.Error(),
 			"type":    "api_error",

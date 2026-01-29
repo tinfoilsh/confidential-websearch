@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/tinfoilsh/tinfoil-go"
 
@@ -137,7 +138,7 @@ type ChatCompletionResponse struct {
 	Created int64                        `json:"created"`
 	Model   string                       `json:"model"`
 	Choices []ChatCompletionChoiceOutput `json:"choices"`
-	Usage   interface{}                  `json:"usage,omitempty"`
+	Usage   openai.CompletionUsage       `json:"usage,omitempty"`
 }
 
 // ChatCompletionChoiceOutput represents a choice in the response

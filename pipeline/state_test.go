@@ -88,7 +88,7 @@ func TestInvalidTransitions(t *testing.T) {
 func TestTransitionHistory(t *testing.T) {
 	tracker := NewStateTracker()
 
-	tracker.Transition(StateProcessing, map[string]interface{}{"query": "test"})
+	tracker.Transition(StateProcessing, map[string]any{"query": "test"})
 	tracker.Transition(StateResponding, nil)
 	tracker.Transition(StateCompleted, nil)
 
@@ -187,7 +187,7 @@ func TestAnyStateCanTransitionToFailed(t *testing.T) {
 				stateStarted: map[State]time.Time{state: time.Now()},
 			}
 
-			err := tracker.Transition(StateFailed, map[string]interface{}{"error": "test error"})
+			err := tracker.Transition(StateFailed, map[string]any{"error": "test error"})
 			if err != nil {
 				t.Errorf("should be able to transition from %s to failed: %v", state, err)
 			}

@@ -88,7 +88,7 @@ func (e *StreamingError) Unwrap() error {
 }
 
 // ErrorResponse maps an error to an HTTP status code and response body
-func ErrorResponse(err error) (int, map[string]interface{}) {
+func ErrorResponse(err error) (int, map[string]any) {
 	var validationErr *ValidationError
 	var agentErr *AgentError
 	var searchErr *SearchError
@@ -103,7 +103,7 @@ func ErrorResponse(err error) (int, map[string]interface{}) {
 
 	switch {
 	case errors.As(err, &validationErr):
-		return http.StatusBadRequest, map[string]interface{}{
+		return http.StatusBadRequest, map[string]any{
 			"error": map[string]string{
 				"message": validationErr.Message,
 				"type":    "validation_error",
@@ -112,7 +112,7 @@ func ErrorResponse(err error) (int, map[string]interface{}) {
 		}
 
 	case errors.As(err, &agentErr):
-		return http.StatusInternalServerError, map[string]interface{}{
+		return http.StatusInternalServerError, map[string]any{
 			"error": map[string]string{
 				"message": "agent processing failed",
 				"type":    "agent_error",
@@ -128,7 +128,7 @@ func ErrorResponse(err error) (int, map[string]interface{}) {
 		}
 
 	case errors.As(err, &responderErr):
-		return http.StatusInternalServerError, map[string]interface{}{
+		return http.StatusInternalServerError, map[string]any{
 			"error": map[string]string{
 				"message": "response generation failed",
 				"type":    "responder_error",
@@ -144,7 +144,7 @@ func ErrorResponse(err error) (int, map[string]interface{}) {
 		}
 
 	default:
-		return http.StatusInternalServerError, map[string]interface{}{
+		return http.StatusInternalServerError, map[string]any{
 			"error": map[string]string{
 				"message": "internal server error",
 				"type":    "api_error",
