@@ -31,13 +31,13 @@ type StateTransition struct {
 	From      State
 	To        State
 	Timestamp time.Time
-	Metadata  map[string]interface{}
+	Metadata  map[string]any
 }
 
 // StateTracker tracks request lifecycle state
 type StateTracker interface {
 	Current() State
-	Transition(to State, metadata map[string]interface{}) error
+	Transition(to State, metadata map[string]any) error
 	History() []StateTransition
 	Duration(state State) time.Duration
 }
@@ -70,7 +70,7 @@ func (t *DefaultStateTracker) Current() State {
 }
 
 // Transition moves to a new state if the transition is valid
-func (t *DefaultStateTracker) Transition(to State, metadata map[string]interface{}) error {
+func (t *DefaultStateTracker) Transition(to State, metadata map[string]any) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -81,9 +81,9 @@ func (t *DefaultStateTracker) Transition(to State, metadata map[string]interface
 	now := time.Now()
 
 	// Copy metadata to prevent caller mutations from affecting stored history
-	var metadataCopy map[string]interface{}
+	var metadataCopy map[string]any
 	if metadata != nil {
-		metadataCopy = make(map[string]interface{}, len(metadata))
+		metadataCopy = make(map[string]any, len(metadata))
 		for k, v := range metadata {
 			metadataCopy[k] = v
 		}

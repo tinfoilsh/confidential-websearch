@@ -43,7 +43,7 @@ func (p *Pipeline) Execute(ctx context.Context, req *Request, emitter EventEmitt
 			cancel()
 
 			// Transition to failed state
-			pctx.State.Transition(StateFailed, map[string]interface{}{
+			pctx.State.Transition(StateFailed, map[string]any{
 				"stage": stage.Name(),
 				"error": err.Error(),
 			})

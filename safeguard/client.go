@@ -23,14 +23,14 @@ type CheckResult struct {
 }
 
 // checkResultSchema is the JSON schema for structured output enforcement
-var checkResultSchema = map[string]interface{}{
+var checkResultSchema = map[string]any{
 	"type": "object",
-	"properties": map[string]interface{}{
-		"violation": map[string]interface{}{
+	"properties": map[string]any{
+		"violation": map[string]any{
 			"type":        "boolean",
 			"description": "Whether the content violates the policy",
 		},
-		"rationale": map[string]interface{}{
+		"rationale": map[string]any{
 			"type":        "string",
 			"description": "Brief explanation of the classification decision",
 		},

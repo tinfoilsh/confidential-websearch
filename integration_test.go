@@ -131,7 +131,7 @@ func TestIntegration_ChatCompletions_SimpleQuery(t *testing.T) {
 
 	srv := setupIntegrationServer(t)
 
-	requestBody := map[string]interface{}{
+	requestBody := map[string]any{
 		"model": "gpt-oss-120b-free",
 		"messages": []map[string]string{
 			{"role": "user", "content": "What is 2+2?"},
@@ -161,7 +161,7 @@ func TestIntegration_ChatCompletions_SimpleQuery(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, string(body))
 	}
 
-	var resp map[string]interface{}
+	var resp map[string]any
 	json.Unmarshal(w.Body.Bytes(), &resp)
 
 	if _, ok := resp["choices"]; !ok {
@@ -176,7 +176,7 @@ func TestIntegration_ChatCompletions_SearchQuery(t *testing.T) {
 
 	srv := setupIntegrationServer(t)
 
-	requestBody := map[string]interface{}{
+	requestBody := map[string]any{
 		"model": "gpt-oss-120b-free",
 		"messages": []map[string]string{
 			{"role": "user", "content": "What is the current weather in San Francisco? Search the web for the latest information."},
@@ -206,16 +206,16 @@ func TestIntegration_ChatCompletions_SearchQuery(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, string(body))
 	}
 
-	var resp map[string]interface{}
+	var resp map[string]any
 	json.Unmarshal(w.Body.Bytes(), &resp)
 
-	choices, ok := resp["choices"].([]interface{})
+	choices, ok := resp["choices"].([]any)
 	if !ok || len(choices) == 0 {
 		t.Fatal("response should have choices")
 	}
 
-	choice := choices[0].(map[string]interface{})
-	message := choice["message"].(map[string]interface{})
+	choice := choices[0].(map[string]any)
+	message := choice["message"].(map[string]any)
 
 	if message["content"] == "" {
 		t.Error("response content should not be empty")
@@ -229,7 +229,7 @@ func TestIntegration_Responses_SimpleQuery(t *testing.T) {
 
 	srv := setupIntegrationServer(t)
 
-	requestBody := map[string]interface{}{
+	requestBody := map[string]any{
 		"model": "gpt-oss-120b-free",
 		"input": "Tell me a joke",
 	}
@@ -256,14 +256,14 @@ func TestIntegration_Responses_SimpleQuery(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, string(body))
 	}
 
-	var resp map[string]interface{}
+	var resp map[string]any
 	json.Unmarshal(w.Body.Bytes(), &resp)
 
 	if resp["object"] != "response" {
 		t.Errorf("expected object 'response', got '%v'", resp["object"])
 	}
 
-	output, ok := resp["output"].([]interface{})
+	output, ok := resp["output"].([]any)
 	if !ok || len(output) == 0 {
 		t.Fatal("response should have output")
 	}

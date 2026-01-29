@@ -51,7 +51,7 @@ type ResponderResultData struct {
 	Object  string
 	Created int64
 	Content string
-	Usage   interface{}
+	Usage   openai.CompletionUsage
 }
 
 // Responder defines the interface for making responder LLM calls
@@ -111,7 +111,7 @@ func (s *AgentStage) Execute(ctx *Context) error {
 		return nil
 	}
 
-	ctx.State.Transition(StateProcessing, map[string]interface{}{"query": ctx.UserQuery})
+	ctx.State.Transition(StateProcessing, map[string]any{"query": ctx.UserQuery})
 
 	systemPrompt, messages := extractAgentContext(ctx.Request.Messages)
 	// Fallback for Responses API: if messages is empty, use ctx.UserQuery
