@@ -216,56 +216,37 @@ func (s *FilterResultsStage) Execute(ctx *Context) error {
 		return nil
 	}
 
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-
-	type checkResult struct {
-		toolCallIdx int
-		resultIdx   int
-		flagged     bool
-		rationale   string
+	// Flatten all search result contents for parallel checking
+	type resultRef struct {
+		tcIdx int
+		rIdx  int
 	}
-	results := make(chan checkResult, 100)
-
-	// Check all results in parallel
+	var refs []resultRef
+	var contents []string
 	for tcIdx, tc := range ctx.SearchResults {
 		for rIdx, r := range tc.Results {
-			wg.Add(1)
-			go func(tcI, rI int, content string) {
-				defer wg.Done()
-
-				check, err := s.Checker.Check(ctx.Context, s.Policy, content)
-				if err != nil {
-					log.Errorf("Injection check failed: %v", err)
-					// On error, allow the result to proceed
-					results <- checkResult{tcI, rI, false, ""}
-					return
-				}
-
-				if check.Violation {
-					log.Warnf("Prompt injection detected: %s", check.Rationale)
-				}
-
-				results <- checkResult{tcI, rI, check.Violation, check.Rationale}
-			}(tcIdx, rIdx, r.Content)
+			refs = append(refs, resultRef{tcIdx, rIdx})
+			contents = append(contents, r.Content)
 		}
 	}
 
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
+	checkResults := safeguard.CheckItems(ctx.Context, s.Checker, s.Policy, contents)
 
-	// Collect flagged results
+	// Build flagged map from results
 	flagged := make(map[int]map[int]bool)
-	for r := range results {
-		if r.flagged {
-			mu.Lock()
-			if flagged[r.toolCallIdx] == nil {
-				flagged[r.toolCallIdx] = make(map[int]bool)
+	for i, r := range checkResults {
+		ref := refs[i]
+		if r.Err != nil {
+			log.Errorf("Injection check failed: %v", r.Err)
+			// On error, allow the result to proceed
+			continue
+		}
+		if r.Violation {
+			log.Warnf("Prompt injection detected: %s", r.Rationale)
+			if flagged[ref.tcIdx] == nil {
+				flagged[ref.tcIdx] = make(map[int]bool)
 			}
-			flagged[r.toolCallIdx][r.resultIdx] = true
-			mu.Unlock()
+			flagged[ref.tcIdx][ref.rIdx] = true
 		}
 	}
 
