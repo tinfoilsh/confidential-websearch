@@ -53,8 +53,8 @@ type mockSearchCall struct {
 }
 
 type mockMetadataCall struct {
-	Annotations []pipeline.Annotation
-	Reasoning   string
+	Annotations     []pipeline.Annotation
+	SearchReasoning string
 }
 
 func (m *MockEventEmitter) EmitSearchCall(id, status, query, reason string) error {
@@ -70,7 +70,7 @@ func (m *MockEventEmitter) EmitMetadata(annotations []pipeline.Annotation, reaso
 	if m.EmitMetadataErr != nil {
 		return m.EmitMetadataErr
 	}
-	m.MetadataCalls = append(m.MetadataCalls, mockMetadataCall{Annotations: annotations, Reasoning: reasoning})
+	m.MetadataCalls = append(m.MetadataCalls, mockMetadataCall{Annotations: annotations, SearchReasoning: reasoning})
 	return nil
 }
 
