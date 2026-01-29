@@ -9,9 +9,8 @@ import (
 func TestPipelineError(t *testing.T) {
 	inner := errors.New("inner error")
 	err := &PipelineError{
-		Stage:     "validate",
-		Err:       inner,
-		Retryable: false,
+		Stage: "validate",
+		Err:   inner,
 	}
 
 	expected := `pipeline failed at stage "validate": inner error`

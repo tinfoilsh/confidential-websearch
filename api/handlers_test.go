@@ -441,57 +441,6 @@ func TestExtractRequestOptions_NoAuth(t *testing.T) {
 	}
 }
 
-func TestExtractUserQuery(t *testing.T) {
-	messages := []pipeline.Message{
-		{Role: "system", Content: toJSON("You are helpful")},
-		{Role: "user", Content: toJSON("First question")},
-		{Role: "assistant", Content: toJSON("First answer")},
-		{Role: "user", Content: toJSON("Second question")},
-	}
-
-	query := extractUserQuery(messages)
-	if query != "Second question" {
-		t.Errorf("expected 'Second question', got '%s'", query)
-	}
-}
-
-func TestExtractUserQuery_NoUserMessage(t *testing.T) {
-	messages := []pipeline.Message{
-		{Role: "system", Content: toJSON("You are helpful")},
-		{Role: "assistant", Content: toJSON("Hello")},
-	}
-
-	query := extractUserQuery(messages)
-	if query != "" {
-		t.Errorf("expected empty string, got '%s'", query)
-	}
-}
-
-func TestExtractUserQuery_EmptyMessages(t *testing.T) {
-	query := extractUserQuery(nil)
-	if query != "" {
-		t.Errorf("expected empty string, got '%s'", query)
-	}
-
-	query = extractUserQuery([]pipeline.Message{})
-	if query != "" {
-		t.Errorf("expected empty string, got '%s'", query)
-	}
-}
-
-func TestExtractUserQuery_EmptyContent(t *testing.T) {
-	messages := []pipeline.Message{
-		{Role: "user", Content: toJSON("")},
-		{Role: "user", Content: toJSON("Valid content")},
-		{Role: "user", Content: toJSON("")},
-	}
-
-	query := extractUserQuery(messages)
-	if query != "Valid content" {
-		t.Errorf("expected 'Valid content', got '%s'", query)
-	}
-}
-
 func TestParseRequestBody_Success(t *testing.T) {
 	body := bytes.NewReader([]byte(`{"model":"gpt-4","messages":[]}`))
 	req := httptest.NewRequest("POST", "/", body)
