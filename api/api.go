@@ -29,13 +29,10 @@ func RecoveryMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 func jsonError(w http.ResponseWriter, message string, code int) {
 	log.WithField("code", code).Warn(message)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{"error": message})
+	jsonErrorResponse(w, code, map[string]any{"error": message})
 }
 
 func jsonErrorResponse(w http.ResponseWriter, code int, body map[string]any) {
-	log.WithField("code", code).Warn("error response")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(body)
