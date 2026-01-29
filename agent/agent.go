@@ -46,6 +46,58 @@ func New(client *tinfoil.Client, model string) *Agent {
 	return &Agent{client: client, model: model}
 }
 
+// functionCall tracks a single function call being built from stream events
+type functionCall struct {
+	id        string
+	name      string
+	arguments strings.Builder
+}
+
+// streamParser handles parsing of streaming response events
+type streamParser struct {
+	functionCalls map[int]*functionCall
+	reasoning     strings.Builder
+	aborted       bool
+	cancel        context.CancelFunc
+}
+
+func newStreamParser(cancel context.CancelFunc) *streamParser {
+	return &streamParser{
+		functionCalls: make(map[int]*functionCall),
+		cancel:        cancel,
+	}
+}
+
+func (p *streamParser) handleEvent(event responses.ResponseStreamEventUnion) {
+	switch event.Type {
+	case "response.reasoning_text.delta":
+		p.reasoning.WriteString(event.Delta)
+
+	case "response.output_item.added":
+		if event.Item.Type == "function_call" {
+			fc := event.Item.AsFunctionCall()
+			p.functionCalls[int(event.OutputIndex)] = &functionCall{
+				id:   fc.CallID,
+				name: fc.Name,
+			}
+		} else if event.Item.Type == "message" {
+			log.Debug("Agent starting content generation, aborting (no search needed)")
+			p.cancel()
+			p.aborted = true
+		}
+
+	case "response.function_call_arguments.delta":
+		idx := int(event.OutputIndex)
+		args := event.Delta
+		if args == "" {
+			args = event.Arguments
+		}
+		if p.functionCalls[idx] != nil {
+			p.functionCalls[idx].arguments.WriteString(args)
+		}
+	}
+}
+
 // RunWithContext executes the agent with conversation context and optional streaming.
 // This is the main entry point for agent execution and implements AgentRunner interface.
 func (a *Agent) RunWithContext(ctx context.Context, messages []ContextMessage, systemPrompt string, onChunk ChunkCallback) (*Result, error) {
@@ -106,62 +158,24 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 
 	params.Instructions = openai.String(fullInstructions.String())
 
-	// Track function calls by output index
-	type functionCall struct {
-		id        string
-		name      string
-		arguments strings.Builder
-	}
-	functionCalls := make(map[int]*functionCall)
-	var reasoningBuilder strings.Builder
-
+	var parser *streamParser
 	if onChunk != nil {
-		// Create cancellable context for early abort
 		streamCtx, cancelStream := context.WithCancel(ctx)
 		defer cancelStream()
 
+		parser = newStreamParser(cancelStream)
 		stream := a.client.Responses.NewStreaming(streamCtx, params)
-		aborted := false
 
 		for stream.Next() {
 			event := stream.Current()
 			onChunk(event)
-
-			switch event.Type {
-			case "response.reasoning_text.delta":
-				reasoningBuilder.WriteString(event.Delta)
-
-			case "response.output_item.added":
-				if event.Item.Type == "function_call" {
-					fc := event.Item.AsFunctionCall()
-					functionCalls[int(event.OutputIndex)] = &functionCall{
-						id:   fc.CallID,
-						name: fc.Name,
-					}
-				} else if event.Item.Type == "message" {
-					// Agent is generating content instead of tool calls - abort early
-					log.Debug("Agent starting content generation, aborting (no search needed)")
-					cancelStream()
-					aborted = true
-				}
-
-			case "response.function_call_arguments.delta":
-				idx := int(event.OutputIndex)
-				args := event.Delta
-				if args == "" {
-					args = event.Arguments
-				}
-				if functionCalls[idx] != nil {
-					functionCalls[idx].arguments.WriteString(args)
-				}
-			}
-
-			if aborted {
+			parser.handleEvent(event)
+			if parser.aborted {
 				break
 			}
 		}
-		// Only check for errors if we didn't abort intentionally
-		if !aborted {
+
+		if !parser.aborted {
 			if err := stream.Err(); err != nil {
 				return nil, fmt.Errorf("agent streaming failed: %w", err)
 			}
@@ -172,36 +186,37 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 			return nil, fmt.Errorf("agent LLM call failed: %w", err)
 		}
 
+		parser = newStreamParser(nil)
 		for i, item := range resp.Output {
 			switch item.Type {
 			case "reasoning":
 				ri := item.AsReasoning()
 				for _, part := range ri.Summary {
 					if part.Type == "summary_text" {
-						reasoningBuilder.WriteString(part.Text)
+						parser.reasoning.WriteString(part.Text)
 					}
 				}
 			case "function_call":
 				fc := item.AsFunctionCall()
-				functionCalls[i] = &functionCall{
+				parser.functionCalls[i] = &functionCall{
 					id:   fc.CallID,
 					name: fc.Name,
 				}
-				functionCalls[i].arguments.WriteString(fc.Arguments)
+				parser.functionCalls[i].arguments.WriteString(fc.Arguments)
 			}
 		}
 	}
 
 	result := &Result{
-		SearchReasoning: reasoningBuilder.String(),
+		SearchReasoning: parser.reasoning.String(),
 	}
 
-	if len(functionCalls) == 0 {
+	if len(parser.functionCalls) == 0 {
 		log.Debug("Agent decided no search needed")
 		return result, nil
 	}
 
-	log.Debugf("Agent requested %d search(es)", len(functionCalls))
+	log.Debugf("Agent requested %d search(es)", len(parser.functionCalls))
 
 	// Collect queries from function calls
 	type queryItem struct {
@@ -210,7 +225,7 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 	}
 	var queries []queryItem
 
-	for _, fc := range functionCalls {
+	for _, fc := range parser.functionCalls {
 		if fc.name != "search" {
 			continue
 		}
