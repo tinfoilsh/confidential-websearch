@@ -18,19 +18,6 @@ const (
 	FormatResponses
 )
 
-// ReasoningSummaryPart represents a part of the reasoning summary (mirrors agent.ReasoningSummaryPart)
-type ReasoningSummaryPart struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-// ReasoningItem represents a reasoning item from the Responses API (mirrors agent.ReasoningItem)
-type ReasoningItem struct {
-	ID      string                 `json:"id"`
-	Type    string                 `json:"type"`
-	Summary []ReasoningSummaryPart `json:"summary"`
-}
-
 // Message represents a chat message
 type Message struct {
 	Role        string          `json:"role"`
@@ -158,8 +145,8 @@ type EventEmitter interface {
 	// EmitSearchCall emits a web search call event (reason is optional, used for blocked status)
 	EmitSearchCall(id, status, query, reason string) error
 
-	// EmitMetadata emits annotations, reasoning, and reasoning items before content
-	EmitMetadata(annotations []Annotation, reasoning string, reasoningItems []ReasoningItem) error
+	// EmitMetadata emits annotations and reasoning before content
+	EmitMetadata(annotations []Annotation, reasoning string) error
 
 	// EmitChunk emits a raw chunk of data
 	EmitChunk(data []byte) error

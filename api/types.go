@@ -46,19 +46,6 @@ type IncomingRequest struct {
 	Tools       []Tool    `json:"tools,omitempty"`
 }
 
-// ReasoningSummaryPart represents a part of the reasoning summary
-type ReasoningSummaryPart struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-// ReasoningItem represents a reasoning item for multi-turn context
-type ReasoningItem struct {
-	ID      string                 `json:"id"`
-	Type    string                 `json:"type"`
-	Summary []ReasoningSummaryPart `json:"summary"`
-}
-
 // Message represents a chat message in the incoming request
 type Message struct {
 	Role        string                `json:"role"`
@@ -79,7 +66,6 @@ type WebSearchCall struct {
 type StreamingDelta struct {
 	Annotations     []pipeline.Annotation `json:"annotations,omitempty"`
 	SearchReasoning string                `json:"search_reasoning,omitempty"`
-	ReasoningItems  []ReasoningItem       `json:"reasoning_items,omitempty"`
 }
 
 // StreamingChoice represents a choice in a streaming chunk
@@ -129,7 +115,6 @@ type ResponsesContent struct {
 	Text            string           `json:"text"`
 	Annotations     []FlatAnnotation `json:"annotations,omitempty"`
 	SearchReasoning string           `json:"search_reasoning,omitempty"`
-	ReasoningItems  []ReasoningItem  `json:"reasoning_items,omitempty"`
 }
 
 // ResponsesRequest represents the incoming request for the Responses API
@@ -175,6 +160,5 @@ type ChatCompletionMessageOutput struct {
 	Content         string                `json:"content"`
 	Annotations     []pipeline.Annotation `json:"annotations,omitempty"`
 	SearchReasoning string                `json:"search_reasoning,omitempty"`
-	ReasoningItems  []ReasoningItem       `json:"reasoning_items,omitempty"`
 	BlockedSearches []BlockedSearch       `json:"blocked_searches,omitempty"`
 }

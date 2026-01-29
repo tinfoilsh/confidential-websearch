@@ -57,7 +57,7 @@ type ResponderResultData struct {
 // Responder defines the interface for making responder LLM calls
 type Responder interface {
 	Complete(ctx context.Context, params ResponderParams, opts ...option.RequestOption) (*ResponderResultData, error)
-	Stream(ctx context.Context, params ResponderParams, annotations []Annotation, reasoning string, reasoningItems []ReasoningItem, emitter EventEmitter, opts ...option.RequestOption) error
+	Stream(ctx context.Context, params ResponderParams, annotations []Annotation, reasoning string, emitter EventEmitter, opts ...option.RequestOption) error
 }
 
 // ValidateStage validates the incoming request
@@ -338,20 +338,11 @@ func (s *ResponderStage) Execute(ctx *Context) error {
 	if ctx.IsStreaming() {
 		annotations := BuildAnnotations(ctx.SearchResults)
 		reasoning := ""
-		var reasoningItems []ReasoningItem
 		if ctx.AgentResult != nil {
 			reasoning = ctx.AgentResult.AgentReasoning
-			// Convert agent reasoning items to pipeline format
-			for _, ri := range ctx.AgentResult.ReasoningItems {
-				pRI := ReasoningItem{ID: ri.ID, Type: ri.Type}
-				for _, s := range ri.Summary {
-					pRI.Summary = append(pRI.Summary, ReasoningSummaryPart{Type: s.Type, Text: s.Text})
-				}
-				reasoningItems = append(reasoningItems, pRI)
-			}
 		}
 
-		err := s.Responder.Stream(ctx.Context, params, annotations, reasoning, reasoningItems, ctx.Emitter, ctx.ReqOpts...)
+		err := s.Responder.Stream(ctx.Context, params, annotations, reasoning, ctx.Emitter, ctx.ReqOpts...)
 		if err != nil {
 			return &ResponderError{Err: err}
 		}
