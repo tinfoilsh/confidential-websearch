@@ -114,7 +114,6 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 	}
 	functionCalls := make(map[int]*functionCall)
 	var reasoningBuilder strings.Builder
-	var reasoningItems []ReasoningItem
 
 	if onChunk != nil {
 		// Create cancellable context for early abort
@@ -122,8 +121,6 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 		defer cancelStream()
 
 		stream := a.client.Responses.NewStreaming(streamCtx, params)
-
-		var currentReasoningItem *ReasoningItem
 		aborted := false
 
 		for stream.Next() {
@@ -141,32 +138,11 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 						id:   fc.CallID,
 						name: fc.Name,
 					}
-				} else if event.Item.Type == "reasoning" {
-					ri := event.Item.AsReasoning()
-					currentReasoningItem = &ReasoningItem{
-						ID:   ri.ID,
-						Type: "reasoning",
-					}
 				} else if event.Item.Type == "message" {
 					// Agent is generating content instead of tool calls - abort early
 					log.Debug("Agent starting content generation, aborting (no search needed)")
 					cancelStream()
 					aborted = true
-				}
-
-			case "response.output_item.done":
-				if event.Item.Type == "reasoning" && currentReasoningItem != nil {
-					ri := event.Item.AsReasoning()
-					for _, s := range ri.Summary {
-						if s.Type == "summary_text" {
-							currentReasoningItem.Summary = append(currentReasoningItem.Summary, ReasoningSummaryPart{
-								Type: "summary_text",
-								Text: s.Text,
-							})
-						}
-					}
-					reasoningItems = append(reasoningItems, *currentReasoningItem)
-					currentReasoningItem = nil
 				}
 
 			case "response.function_call_arguments.delta":
@@ -200,20 +176,11 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 			switch item.Type {
 			case "reasoning":
 				ri := item.AsReasoning()
-				reasoningItem := ReasoningItem{
-					ID:   ri.ID,
-					Type: "reasoning",
-				}
 				for _, part := range ri.Summary {
 					if part.Type == "summary_text" {
 						reasoningBuilder.WriteString(part.Text)
-						reasoningItem.Summary = append(reasoningItem.Summary, ReasoningSummaryPart{
-							Type: "summary_text",
-							Text: part.Text,
-						})
 					}
 				}
-				reasoningItems = append(reasoningItems, reasoningItem)
 			case "function_call":
 				fc := item.AsFunctionCall()
 				functionCalls[i] = &functionCall{
@@ -226,8 +193,7 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 	}
 
 	result := &Result{
-		AgentReasoning: reasoningBuilder.String(),
-		ReasoningItems: reasoningItems,
+		SearchReasoning: reasoningBuilder.String(),
 	}
 
 	if len(functionCalls) == 0 {

@@ -245,7 +245,7 @@ func TestAgentStage_Success(t *testing.T) {
 	mockAgent := &MockAgentRunner{
 		RunWithContextFunc: func(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error) {
 			return &agent.Result{
-				AgentReasoning: "searched for info",
+				SearchReasoning: "searched for info",
 				PendingSearches: []agent.PendingSearch{
 					{ID: "call_1", Query: "test query"},
 				},
@@ -283,7 +283,7 @@ func TestAgentStage_NoSearch(t *testing.T) {
 	mockAgent := &MockAgentRunner{
 		RunWithContextFunc: func(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error) {
 			return &agent.Result{
-				AgentReasoning:  "no search needed",
+				SearchReasoning:  "no search needed",
 				PendingSearches: []agent.PendingSearch{},
 			}, nil
 		},
@@ -428,7 +428,7 @@ func TestResponderStage_Streaming(t *testing.T) {
 		ResponderMessages: []openai.ChatCompletionMessageParamUnion{
 			openai.UserMessage("test"),
 		},
-		AgentResult: &agent.Result{AgentReasoning: "searched"},
+		AgentResult: &agent.Result{SearchReasoning: "searched"},
 		State:       NewStateTracker(),
 		Emitter:     emitter,
 	}

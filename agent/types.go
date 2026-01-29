@@ -31,19 +31,6 @@ type PendingSearch struct {
 	Query string `json:"query"`
 }
 
-// ReasoningSummaryPart represents a part of the reasoning summary
-type ReasoningSummaryPart struct {
-	Type string `json:"type"` // "summary_text"
-	Text string `json:"text"`
-}
-
-// ReasoningItem represents a reasoning item from the Responses API
-type ReasoningItem struct {
-	ID      string                 `json:"id"`
-	Type    string                 `json:"type"` // "reasoning"
-	Summary []ReasoningSummaryPart `json:"summary"`
-}
-
 // ContextMessage represents a message in the conversation context for the agent
 type ContextMessage struct {
 	Role    string // "user", "assistant", or "system"
@@ -54,8 +41,7 @@ type ContextMessage struct {
 type Result struct {
 	PendingSearches []PendingSearch // Searches to execute (after PII filtering)
 	BlockedQueries  []BlockedQuery  // Queries blocked by PII filter
-	AgentReasoning  string
-	ReasoningItems  []ReasoningItem // Included in API response for client display
+	SearchReasoning string          // Agent's reasoning about search decisions
 }
 
 // ChunkCallback is called for each streaming event from the agent LLM

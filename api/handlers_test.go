@@ -93,7 +93,7 @@ func (ts *TestableServer) HandleChatCompletions(w http.ResponseWriter, r *http.R
 					Role:            "assistant",
 					Content:         result.Content,
 					Annotations:     annotations,
-					SearchReasoning: pctx.AgentResult.AgentReasoning,
+					SearchReasoning: pctx.AgentResult.SearchReasoning,
 				},
 			},
 		},
@@ -190,7 +190,7 @@ func TestHandleChatCompletions_NonStreaming_Success(t *testing.T) {
 				Context: cancelCtx,
 				Cancel:  cancel,
 				AgentResult: &agent.Result{
-					AgentReasoning: "Searched for test query",
+					SearchReasoning: "Searched for test query",
 				},
 				SearchResults: []agent.ToolCall{
 					{

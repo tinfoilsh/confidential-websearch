@@ -339,7 +339,7 @@ func (s *ResponderStage) Execute(ctx *Context) error {
 		annotations := BuildAnnotations(ctx.SearchResults)
 		reasoning := ""
 		if ctx.AgentResult != nil {
-			reasoning = ctx.AgentResult.AgentReasoning
+			reasoning = ctx.AgentResult.SearchReasoning
 		}
 
 		err := s.Responder.Stream(ctx.Context, params, annotations, reasoning, ctx.Emitter, ctx.ReqOpts...)

@@ -171,7 +171,7 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 	var blockedSearches []BlockedSearch
 	var agentReasoning string
 	if pctx.AgentResult != nil {
-		agentReasoning = pctx.AgentResult.AgentReasoning
+		agentReasoning = pctx.AgentResult.SearchReasoning
 		for _, bq := range pctx.AgentResult.BlockedQueries {
 			blockedSearches = append(blockedSearches, BlockedSearch{
 				ID:     bq.ID,
@@ -269,7 +269,7 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	// Extract agent reasoning
 	var agentReasoning string
 	if pctx.AgentResult != nil {
-		agentReasoning = pctx.AgentResult.AgentReasoning
+		agentReasoning = pctx.AgentResult.SearchReasoning
 	}
 
 	var output []ResponsesOutput
