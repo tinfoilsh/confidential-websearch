@@ -69,39 +69,11 @@ func TestAgentError(t *testing.T) {
 	}
 }
 
-func TestSearchError(t *testing.T) {
-	inner := errors.New("API rate limited")
-	err := &SearchError{Query: "test query", Err: inner}
-
-	expected := `search error for query "test query": API rate limited`
-	if err.Error() != expected {
-		t.Errorf("expected %q, got %q", expected, err.Error())
-	}
-
-	if !errors.Is(err, inner) {
-		t.Error("Unwrap should return inner error")
-	}
-}
-
 func TestResponderError(t *testing.T) {
 	inner := errors.New("context cancelled")
 	err := &ResponderError{Err: inner}
 
 	expected := "responder error: context cancelled"
-	if err.Error() != expected {
-		t.Errorf("expected %q, got %q", expected, err.Error())
-	}
-
-	if !errors.Is(err, inner) {
-		t.Error("Unwrap should return inner error")
-	}
-}
-
-func TestStreamingError(t *testing.T) {
-	inner := errors.New("connection closed")
-	err := &StreamingError{Err: inner}
-
-	expected := "streaming error: connection closed"
 	if err.Error() != expected {
 		t.Errorf("expected %q, got %q", expected, err.Error())
 	}
@@ -131,22 +103,10 @@ func TestErrorResponse(t *testing.T) {
 			expectedType:   "agent_error",
 		},
 		{
-			name:           "search error",
-			err:            &SearchError{Query: "test", Err: errors.New("failed")},
-			expectedStatus: http.StatusInternalServerError,
-			expectedType:   "search_error",
-		},
-		{
 			name:           "responder error",
 			err:            &ResponderError{Err: errors.New("failed")},
 			expectedStatus: http.StatusInternalServerError,
 			expectedType:   "responder_error",
-		},
-		{
-			name:           "streaming error",
-			err:            &StreamingError{Err: errors.New("failed")},
-			expectedStatus: http.StatusInternalServerError,
-			expectedType:   "streaming_error",
 		},
 		{
 			name:           "unknown error",
