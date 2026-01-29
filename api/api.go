@@ -167,25 +167,11 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 	result := pctx.ResponderResult.(*pipeline.ResponderResultData)
 	annotations := pipeline.BuildAnnotations(pctx.SearchResults)
 
-	// Convert agent reasoning items and blocked queries to API format
-	var reasoningItems []ReasoningItem
+	// Convert agent reasoning and blocked queries to API format
 	var blockedSearches []BlockedSearch
 	var agentReasoning string
 	if pctx.AgentResult != nil {
 		agentReasoning = pctx.AgentResult.AgentReasoning
-		for _, ri := range pctx.AgentResult.ReasoningItems {
-			apiRI := ReasoningItem{
-				ID:   ri.ID,
-				Type: ri.Type,
-			}
-			for _, s := range ri.Summary {
-				apiRI.Summary = append(apiRI.Summary, ReasoningSummaryPart{
-					Type: s.Type,
-					Text: s.Text,
-				})
-			}
-			reasoningItems = append(reasoningItems, apiRI)
-		}
 		for _, bq := range pctx.AgentResult.BlockedQueries {
 			blockedSearches = append(blockedSearches, BlockedSearch{
 				ID:     bq.ID,
@@ -210,7 +196,6 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 					Content:         result.Content,
 					Annotations:     annotations,
 					SearchReasoning: agentReasoning,
-					ReasoningItems:  reasoningItems,
 					BlockedSearches: blockedSearches,
 				},
 			},
@@ -281,24 +266,10 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	result := pctx.ResponderResult.(*pipeline.ResponderResultData)
 	flatAnnotations := buildFlatAnnotations(pctx.SearchResults)
 
-	// Convert agent reasoning items to API format
-	var reasoningItems []ReasoningItem
+	// Extract agent reasoning
 	var agentReasoning string
 	if pctx.AgentResult != nil {
 		agentReasoning = pctx.AgentResult.AgentReasoning
-		for _, ri := range pctx.AgentResult.ReasoningItems {
-			apiRI := ReasoningItem{
-				ID:   ri.ID,
-				Type: ri.Type,
-			}
-			for _, s := range ri.Summary {
-				apiRI.Summary = append(apiRI.Summary, ReasoningSummaryPart{
-					Type: s.Type,
-					Text: s.Text,
-				})
-			}
-			reasoningItems = append(reasoningItems, apiRI)
-		}
 	}
 
 	var output []ResponsesOutput
@@ -342,7 +313,6 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 				Text:            result.Content,
 				Annotations:     flatAnnotations,
 				SearchReasoning: agentReasoning,
-				ReasoningItems:  reasoningItems,
 			},
 		},
 	})
