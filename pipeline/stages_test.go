@@ -72,8 +72,8 @@ func (m *MockSafeguardChecker) Check(ctx context.Context, policy, content string
 // MockEventEmitter implements EventEmitter for testing
 type MockEventEmitter struct {
 	MetadataCalls []struct {
-		Annotations []Annotation
-		Reasoning   string
+		Annotations     []Annotation
+		SearchReasoning string
 	}
 	Chunks     [][]byte
 	Errors     []error
@@ -84,11 +84,11 @@ func (m *MockEventEmitter) EmitSearchCall(id, status, query, reason string) erro
 	return nil
 }
 
-func (m *MockEventEmitter) EmitMetadata(annotations []Annotation, reasoning string) error {
+func (m *MockEventEmitter) EmitMetadata(annotations []Annotation, searchReasoning string) error {
 	m.MetadataCalls = append(m.MetadataCalls, struct {
-		Annotations []Annotation
-		Reasoning   string
-	}{annotations, reasoning})
+		Annotations     []Annotation
+		SearchReasoning string
+	}{annotations, searchReasoning})
 	return nil
 }
 
