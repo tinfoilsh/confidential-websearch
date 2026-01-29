@@ -397,13 +397,8 @@ func TestResponderStage_NonStreaming(t *testing.T) {
 		t.Fatal("expected responder result to be set")
 	}
 
-	result, ok := ctx.ResponderResult.(*ResponderResultData)
-	if !ok {
-		t.Fatalf("expected *ResponderResultData, got %T", ctx.ResponderResult)
-	}
-
-	if result.Content != "Hello world" {
-		t.Errorf("expected content 'Hello world', got %q", result.Content)
+	if ctx.ResponderResult.Content != "Hello world" {
+		t.Errorf("expected content 'Hello world', got %q", ctx.ResponderResult.Content)
 	}
 
 	if ctx.State.Current() != StateCompleted {

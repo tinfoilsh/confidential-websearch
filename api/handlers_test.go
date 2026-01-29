@@ -76,7 +76,7 @@ func (ts *TestableServer) HandleChatCompletions(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	result := pctx.ResponderResult.(*pipeline.ResponderResultData)
+	result := pctx.ResponderResult
 	annotations := pipeline.BuildAnnotations(pctx.SearchResults)
 
 	response := ChatCompletionResponse{

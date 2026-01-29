@@ -116,7 +116,7 @@ type Context struct {
 	AgentResult       *agent.Result
 	SearchResults     []agent.ToolCall // Executed search results
 	ResponderMessages []openai.ChatCompletionMessageParamUnion
-	ResponderResult   interface{} // Holds *llm.ResponderResult for non-streaming
+	ResponderResult   *ResponderResultData // Non-streaming responder result
 
 	// State tracking
 	State StateTracker
