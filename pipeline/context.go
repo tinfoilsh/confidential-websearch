@@ -28,17 +28,20 @@ type Message struct {
 // GetTextContent extracts text from Content (handles both string and multimodal array).
 // Only used for agent operations (search, PII, prompt injection) - not for responder.
 func (m *Message) GetTextContent() string {
-	// Try string first
+	return ExtractTextContent(m.Content)
+}
+
+// ExtractTextContent extracts text from a json.RawMessage that may be a string or multimodal array.
+func ExtractTextContent(content json.RawMessage) string {
 	var s string
-	if json.Unmarshal(m.Content, &s) == nil {
+	if json.Unmarshal(content, &s) == nil {
 		return s
 	}
-	// Try array of content parts - only extract text
 	var parts []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	}
-	if json.Unmarshal(m.Content, &parts) == nil {
+	if json.Unmarshal(content, &parts) == nil {
 		for _, p := range parts {
 			if p.Type == "text" {
 				return p.Text
