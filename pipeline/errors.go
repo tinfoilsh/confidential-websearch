@@ -47,20 +47,6 @@ func (e *AgentError) Unwrap() error {
 	return e.Err
 }
 
-// SearchError indicates a web search failed
-type SearchError struct {
-	Query string
-	Err   error
-}
-
-func (e *SearchError) Error() string {
-	return fmt.Sprintf("search error for query %q: %v", e.Query, e.Err)
-}
-
-func (e *SearchError) Unwrap() error {
-	return e.Err
-}
-
 // ResponderError indicates the responder LLM call failed
 type ResponderError struct {
 	Err error
@@ -74,26 +60,11 @@ func (e *ResponderError) Unwrap() error {
 	return e.Err
 }
 
-// StreamingError indicates an error during streaming response
-type StreamingError struct {
-	Err error
-}
-
-func (e *StreamingError) Error() string {
-	return fmt.Sprintf("streaming error: %v", e.Err)
-}
-
-func (e *StreamingError) Unwrap() error {
-	return e.Err
-}
-
 // ErrorResponse maps an error to an HTTP status code and response body
 func ErrorResponse(err error) (int, map[string]any) {
 	var validationErr *ValidationError
 	var agentErr *AgentError
-	var searchErr *SearchError
 	var responderErr *ResponderError
-	var streamingErr *StreamingError
 	var pipelineErr *PipelineError
 
 	// Check for pipeline error first and unwrap
@@ -119,27 +90,11 @@ func ErrorResponse(err error) (int, map[string]any) {
 			},
 		}
 
-	case errors.As(err, &searchErr):
-		return http.StatusInternalServerError, map[string]interface{}{
-			"error": map[string]string{
-				"message": "web search failed",
-				"type":    "search_error",
-			},
-		}
-
 	case errors.As(err, &responderErr):
 		return http.StatusInternalServerError, map[string]any{
 			"error": map[string]string{
 				"message": "response generation failed",
 				"type":    "responder_error",
-			},
-		}
-
-	case errors.As(err, &streamingErr):
-		return http.StatusInternalServerError, map[string]interface{}{
-			"error": map[string]string{
-				"message": "streaming failed",
-				"type":    "streaming_error",
 			},
 		}
 

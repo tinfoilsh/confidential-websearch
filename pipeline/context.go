@@ -102,9 +102,6 @@ func (r *Request) HasTool(toolType string) bool {
 type Context struct {
 	context.Context
 
-	// Identification
-	RequestID string
-
 	// Input
 	Request   *Request
 	UserQuery string
@@ -128,15 +125,6 @@ type Context struct {
 	Cancel context.CancelFunc
 }
 
-// NewContext creates a new pipeline context
-func NewContext(ctx context.Context, requestID string, req *Request) *Context {
-	return &Context{
-		Context:   ctx,
-		RequestID: requestID,
-		Request:   req,
-		State:     NewStateTracker(),
-	}
-}
 
 // IsStreaming returns true if this is a streaming request
 func (c *Context) IsStreaming() bool {
