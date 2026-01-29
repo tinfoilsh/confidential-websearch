@@ -8,7 +8,7 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
 )
 
-// Tool type constant for PII check
+// ToolTypePIICheck is the tool type for PII checking
 const ToolTypePIICheck = "pii_check"
 
 type toolsKey struct{}
