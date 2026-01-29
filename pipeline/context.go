@@ -18,19 +18,6 @@ const (
 	FormatResponses
 )
 
-// ReasoningSummaryPart represents a part of the reasoning summary (mirrors agent.ReasoningSummaryPart)
-type ReasoningSummaryPart struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-// ReasoningItem represents a reasoning item from the Responses API (mirrors agent.ReasoningItem)
-type ReasoningItem struct {
-	ID      string                 `json:"id"`
-	Type    string                 `json:"type"`
-	Summary []ReasoningSummaryPart `json:"summary"`
-}
-
 // Message represents a chat message
 type Message struct {
 	Role        string          `json:"role"`
@@ -41,17 +28,20 @@ type Message struct {
 // GetTextContent extracts text from Content (handles both string and multimodal array).
 // Only used for agent operations (search, PII, prompt injection) - not for responder.
 func (m *Message) GetTextContent() string {
-	// Try string first
+	return ExtractTextContent(m.Content)
+}
+
+// ExtractTextContent extracts text from a json.RawMessage that may be a string or multimodal array.
+func ExtractTextContent(content json.RawMessage) string {
 	var s string
-	if json.Unmarshal(m.Content, &s) == nil {
+	if json.Unmarshal(content, &s) == nil {
 		return s
 	}
-	// Try array of content parts - only extract text
 	var parts []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	}
-	if json.Unmarshal(m.Content, &parts) == nil {
+	if json.Unmarshal(content, &parts) == nil {
 		for _, p := range parts {
 			if p.Type == "text" {
 				return p.Text
@@ -126,7 +116,7 @@ type Context struct {
 	AgentResult       *agent.Result
 	SearchResults     []agent.ToolCall // Executed search results
 	ResponderMessages []openai.ChatCompletionMessageParamUnion
-	ResponderResult   interface{} // Holds *llm.ResponderResult for non-streaming
+	ResponderResult   *ResponderResultData // Non-streaming responder result
 
 	// State tracking
 	State StateTracker
@@ -158,8 +148,8 @@ type EventEmitter interface {
 	// EmitSearchCall emits a web search call event (reason is optional, used for blocked status)
 	EmitSearchCall(id, status, query, reason string) error
 
-	// EmitMetadata emits annotations, reasoning, and reasoning items before content
-	EmitMetadata(annotations []Annotation, reasoning string, reasoningItems []ReasoningItem) error
+	// EmitMetadata emits annotations and reasoning before content
+	EmitMetadata(annotations []Annotation, reasoning string) error
 
 	// EmitChunk emits a raw chunk of data
 	EmitChunk(data []byte) error

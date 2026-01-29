@@ -2,14 +2,13 @@ package agent
 
 import (
 	"context"
-	"sync"
 
 	log "github.com/sirupsen/logrus"
 
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
 )
 
-// Tool type constant for PII check
+// ToolTypePIICheck is the tool type for PII checking
 const ToolTypePIICheck = "pii_check"
 
 type toolsKey struct{}
@@ -21,8 +20,8 @@ func WithTools(ctx context.Context, tools []string) context.Context {
 
 // getTools returns the tools from context, or nil if not set
 func getTools(ctx context.Context) []string {
-	if v := ctx.Value(toolsKey{}); v != nil {
-		return v.([]string)
+	if v, ok := ctx.Value(toolsKey{}).([]string); ok {
+		return v
 	}
 	return nil
 }
@@ -105,63 +104,23 @@ func (s *SafeAgent) createPIIFilterWithClient(ctx context.Context, client Safegu
 			return FilterResult{Allowed: queries}
 		}
 
-		// Check all queries in parallel
-		type checkResult struct {
-			index     int
-			allowed   bool
-			rationale string
-		}
+		results := safeguard.CheckItems(filterCtx, client, safeguard.PIILeakagePolicy, queries)
 
-		results := make(chan checkResult, len(queries))
-		var wg sync.WaitGroup
-
-		for i, query := range queries {
-			wg.Add(1)
-			go func(idx int, q string) {
-				defer wg.Done()
-
-				check, err := client.Check(filterCtx, safeguard.PIILeakagePolicy, q)
-				if err != nil {
-					log.Errorf("PII check failed: %v", err)
-					// On error, allow the query to proceed
-					results <- checkResult{idx, true, ""}
-					return
-				}
-
-				if check.Violation {
-					log.Debug("PII violation detected in query")
-				}
-
-				results <- checkResult{idx, !check.Violation, check.Rationale}
-			}(i, query)
-		}
-
-		// Close results channel when all checks complete
-		go func() {
-			wg.Wait()
-			close(results)
-		}()
-
-		// Collect results preserving order
-		type queryResult struct {
-			allowed   bool
-			rationale string
-		}
-		queryResults := make([]queryResult, len(queries))
-		for r := range results {
-			queryResults[r.index] = queryResult{r.allowed, r.rationale}
-		}
-
-		// Build filter result
 		var filterResult FilterResult
 		for i, query := range queries {
-			if queryResults[i].allowed {
+			r := results[i]
+			if r.Err != nil {
+				log.Errorf("PII check failed: %v", r.Err)
+				// On error, allow the query to proceed
 				filterResult.Allowed = append(filterResult.Allowed, query)
-			} else {
+			} else if r.Violation {
+				log.Debug("PII violation detected in query")
 				filterResult.Blocked = append(filterResult.Blocked, BlockedQuery{
 					Query:  query,
-					Reason: queryResults[i].rationale,
+					Reason: r.Rationale,
 				})
+			} else {
+				filterResult.Allowed = append(filterResult.Allowed, query)
 			}
 		}
 

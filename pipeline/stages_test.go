@@ -40,7 +40,7 @@ func (m *MockMessageBuilder) Build(inputMessages []Message, searchResults []agen
 // MockResponder implements Responder for testing
 type MockResponder struct {
 	CompleteFunc func(ctx context.Context, params ResponderParams, opts ...option.RequestOption) (*ResponderResultData, error)
-	StreamFunc   func(ctx context.Context, params ResponderParams, annotations []Annotation, reasoning string, reasoningItems []ReasoningItem, emitter EventEmitter, opts ...option.RequestOption) error
+	StreamFunc   func(ctx context.Context, params ResponderParams, annotations []Annotation, reasoning string, emitter EventEmitter, opts ...option.RequestOption) error
 }
 
 func (m *MockResponder) Complete(ctx context.Context, params ResponderParams, opts ...option.RequestOption) (*ResponderResultData, error) {
@@ -50,9 +50,9 @@ func (m *MockResponder) Complete(ctx context.Context, params ResponderParams, op
 	return &ResponderResultData{Content: "test"}, nil
 }
 
-func (m *MockResponder) Stream(ctx context.Context, params ResponderParams, annotations []Annotation, reasoning string, reasoningItems []ReasoningItem, emitter EventEmitter, opts ...option.RequestOption) error {
+func (m *MockResponder) Stream(ctx context.Context, params ResponderParams, annotations []Annotation, reasoning string, emitter EventEmitter, opts ...option.RequestOption) error {
 	if m.StreamFunc != nil {
-		return m.StreamFunc(ctx, params, annotations, reasoning, reasoningItems, emitter, opts...)
+		return m.StreamFunc(ctx, params, annotations, reasoning, emitter, opts...)
 	}
 	return nil
 }
@@ -72,9 +72,8 @@ func (m *MockSafeguardChecker) Check(ctx context.Context, policy, content string
 // MockEventEmitter implements EventEmitter for testing
 type MockEventEmitter struct {
 	MetadataCalls []struct {
-		Annotations    []Annotation
-		Reasoning      string
-		ReasoningItems []ReasoningItem
+		Annotations     []Annotation
+		SearchReasoning string
 	}
 	Chunks     [][]byte
 	Errors     []error
@@ -85,12 +84,11 @@ func (m *MockEventEmitter) EmitSearchCall(id, status, query, reason string) erro
 	return nil
 }
 
-func (m *MockEventEmitter) EmitMetadata(annotations []Annotation, reasoning string, reasoningItems []ReasoningItem) error {
+func (m *MockEventEmitter) EmitMetadata(annotations []Annotation, searchReasoning string) error {
 	m.MetadataCalls = append(m.MetadataCalls, struct {
-		Annotations    []Annotation
-		Reasoning      string
-		ReasoningItems []ReasoningItem
-	}{annotations, reasoning, reasoningItems})
+		Annotations     []Annotation
+		SearchReasoning string
+	}{annotations, searchReasoning})
 	return nil
 }
 
@@ -247,7 +245,7 @@ func TestAgentStage_Success(t *testing.T) {
 	mockAgent := &MockAgentRunner{
 		RunWithContextFunc: func(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error) {
 			return &agent.Result{
-				AgentReasoning: "searched for info",
+				SearchReasoning: "searched for info",
 				PendingSearches: []agent.PendingSearch{
 					{ID: "call_1", Query: "test query"},
 				},
@@ -285,7 +283,7 @@ func TestAgentStage_NoSearch(t *testing.T) {
 	mockAgent := &MockAgentRunner{
 		RunWithContextFunc: func(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error) {
 			return &agent.Result{
-				AgentReasoning:  "no search needed",
+				SearchReasoning:  "no search needed",
 				PendingSearches: []agent.PendingSearch{},
 			}, nil
 		},
@@ -399,13 +397,8 @@ func TestResponderStage_NonStreaming(t *testing.T) {
 		t.Fatal("expected responder result to be set")
 	}
 
-	result, ok := ctx.ResponderResult.(*ResponderResultData)
-	if !ok {
-		t.Fatalf("expected *ResponderResultData, got %T", ctx.ResponderResult)
-	}
-
-	if result.Content != "Hello world" {
-		t.Errorf("expected content 'Hello world', got %q", result.Content)
+	if ctx.ResponderResult.Content != "Hello world" {
+		t.Errorf("expected content 'Hello world', got %q", ctx.ResponderResult.Content)
 	}
 
 	if ctx.State.Current() != StateCompleted {
@@ -416,7 +409,7 @@ func TestResponderStage_NonStreaming(t *testing.T) {
 func TestResponderStage_Streaming(t *testing.T) {
 	emitter := &MockEventEmitter{}
 	mockResponder := &MockResponder{
-		StreamFunc: func(ctx context.Context, params ResponderParams, annotations []Annotation, reasoning string, reasoningItems []ReasoningItem, e EventEmitter, opts ...option.RequestOption) error {
+		StreamFunc: func(ctx context.Context, params ResponderParams, annotations []Annotation, reasoning string, e EventEmitter, opts ...option.RequestOption) error {
 			e.EmitChunk([]byte(`{"content": "test"}`))
 			e.EmitDone()
 			return nil
@@ -430,7 +423,7 @@ func TestResponderStage_Streaming(t *testing.T) {
 		ResponderMessages: []openai.ChatCompletionMessageParamUnion{
 			openai.UserMessage("test"),
 		},
-		AgentResult: &agent.Result{AgentReasoning: "searched"},
+		AgentResult: &agent.Result{SearchReasoning: "searched"},
 		State:       NewStateTracker(),
 		Emitter:     emitter,
 	}

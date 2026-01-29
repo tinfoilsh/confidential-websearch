@@ -80,22 +80,7 @@ func FormatSearchResult(index int, title, url, content string) string {
 
 // contentToString extracts text from Content for system/assistant messages.
 func contentToString(content json.RawMessage) string {
-	var s string
-	if json.Unmarshal(content, &s) == nil {
-		return s
-	}
-	var parts []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	if json.Unmarshal(content, &parts) == nil {
-		for _, p := range parts {
-			if p.Type == "text" {
-				return p.Text
-			}
-		}
-	}
-	return ""
+	return pipeline.ExtractTextContent(content)
 }
 
 // buildUserMessage creates a user message, passing content through verbatim via SDK unmarshalling.

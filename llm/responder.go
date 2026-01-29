@@ -2,13 +2,11 @@ package llm
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/openai/openai-go/v3/shared"
-	log "github.com/sirupsen/logrus"
 
 	"github.com/tinfoilsh/confidential-websearch/pipeline"
 )
@@ -66,7 +64,7 @@ func (r *TinfoilResponder) Complete(ctx context.Context, params pipeline.Respond
 }
 
 // Stream makes a streaming completion call
-func (r *TinfoilResponder) Stream(ctx context.Context, params pipeline.ResponderParams, annotations []pipeline.Annotation, reasoning string, reasoningItems []pipeline.ReasoningItem, emitter pipeline.EventEmitter, opts ...option.RequestOption) error {
+func (r *TinfoilResponder) Stream(ctx context.Context, params pipeline.ResponderParams, annotations []pipeline.Annotation, reasoning string, emitter pipeline.EventEmitter, opts ...option.RequestOption) error {
 	chatParams := openai.ChatCompletionNewParams{
 		Model:    shared.ChatModel(params.Model),
 		Messages: params.Messages,
@@ -78,58 +76,28 @@ func (r *TinfoilResponder) Stream(ctx context.Context, params pipeline.Responder
 		chatParams.MaxTokens = openai.Int(*params.MaxTokens)
 	}
 
-	// Debug: Log message count and approximate size
-	totalMsgSize := 0
-	for _, msg := range params.Messages {
-		msgBytes, _ := json.Marshal(msg)
-		totalMsgSize += len(msgBytes)
-	}
-	log.Debugf("[Responder.Stream] Starting stream: model=%s, messages=%d, totalMsgSize=%d bytes, annotations=%d",
-		params.Model, len(params.Messages), totalMsgSize, len(annotations))
-
-	log.Debug("[Responder.Stream] Calling client.NewStreaming()...")
 	stream := r.client.NewStreaming(ctx, chatParams, opts...)
-	log.Debug("[Responder.Stream] NewStreaming() returned, entering stream loop...")
-
 	metadataSent := false
-	chunkCount := 0
 
-	log.Debug("[Responder.Stream] Calling stream.Next() for first chunk...")
 	for stream.Next() {
-		chunkCount++
-		if chunkCount == 1 {
-			log.Debug("[Responder.Stream] Received first chunk from upstream!")
-		}
-		if chunkCount <= 3 || chunkCount%100 == 0 {
-			log.Debugf("[Responder.Stream] Processing chunk #%d", chunkCount)
-		}
-
 		chunk := stream.Current()
 
-		// Send metadata (annotations + reasoning + reasoning items) on first chunk with choices
-		if !metadataSent && len(chunk.Choices) > 0 && (len(annotations) > 0 || reasoning != "" || len(reasoningItems) > 0) {
-			log.Debugf("[Responder.Stream] Emitting metadata: annotations=%d, reasoning=%d chars, reasoningItems=%d",
-				len(annotations), len(reasoning), len(reasoningItems))
-			if err := emitter.EmitMetadata(annotations, reasoning, reasoningItems); err != nil {
-				log.Errorf("[Responder.Stream] EmitMetadata failed: %v", err)
+		// Send metadata (annotations + reasoning) on first chunk with choices
+		if !metadataSent && len(chunk.Choices) > 0 && (len(annotations) > 0 || reasoning != "") {
+			if err := emitter.EmitMetadata(annotations, reasoning); err != nil {
 				return err
 			}
 			metadataSent = true
 		}
 
 		if err := emitter.EmitChunk([]byte(chunk.RawJSON())); err != nil {
-			log.Errorf("[Responder.Stream] EmitChunk failed: %v", err)
 			return err
 		}
 	}
 
-	log.Debugf("[Responder.Stream] Stream loop ended after %d chunks", chunkCount)
-
 	if err := stream.Err(); err != nil {
-		log.Errorf("[Responder.Stream] Stream error: %v", err)
 		return emitter.EmitError(err)
 	}
 
-	log.Debug("[Responder.Stream] Stream completed successfully, emitting done")
 	return emitter.EmitDone()
 }

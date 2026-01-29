@@ -164,28 +164,14 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 
 	log.Infof("Agent completed: %d searches", len(pctx.SearchResults))
 
-	result := pctx.ResponderResult.(*pipeline.ResponderResultData)
+	result := pctx.ResponderResult
 	annotations := pipeline.BuildAnnotations(pctx.SearchResults)
 
-	// Convert agent reasoning items and blocked queries to API format
-	var reasoningItems []ReasoningItem
+	// Convert agent reasoning and blocked queries to API format
 	var blockedSearches []BlockedSearch
 	var agentReasoning string
 	if pctx.AgentResult != nil {
-		agentReasoning = pctx.AgentResult.AgentReasoning
-		for _, ri := range pctx.AgentResult.ReasoningItems {
-			apiRI := ReasoningItem{
-				ID:   ri.ID,
-				Type: ri.Type,
-			}
-			for _, s := range ri.Summary {
-				apiRI.Summary = append(apiRI.Summary, ReasoningSummaryPart{
-					Type: s.Type,
-					Text: s.Text,
-				})
-			}
-			reasoningItems = append(reasoningItems, apiRI)
-		}
+		agentReasoning = pctx.AgentResult.SearchReasoning
 		for _, bq := range pctx.AgentResult.BlockedQueries {
 			blockedSearches = append(blockedSearches, BlockedSearch{
 				ID:     bq.ID,
@@ -210,7 +196,6 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 					Content:         result.Content,
 					Annotations:     annotations,
 					SearchReasoning: agentReasoning,
-					ReasoningItems:  reasoningItems,
 					BlockedSearches: blockedSearches,
 				},
 			},
@@ -278,27 +263,13 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := pctx.ResponderResult.(*pipeline.ResponderResultData)
+	result := pctx.ResponderResult
 	flatAnnotations := buildFlatAnnotations(pctx.SearchResults)
 
-	// Convert agent reasoning items to API format
-	var reasoningItems []ReasoningItem
+	// Extract agent reasoning
 	var agentReasoning string
 	if pctx.AgentResult != nil {
-		agentReasoning = pctx.AgentResult.AgentReasoning
-		for _, ri := range pctx.AgentResult.ReasoningItems {
-			apiRI := ReasoningItem{
-				ID:   ri.ID,
-				Type: ri.Type,
-			}
-			for _, s := range ri.Summary {
-				apiRI.Summary = append(apiRI.Summary, ReasoningSummaryPart{
-					Type: s.Type,
-					Text: s.Text,
-				})
-			}
-			reasoningItems = append(reasoningItems, apiRI)
-		}
+		agentReasoning = pctx.AgentResult.SearchReasoning
 	}
 
 	var output []ResponsesOutput
@@ -342,7 +313,6 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 				Text:            result.Content,
 				Annotations:     flatAnnotations,
 				SearchReasoning: agentReasoning,
-				ReasoningItems:  reasoningItems,
 			},
 		},
 	})

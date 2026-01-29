@@ -46,12 +46,12 @@ func TestNewPipeline(t *testing.T) {
 		t.Fatal("expected non-nil pipeline")
 	}
 
-	if len(p.Stages()) != 2 {
-		t.Errorf("expected 2 stages, got %d", len(p.Stages()))
+	if len(p.stages) != 2 {
+		t.Errorf("expected 2 stages, got %d", len(p.stages))
 	}
 
-	if p.Timeout() != timeout {
-		t.Errorf("expected timeout %v, got %v", timeout, p.Timeout())
+	if p.timeout != timeout {
+		t.Errorf("expected timeout %v, got %v", timeout, p.timeout)
 	}
 }
 
