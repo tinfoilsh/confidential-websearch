@@ -30,13 +30,6 @@ type Tool struct {
 	Type string `json:"type"`
 }
 
-// Tool type constants
-const (
-	ToolTypeWebSearch      = "web_search"
-	ToolTypePIICheck       = "pii_check"
-	ToolTypeInjectionCheck = "injection_check"
-)
-
 // IncomingRequest represents the incoming chat request
 type IncomingRequest struct {
 	Model       string    `json:"model"`
