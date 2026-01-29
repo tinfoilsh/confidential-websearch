@@ -8,9 +8,8 @@ import (
 
 // PipelineError wraps errors that occur during pipeline execution
 type PipelineError struct {
-	Stage     string
-	Err       error
-	Retryable bool
+	Stage string
+	Err   error
 }
 
 func (e *PipelineError) Error() string {

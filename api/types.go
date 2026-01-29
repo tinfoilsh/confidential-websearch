@@ -1,12 +1,10 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"time"
 
 	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
 	"github.com/tinfoilsh/tinfoil-go"
 
 	"github.com/tinfoilsh/confidential-websearch/config"
@@ -115,13 +113,6 @@ type ResponsesContent struct {
 type ResponsesRequest struct {
 	Model string `json:"model"`
 	Input string `json:"input"`
-}
-
-// RequestContext holds common request processing state
-type RequestContext struct {
-	Ctx     context.Context
-	Cancel  context.CancelFunc
-	ReqOpts []option.RequestOption
 }
 
 // ChatCompletionResponse represents the non-streaming chat completion response
