@@ -20,8 +20,8 @@ func WithTools(ctx context.Context, tools []string) context.Context {
 
 // getTools returns the tools from context, or nil if not set
 func getTools(ctx context.Context) []string {
-	if v := ctx.Value(toolsKey{}); v != nil {
-		return v.([]string)
+	if v, ok := ctx.Value(toolsKey{}).([]string); ok {
+		return v
 	}
 	return nil
 }
