@@ -98,6 +98,27 @@ func (p *streamParser) handleEvent(event responses.ResponseStreamEventUnion) {
 	}
 }
 
+func (p *streamParser) parseResponse(resp *responses.Response) {
+	for i, item := range resp.Output {
+		switch item.Type {
+		case "reasoning":
+			ri := item.AsReasoning()
+			for _, part := range ri.Summary {
+				if part.Type == "summary_text" {
+					p.reasoning.WriteString(part.Text)
+				}
+			}
+		case "function_call":
+			fc := item.AsFunctionCall()
+			p.functionCalls[i] = &functionCall{
+				id:   fc.CallID,
+				name: fc.Name,
+			}
+			p.functionCalls[i].arguments.WriteString(fc.Arguments)
+		}
+	}
+}
+
 // RunWithContext executes the agent with conversation context and optional streaming.
 // This is the main entry point for agent execution and implements AgentRunner interface.
 func (a *Agent) RunWithContext(ctx context.Context, messages []ContextMessage, systemPrompt string, onChunk ChunkCallback) (*Result, error) {
@@ -187,24 +208,7 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 		}
 
 		parser = newStreamParser(nil)
-		for i, item := range resp.Output {
-			switch item.Type {
-			case "reasoning":
-				ri := item.AsReasoning()
-				for _, part := range ri.Summary {
-					if part.Type == "summary_text" {
-						parser.reasoning.WriteString(part.Text)
-					}
-				}
-			case "function_call":
-				fc := item.AsFunctionCall()
-				parser.functionCalls[i] = &functionCall{
-					id:   fc.CallID,
-					name: fc.Name,
-				}
-				parser.functionCalls[i].arguments.WriteString(fc.Arguments)
-			}
-		}
+		parser.parseResponse(resp)
 	}
 
 	result := &Result{
