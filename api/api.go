@@ -104,20 +104,10 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	reqOpts := extractRequestOptions(r)
 
-	// Convert tools array to feature flags
-	webSearchEnabled := false
-	piiCheckEnabled := false
-	injectionCheckEnabled := false
-	for _, t := range req.Tools {
-		switch t.Type {
-		case "web_search":
-			webSearchEnabled = true
-		case "pii_check":
-			piiCheckEnabled = true
-		case "injection_check":
-			injectionCheckEnabled = true
-		}
-	}
+	// Derive feature flags from options presence
+	webSearchEnabled := req.WebSearchOptions != nil
+	piiCheckEnabled := req.PIICheckOptions != nil
+	injectionCheckEnabled := req.InjectionCheckOptions != nil
 	log.Debugf("Request features: web_search=%v, pii_check=%v, injection_check=%v",
 		webSearchEnabled, piiCheckEnabled, injectionCheckEnabled)
 
