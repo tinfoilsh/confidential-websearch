@@ -131,10 +131,18 @@ type ResponsesContent struct {
 	SearchReasoning string           `json:"search_reasoning,omitempty"`
 }
 
+// ResponsesTool represents a tool in the Responses API request
+type ResponsesTool struct {
+	Type string `json:"type"` // "web_search"
+}
+
 // ResponsesRequest represents the incoming request for the Responses API
 type ResponsesRequest struct {
-	Model string `json:"model"`
-	Input string `json:"input"`
+	Model                 string                 `json:"model"`
+	Input                 string                 `json:"input"`
+	Tools                 []ResponsesTool        `json:"tools,omitempty"`
+	PIICheckOptions       *PIICheckOptions       `json:"pii_check_options,omitempty"`
+	InjectionCheckOptions *InjectionCheckOptions `json:"injection_check_options,omitempty"`
 }
 
 // ChatCompletionResponse represents the non-streaming chat completion response

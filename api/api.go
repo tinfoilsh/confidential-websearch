@@ -226,10 +226,26 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 
 	reqOpts := extractRequestOptions(r)
 
+	// Derive feature flags from tools array and options
+	webSearchEnabled := false
+	for _, t := range req.Tools {
+		if t.Type == "web_search" {
+			webSearchEnabled = true
+			break
+		}
+	}
+	piiCheckEnabled := req.PIICheckOptions != nil
+	injectionCheckEnabled := req.InjectionCheckOptions != nil
+	log.Debugf("Responses request features: web_search=%v, pii_check=%v, injection_check=%v",
+		webSearchEnabled, piiCheckEnabled, injectionCheckEnabled)
+
 	pipelineReq := &pipeline.Request{
-		Model:  req.Model,
-		Input:  req.Input,
-		Format: pipeline.FormatResponses,
+		Model:                 req.Model,
+		Input:                 req.Input,
+		Format:                pipeline.FormatResponses,
+		WebSearchEnabled:      webSearchEnabled,
+		PIICheckEnabled:       piiCheckEnabled,
+		InjectionCheckEnabled: injectionCheckEnabled,
 	}
 
 	log.Infof("Processing responses request (model: %s)", req.Model)
