@@ -1,7 +1,14 @@
-shim-version: v0.3.10@sha256:825cfafbc6dde8967ac60e44264f4686fcf2ed33fae112ab4b1c69c6673cdc8e
-cvm-version: 0.5.18
+shim-version: v0.3.12@sha256:b81f2295ae6750d61e94f810ce24077360001b6ec795d13643f3170df29e304d
+cvm-version: 0.6.5
 cpus: 8
 memory: 16384
+
+containers:
+  - name: "websearch-proxy"
+    image: "ghcr.io/tinfoilsh/confidential-websearch:0.1.2"
+    secrets:
+      - EXA_API_KEY
+      - TINFOIL_API_KEY
 
 shim:
   listen-port: 443
@@ -10,15 +17,3 @@ shim:
     - /v1/chat/completions
     - /v1/responses
     - /health
-
-containers:
-  - name: "websearch-proxy"
-    image: ""
-    args:
-      [
-        "-e",
-        "EXA_API_KEY=$(awk -F': *' '$1~/^exa_api_key$/{print $2; exit}' /mnt/ramdisk/external-config.yml)",
-        "-e",
-        "TINFOIL_API_KEY=$(awk -F': *' '$1~/^tinfoil_api_key$/{print $2; exit}' /mnt/ramdisk/external-config.yml)",
-        "ghcr.io/tinfoilsh/confidential-websearch:0.1.1",
-      ]
