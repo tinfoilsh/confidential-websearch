@@ -62,15 +62,6 @@ func convertMessages(msgs []Message) []pipeline.Message {
 	return result
 }
 
-// convertTools converts API tools to pipeline tool types
-func convertTools(tools []Tool) []string {
-	result := make([]string, len(tools))
-	for i, t := range tools {
-		result[i] = t.Type
-	}
-	return result
-}
-
 // buildFlatAnnotations creates URL citations (Responses API format)
 func buildFlatAnnotations(toolCalls []agent.ToolCall) []FlatAnnotation {
 	var annotations []FlatAnnotation
@@ -113,17 +104,33 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	reqOpts := extractRequestOptions(r)
 
-	tools := convertTools(req.Tools)
-	log.Debugf("Request tools: %v", tools)
+	// Convert tools array to feature flags
+	webSearchEnabled := false
+	piiCheckEnabled := false
+	injectionCheckEnabled := false
+	for _, t := range req.Tools {
+		switch t.Type {
+		case "web_search":
+			webSearchEnabled = true
+		case "pii_check":
+			piiCheckEnabled = true
+		case "injection_check":
+			injectionCheckEnabled = true
+		}
+	}
+	log.Debugf("Request features: web_search=%v, pii_check=%v, injection_check=%v",
+		webSearchEnabled, piiCheckEnabled, injectionCheckEnabled)
 
 	pipelineReq := &pipeline.Request{
-		Model:       req.Model,
-		Messages:    convertMessages(req.Messages),
-		Stream:      req.Stream,
-		Temperature: req.Temperature,
-		MaxTokens:   req.MaxTokens,
-		Format:      pipeline.FormatChatCompletion,
-		Tools:       tools,
+		Model:                 req.Model,
+		Messages:              convertMessages(req.Messages),
+		Stream:                req.Stream,
+		Temperature:           req.Temperature,
+		MaxTokens:             req.MaxTokens,
+		Format:                pipeline.FormatChatCompletion,
+		WebSearchEnabled:      webSearchEnabled,
+		PIICheckEnabled:       piiCheckEnabled,
+		InjectionCheckEnabled: injectionCheckEnabled,
 	}
 
 	if req.Stream {

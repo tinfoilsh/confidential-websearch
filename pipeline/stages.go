@@ -106,8 +106,8 @@ type AgentStage struct {
 func (s *AgentStage) Name() string { return "agent" }
 
 func (s *AgentStage) Execute(ctx *Context) error {
-	// Skip agent if web_search tool is not enabled
-	if !ctx.Request.HasTool(ToolTypeWebSearch) {
+	// Skip agent if web search is not enabled
+	if !ctx.Request.WebSearchEnabled {
 		return nil
 	}
 
@@ -119,8 +119,8 @@ func (s *AgentStage) Execute(ctx *Context) error {
 		messages = []agent.ContextMessage{{Role: "user", Content: ctx.UserQuery}}
 	}
 
-	// Pass tools to agent via context for per-request safeguard settings
-	agentCtx := agent.WithTools(ctx.Context, ctx.Request.Tools)
+	// Pass PII check setting to agent via context
+	agentCtx := agent.WithPIICheckEnabled(ctx.Context, ctx.Request.PIICheckEnabled)
 
 	result, err := s.Agent.RunWithContext(agentCtx, messages, systemPrompt, nil)
 	if err != nil {
@@ -207,10 +207,10 @@ type FilterResultsStage struct {
 func (s *FilterResultsStage) Name() string { return "filter_results" }
 
 func (s *FilterResultsStage) Execute(ctx *Context) error {
-	// Check if injection_check tool is enabled in request, fall back to stage default
+	// Check if injection check is enabled in request, fall back to stage default
 	enabled := s.Enabled
-	if ctx.Request != nil && len(ctx.Request.Tools) > 0 {
-		enabled = ctx.Request.HasTool(ToolTypeInjectionCheck)
+	if ctx.Request != nil {
+		enabled = ctx.Request.InjectionCheckEnabled
 	}
 	if !enabled || s.Checker == nil || len(ctx.SearchResults) == 0 {
 		return nil
