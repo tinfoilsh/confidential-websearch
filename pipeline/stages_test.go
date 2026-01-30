@@ -257,7 +257,7 @@ func TestAgentStage_Success(t *testing.T) {
 	ctx := &Context{
 		Context:   context.Background(),
 		UserQuery: "test query",
-		Request:   &Request{Messages: []Message{{Role: "user", Content: toJSON("test query")}}, Tools: []string{ToolTypeWebSearch}},
+		Request:   &Request{Messages: []Message{{Role: "user", Content: toJSON("test query")}}, WebSearchEnabled: true},
 		State:     NewStateTracker(),
 	}
 
@@ -293,7 +293,7 @@ func TestAgentStage_NoSearch(t *testing.T) {
 	ctx := &Context{
 		Context:   context.Background(),
 		UserQuery: "hello",
-		Request:   &Request{Messages: []Message{{Role: "user", Content: toJSON("hello")}}, Tools: []string{ToolTypeWebSearch}},
+		Request:   &Request{Messages: []Message{{Role: "user", Content: toJSON("hello")}}, WebSearchEnabled: true},
 		State:     NewStateTracker(),
 	}
 
@@ -318,7 +318,7 @@ func TestAgentStage_Error(t *testing.T) {
 	ctx := &Context{
 		Context:   context.Background(),
 		UserQuery: "test",
-		Request:   &Request{Messages: []Message{{Role: "user", Content: toJSON("test")}}, Tools: []string{ToolTypeWebSearch}},
+		Request:   &Request{Messages: []Message{{Role: "user", Content: toJSON("test")}}, WebSearchEnabled: true},
 		State:     NewStateTracker(),
 	}
 

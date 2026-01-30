@@ -65,37 +65,21 @@ type URLCitation struct {
 	PublishedDate string `json:"published_date,omitempty"`
 }
 
-// Tool type constants
-const (
-	ToolTypeWebSearch      = "web_search"
-	ToolTypePIICheck       = "pii_check"
-	ToolTypeInjectionCheck = "injection_check"
-)
-
 // Request is the unified internal request representation
 type Request struct {
 	Model       string
 	Messages    []Message
-	Input       string    // For Responses API
+	Input       string // For Responses API
 	Stream      bool
 	Temperature *float64
 	MaxTokens   *int64
 	Format      APIFormat
 	AuthHeader  string
-	Tools       []string  // Enabled tools: web_search, pii_check, injection_check
-}
 
-// HasTool returns true if the specified tool is enabled in the request
-func (r *Request) HasTool(toolType string) bool {
-	if r == nil {
-		return false
-	}
-	for _, t := range r.Tools {
-		if t == toolType {
-			return true
-		}
-	}
-	return false
+	// Feature flags
+	WebSearchEnabled      bool
+	PIICheckEnabled       bool
+	InjectionCheckEnabled bool
 }
 
 // Context carries all request data through the pipeline

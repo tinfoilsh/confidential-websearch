@@ -8,34 +8,19 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
 )
 
-// ToolTypePIICheck is the tool type for PII checking.
-// Duplicated here to avoid import cycle (pipeline imports agent).
-const ToolTypePIICheck = "pii_check"
+type piiCheckKey struct{}
 
-type toolsKey struct{}
-
-// WithTools returns a context with the enabled tools
-func WithTools(ctx context.Context, tools []string) context.Context {
-	return context.WithValue(ctx, toolsKey{}, tools)
+// WithPIICheckEnabled returns a context with PII check enabled/disabled
+func WithPIICheckEnabled(ctx context.Context, enabled bool) context.Context {
+	return context.WithValue(ctx, piiCheckKey{}, enabled)
 }
 
-// getTools returns the tools from context, or nil if not set
-func getTools(ctx context.Context) []string {
-	if v, ok := ctx.Value(toolsKey{}).([]string); ok {
-		return v
+// getPIICheckEnabled returns whether PII check is enabled from context
+func getPIICheckEnabled(ctx context.Context) (enabled bool, set bool) {
+	if v, ok := ctx.Value(piiCheckKey{}).(bool); ok {
+		return v, true
 	}
-	return nil
-}
-
-// hasTool checks if a tool is enabled in context
-func hasTool(ctx context.Context, toolType string) bool {
-	tools := getTools(ctx)
-	for _, t := range tools {
-		if t == toolType {
-			return true
-		}
-	}
-	return false
+	return false, false
 }
 
 // SafeguardChecker is an interface for safety checking (allows mocking in tests)
@@ -69,14 +54,13 @@ func (s *SafeAgent) SetPIICheckEnabled(enabled bool) {
 func (s *SafeAgent) RunWithContext(ctx context.Context, messages []ContextMessage, systemPrompt string, onChunk ChunkCallback) (*Result, error) {
 	var filter SearchFilter
 
-	// Check if pii_check tool is enabled via context, fall back to default setting
-	tools := getTools(ctx)
-	enabled := hasTool(ctx, ToolTypePIICheck)
-	if !enabled && tools == nil {
+	// Check if PII check is enabled via context, fall back to default setting
+	enabled, set := getPIICheckEnabled(ctx)
+	if !set {
 		enabled = s.enablePIICheck
 	}
 
-	log.Debugf("SafeAgent: tools=%v, pii_check_enabled=%v, safeguardClient=%v", tools, enabled, s.safeguardClient != nil)
+	log.Debugf("SafeAgent: pii_check_enabled=%v, safeguardClient=%v", enabled, s.safeguardClient != nil)
 
 	if enabled && s.safeguardClient != nil {
 		log.Debug("SafeAgent: Creating PII filter")
