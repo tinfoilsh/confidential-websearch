@@ -23,19 +23,41 @@ type Server struct {
 	Pipeline *pipeline.Pipeline
 }
 
-// Tool represents a tool in the request
-type Tool struct {
-	Type string `json:"type"`
+// WebSearchOptions enables web search when present (OpenAI compatible)
+type WebSearchOptions struct {
+	SearchContextSize string        `json:"search_context_size,omitempty"` // "low", "medium", "high"
+	UserLocation      *UserLocation `json:"user_location,omitempty"`
 }
+
+// UserLocation provides location context for web search
+type UserLocation struct {
+	Type        string               `json:"type,omitempty"` // "approximate"
+	Approximate *ApproximateLocation `json:"approximate,omitempty"`
+}
+
+// ApproximateLocation contains approximate location details
+type ApproximateLocation struct {
+	Country string `json:"country,omitempty"`
+	City    string `json:"city,omitempty"`
+	Region  string `json:"region,omitempty"`
+}
+
+// PIICheckOptions enables PII checking when present
+type PIICheckOptions struct{}
+
+// InjectionCheckOptions enables injection checking when present
+type InjectionCheckOptions struct{}
 
 // IncomingRequest represents the incoming chat request
 type IncomingRequest struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	Stream      bool      `json:"stream"`
-	Temperature *float64  `json:"temperature,omitempty"`
-	MaxTokens   *int64    `json:"max_tokens,omitempty"`
-	Tools       []Tool    `json:"tools,omitempty"`
+	Model                 string                 `json:"model"`
+	Messages              []Message              `json:"messages"`
+	Stream                bool                   `json:"stream"`
+	Temperature           *float64               `json:"temperature,omitempty"`
+	MaxTokens             *int64                 `json:"max_tokens,omitempty"`
+	WebSearchOptions      *WebSearchOptions      `json:"web_search_options,omitempty"`
+	PIICheckOptions       *PIICheckOptions       `json:"pii_check_options,omitempty"`
+	InjectionCheckOptions *InjectionCheckOptions `json:"injection_check_options,omitempty"`
 }
 
 // Message represents a chat message in the incoming request
