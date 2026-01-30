@@ -68,11 +68,9 @@ func buildFlatAnnotations(toolCalls []agent.ToolCall) []FlatAnnotation {
 	for _, tc := range toolCalls {
 		for _, r := range tc.Results {
 			annotations = append(annotations, FlatAnnotation{
-				Type:          "url_citation",
-				URL:           r.URL,
-				Title:         r.Title,
-				Content:       r.Content,
-				PublishedDate: r.PublishedDate,
+				Type:  "url_citation",
+				URL:   r.URL,
+				Title: r.Title,
 			})
 		}
 	}

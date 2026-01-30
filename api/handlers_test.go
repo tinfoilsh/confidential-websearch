@@ -375,7 +375,7 @@ func TestBuildFlatAnnotations(t *testing.T) {
 			ID:    "call_1",
 			Query: "query 1",
 			Results: []search.Result{
-				{Title: "Title 1", URL: "https://example.com/1", Content: "Content 1", PublishedDate: "2024-01-01"},
+				{Title: "Title 1", URL: "https://example.com/1", Content: "Content 1"},
 				{Title: "Title 2", URL: "https://example.com/2", Content: "Content 2"},
 			},
 		},
@@ -402,9 +402,6 @@ func TestBuildFlatAnnotations(t *testing.T) {
 	}
 	if annotations[0].URL != "https://example.com/1" {
 		t.Errorf("expected URL 'https://example.com/1', got '%s'", annotations[0].URL)
-	}
-	if annotations[0].PublishedDate != "2024-01-01" {
-		t.Errorf("expected published date '2024-01-01', got '%s'", annotations[0].PublishedDate)
 	}
 }
 
