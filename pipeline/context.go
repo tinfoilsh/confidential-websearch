@@ -57,12 +57,12 @@ type Annotation struct {
 	URLCitation URLCitation `json:"url_citation"`
 }
 
-// URLCitation contains the citation details
+// URLCitation contains the citation details (OpenAI-compatible)
 type URLCitation struct {
-	Title         string `json:"title"`
-	URL           string `json:"url"`
-	Content       string `json:"content,omitempty"`
-	PublishedDate string `json:"published_date,omitempty"`
+	StartIndex int    `json:"start_index"`
+	EndIndex   int    `json:"end_index"`
+	URL        string `json:"url"`
+	Title      string `json:"title"`
 }
 
 // Request is the unified internal request representation

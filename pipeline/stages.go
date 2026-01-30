@@ -353,10 +353,8 @@ func BuildAnnotations(searchResults []agent.ToolCall) []Annotation {
 			annotations = append(annotations, Annotation{
 				Type: "url_citation",
 				URLCitation: URLCitation{
-					URL:           r.URL,
-					Title:         r.Title,
-					Content:       r.Content,
-					PublishedDate: r.PublishedDate,
+					URL:   r.URL,
+					Title: r.Title,
 				},
 			})
 		}

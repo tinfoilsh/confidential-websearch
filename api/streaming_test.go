@@ -136,9 +136,8 @@ func TestSSEEmitter_EmitMetadata(t *testing.T) {
 		{
 			Type: "url_citation",
 			URLCitation: pipeline.URLCitation{
-				Title:   "Test Title",
-				URL:     "https://example.com",
-				Content: "Test content",
+				URL:   "https://example.com",
+				Title: "Test Title",
 			},
 		},
 	}

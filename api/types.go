@@ -97,13 +97,13 @@ type StreamingChunk struct {
 	Choices []StreamingChoice `json:"choices"`
 }
 
-// FlatAnnotation represents a url_citation annotation (Responses API format)
+// FlatAnnotation represents a url_citation annotation (Responses API format, OpenAI-compatible)
 type FlatAnnotation struct {
-	Type          string `json:"type"`
-	Title         string `json:"title"`
-	URL           string `json:"url"`
-	Content       string `json:"content,omitempty"`
-	PublishedDate string `json:"published_date,omitempty"`
+	Type       string `json:"type"`
+	URL        string `json:"url"`
+	Title      string `json:"title"`
+	StartIndex int    `json:"start_index"`
+	EndIndex   int    `json:"end_index"`
 }
 
 // WebSearchAction contains the search query details
