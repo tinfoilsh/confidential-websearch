@@ -84,7 +84,7 @@ func (r *TinfoilResponder) Stream(ctx context.Context, params pipeline.Responder
 
 		// Send metadata (annotations + reasoning) on first chunk with choices
 		if !metadataSent && len(chunk.Choices) > 0 && (len(annotations) > 0 || reasoning != "") {
-			if err := emitter.EmitMetadata(annotations, reasoning); err != nil {
+			if err := emitter.EmitMetadata(chunk.ID, chunk.Created, chunk.Model, annotations, reasoning); err != nil {
 				return err
 			}
 			metadataSent = true

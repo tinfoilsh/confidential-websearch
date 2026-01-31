@@ -142,7 +142,7 @@ func TestSSEEmitter_EmitMetadata(t *testing.T) {
 		},
 	}
 
-	err := emitter.EmitMetadata(annotations, "Search reasoning")
+	err := emitter.EmitMetadata("chatcmpl-123", 1234567890, "gpt-oss-120b-free", annotations, "Search reasoning")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -153,6 +153,15 @@ func TestSSEEmitter_EmitMetadata(t *testing.T) {
 	}
 	if !strings.Contains(body, "chat.completion.chunk") {
 		t.Error("expected chat.completion.chunk object")
+	}
+	if !strings.Contains(body, "chatcmpl-123") {
+		t.Error("expected chunk id")
+	}
+	if !strings.Contains(body, "1234567890") {
+		t.Error("expected created timestamp")
+	}
+	if !strings.Contains(body, "gpt-oss-120b-free") {
+		t.Error("expected model")
 	}
 	if !strings.Contains(body, "Test Title") {
 		t.Error("expected annotation title")
@@ -169,7 +178,7 @@ func TestSSEEmitter_EmitMetadata_Empty(t *testing.T) {
 	w := httptest.NewRecorder()
 	emitter, _ := NewSSEEmitter(w)
 
-	err := emitter.EmitMetadata(nil, "")
+	err := emitter.EmitMetadata("", 0, "", nil, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

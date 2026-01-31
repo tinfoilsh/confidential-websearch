@@ -64,13 +64,16 @@ func (e *SSEEmitter) EmitSearchCall(id, status, query, reason string) error {
 }
 
 // EmitMetadata emits annotations and reasoning as a custom chunk
-func (e *SSEEmitter) EmitMetadata(annotations []pipeline.Annotation, reasoning string) error {
+func (e *SSEEmitter) EmitMetadata(id string, created int64, model string, annotations []pipeline.Annotation, reasoning string) error {
 	if len(annotations) == 0 && reasoning == "" {
 		return nil
 	}
 
 	chunk := StreamingChunk{
-		Object: "chat.completion.chunk",
+		ID:      id,
+		Object:  "chat.completion.chunk",
+		Created: created,
+		Model:   model,
 		Choices: []StreamingChoice{
 			{
 				Index: 0,

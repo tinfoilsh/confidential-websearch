@@ -314,15 +314,17 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	})
 
 	responsesResp := struct {
-		ID     string            `json:"id"`
-		Object string            `json:"object"`
-		Model  string            `json:"model"`
-		Output []ResponsesOutput `json:"output"`
+		ID        string            `json:"id"`
+		Object    string            `json:"object"`
+		CreatedAt int64             `json:"created_at"`
+		Model     string            `json:"model"`
+		Output    []ResponsesOutput `json:"output"`
 	}{
-		ID:     "resp_" + uuid.New().String()[:8],
-		Object: "response",
-		Model:  result.Model,
-		Output: output,
+		ID:        "resp_" + uuid.New().String()[:8],
+		Object:    "response",
+		CreatedAt: result.Created,
+		Model:     result.Model,
+		Output:    output,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
