@@ -80,7 +80,7 @@ type MockEventEmitter struct {
 	DoneCalled bool
 }
 
-func (m *MockEventEmitter) EmitSearchCall(id, status, query, reason string) error {
+func (m *MockEventEmitter) EmitSearchCall(id, status, query, reason string, created int64, model string) error {
 	return nil
 }
 

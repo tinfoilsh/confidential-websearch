@@ -57,7 +57,7 @@ type mockMetadataCall struct {
 	SearchReasoning string
 }
 
-func (m *MockEventEmitter) EmitSearchCall(id, status, query, reason string) error {
+func (m *MockEventEmitter) EmitSearchCall(id, status, query, reason string, created int64, model string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.SearchCalls = append(m.SearchCalls, mockSearchCall{ID: id, Status: status, Query: query, Reason: reason})
