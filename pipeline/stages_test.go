@@ -84,7 +84,7 @@ func (m *MockEventEmitter) EmitSearchCall(id, status, query, reason string) erro
 	return nil
 }
 
-func (m *MockEventEmitter) EmitMetadata(annotations []Annotation, searchReasoning string) error {
+func (m *MockEventEmitter) EmitMetadata(id string, created int64, model string, annotations []Annotation, searchReasoning string) error {
 	m.MetadataCalls = append(m.MetadataCalls, struct {
 		Annotations     []Annotation
 		SearchReasoning string

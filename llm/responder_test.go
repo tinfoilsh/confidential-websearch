@@ -64,7 +64,7 @@ func (m *MockEventEmitter) EmitSearchCall(id, status, query, reason string) erro
 	return nil
 }
 
-func (m *MockEventEmitter) EmitMetadata(annotations []pipeline.Annotation, reasoning string) error {
+func (m *MockEventEmitter) EmitMetadata(id string, created int64, model string, annotations []pipeline.Annotation, reasoning string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.EmitMetadataErr != nil {

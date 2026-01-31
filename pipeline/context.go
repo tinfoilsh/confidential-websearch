@@ -121,7 +121,7 @@ type EventEmitter interface {
 	EmitSearchCall(id, status, query, reason string) error
 
 	// EmitMetadata emits annotations and reasoning before content
-	EmitMetadata(annotations []Annotation, reasoning string) error
+	EmitMetadata(id string, created int64, model string, annotations []Annotation, reasoning string) error
 
 	// EmitChunk emits a raw chunk of data
 	EmitChunk(data []byte) error
