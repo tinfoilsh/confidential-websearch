@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/tinfoilsh/confidential-websearch/pipeline"
 )
@@ -37,12 +38,20 @@ func (e *SSEEmitter) emit(data []byte) error {
 	return nil
 }
 
-// EmitSearchCall emits a web search call event
-func (e *SSEEmitter) EmitSearchCall(id, status, query, reason string) error {
+// EmitSearchCall emits a web search call event with OpenAI-compatible fields for SDK compatibility
+func (e *SSEEmitter) EmitSearchCall(id, status, query, reason string, created int64, model string) error {
 	event := WebSearchCall{
-		Type:   "web_search_call",
-		ID:     id,
-		Status: status,
+		Type:    "web_search_call",
+		ID:      id,
+		Status:  status,
+		Object:  "chat.completion.chunk",
+		Created: created,
+		Model:   model,
+		Choices: []any{},
+	}
+
+	if created == 0 {
+		event.Created = time.Now().Unix()
 	}
 
 	if query != "" {

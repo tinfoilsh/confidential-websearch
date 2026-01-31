@@ -117,8 +117,9 @@ func (c *Context) IsStreaming() bool {
 
 // EventEmitter handles streaming output events
 type EventEmitter interface {
-	// EmitSearchCall emits a web search call event (reason is optional, used for blocked status)
-	EmitSearchCall(id, status, query, reason string) error
+	// EmitSearchCall emits a web search call event with OpenAI-compatible fields
+	// (reason is optional, used for blocked status; created/model for SDK compatibility)
+	EmitSearchCall(id, status, query, reason string, created int64, model string) error
 
 	// EmitMetadata emits annotations and reasoning before content
 	EmitMetadata(id string, created int64, model string, annotations []Annotation, reasoning string) error

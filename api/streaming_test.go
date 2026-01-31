@@ -69,7 +69,7 @@ func TestSSEEmitter_EmitSearchCall(t *testing.T) {
 	w := httptest.NewRecorder()
 	emitter, _ := NewSSEEmitter(w)
 
-	err := emitter.EmitSearchCall("call_123", "in_progress", "test query", "")
+	err := emitter.EmitSearchCall("call_123", "in_progress", "test query", "", 1234567890, "gpt-oss-120b-free")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -90,13 +90,26 @@ func TestSSEEmitter_EmitSearchCall(t *testing.T) {
 	if !strings.Contains(body, "test query") {
 		t.Error("expected query")
 	}
+	// Verify OpenAI-compatible fields for SDK compatibility
+	if !strings.Contains(body, "chat.completion.chunk") {
+		t.Error("expected chat.completion.chunk object")
+	}
+	if !strings.Contains(body, "1234567890") {
+		t.Error("expected created timestamp")
+	}
+	if !strings.Contains(body, "gpt-oss-120b-free") {
+		t.Error("expected model")
+	}
+	if !strings.Contains(body, `"choices":[]`) {
+		t.Error("expected empty choices array")
+	}
 }
 
 func TestSSEEmitter_EmitSearchCall_NoQuery(t *testing.T) {
 	w := httptest.NewRecorder()
 	emitter, _ := NewSSEEmitter(w)
 
-	err := emitter.EmitSearchCall("call_123", "completed", "", "")
+	err := emitter.EmitSearchCall("call_123", "completed", "", "", 1234567890, "gpt-oss-120b-free")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -111,7 +124,7 @@ func TestSSEEmitter_EmitSearchCall_Blocked(t *testing.T) {
 	w := httptest.NewRecorder()
 	emitter, _ := NewSSEEmitter(w)
 
-	err := emitter.EmitSearchCall("call_123", "blocked", "john.smith@gmail.com", "email identifies individual")
+	err := emitter.EmitSearchCall("call_123", "blocked", "john.smith@gmail.com", "email identifies individual", 1234567890, "gpt-oss-120b-free")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -272,8 +285,8 @@ func TestSSEEmitter_MultipleEvents(t *testing.T) {
 	emitter, _ := NewSSEEmitter(w)
 
 	// Emit multiple events in sequence
-	emitter.EmitSearchCall("call_1", "in_progress", "query 1", "")
-	emitter.EmitSearchCall("call_1", "completed", "", "")
+	emitter.EmitSearchCall("call_1", "in_progress", "query 1", "", 1234567890, "gpt-oss-120b-free")
+	emitter.EmitSearchCall("call_1", "completed", "", "", 1234567890, "gpt-oss-120b-free")
 	emitter.EmitChunk([]byte(`{"content":"hello"}`))
 	emitter.EmitDone()
 

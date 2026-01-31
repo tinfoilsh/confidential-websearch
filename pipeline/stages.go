@@ -142,7 +142,7 @@ func (s *SearchStage) Execute(ctx *Context) error {
 	// Emit blocked query events first (before early return check)
 	if ctx.AgentResult != nil && ctx.Emitter != nil {
 		for _, bq := range ctx.AgentResult.BlockedQueries {
-			ctx.Emitter.EmitSearchCall(bq.ID, "blocked", bq.Query, bq.Reason)
+			ctx.Emitter.EmitSearchCall(bq.ID, "blocked", bq.Query, bq.Reason, 0, ctx.Request.Model)
 		}
 	}
 
@@ -153,7 +153,7 @@ func (s *SearchStage) Execute(ctx *Context) error {
 	// Emit in_progress events for all pending searches
 	if ctx.Emitter != nil {
 		for _, ps := range ctx.AgentResult.PendingSearches {
-			ctx.Emitter.EmitSearchCall(ps.ID, "in_progress", ps.Query, "")
+			ctx.Emitter.EmitSearchCall(ps.ID, "in_progress", ps.Query, "", 0, ctx.Request.Model)
 		}
 	}
 
@@ -172,7 +172,7 @@ func (s *SearchStage) Execute(ctx *Context) error {
 			if err != nil {
 				log.Errorf("Search failed: %v", err)
 				if ctx.Emitter != nil {
-					ctx.Emitter.EmitSearchCall(pending.ID, "failed", pending.Query, err.Error())
+					ctx.Emitter.EmitSearchCall(pending.ID, "failed", pending.Query, err.Error(), 0, ctx.Request.Model)
 				}
 				return
 			}
@@ -187,7 +187,7 @@ func (s *SearchStage) Execute(ctx *Context) error {
 
 			// Emit completed event
 			if ctx.Emitter != nil {
-				ctx.Emitter.EmitSearchCall(pending.ID, "completed", pending.Query, "")
+				ctx.Emitter.EmitSearchCall(pending.ID, "completed", pending.Query, "", 0, ctx.Request.Model)
 			}
 		}(ps)
 	}

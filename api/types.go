@@ -68,12 +68,17 @@ type Message struct {
 }
 
 // WebSearchCall represents a search operation in streaming output
+// Includes OpenAI chat.completion.chunk fields for SDK compatibility
 type WebSearchCall struct {
-	Type   string           `json:"type"`
-	ID     string           `json:"id"`
-	Status string           `json:"status"`
-	Action *WebSearchAction `json:"action,omitempty"`
-	Reason string           `json:"reason,omitempty"`
+	Type    string           `json:"type"`
+	ID      string           `json:"id"`
+	Status  string           `json:"status"`
+	Action  *WebSearchAction `json:"action,omitempty"`
+	Reason  string           `json:"reason,omitempty"`
+	Object  string           `json:"object"`
+	Created int64            `json:"created"`
+	Model   string           `json:"model"`
+	Choices []any            `json:"choices"`
 }
 
 // StreamingDelta represents a delta in a streaming chunk
