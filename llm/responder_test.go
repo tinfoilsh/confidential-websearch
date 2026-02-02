@@ -101,6 +101,18 @@ func (m *MockEventEmitter) EmitDone() error {
 	return nil
 }
 
+func (m *MockEventEmitter) EmitResponseStart() error {
+	return nil
+}
+
+func (m *MockEventEmitter) EmitMessageStart(itemID string) error {
+	return nil
+}
+
+func (m *MockEventEmitter) EmitMessageEnd(text string, annotations []pipeline.Annotation) error {
+	return nil
+}
+
 func TestTinfoilResponderComplete(t *testing.T) {
 	mockClient := &MockChatClient{
 		NewFunc: func(ctx context.Context, params openai.ChatCompletionNewParams, opts ...option.RequestOption) (*openai.ChatCompletion, error) {

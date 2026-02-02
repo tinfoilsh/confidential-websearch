@@ -107,6 +107,18 @@ func (m *MockEventEmitter) EmitDone() error {
 	return nil
 }
 
+func (m *MockEventEmitter) EmitResponseStart() error {
+	return nil
+}
+
+func (m *MockEventEmitter) EmitMessageStart(itemID string) error {
+	return nil
+}
+
+func (m *MockEventEmitter) EmitMessageEnd(text string, annotations []Annotation) error {
+	return nil
+}
+
 // --- ValidateStage Tests ---
 
 func TestValidateStage_NilRequest(t *testing.T) {
