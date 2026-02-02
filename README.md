@@ -78,7 +78,9 @@ go run . -v
 
 ## API Endpoints
 
-### Chat Completions (OpenAI-compatible)
+This server provides an OpenAI-compatible API with custom search and safety tools. Standard OpenAI SDKs can make requests, but custom streaming events and response fields are extensions that require additional client handling.
+
+### Chat Completions
 
 `POST /v1/chat/completions`
 
@@ -93,11 +95,14 @@ curl http://localhost:8089/v1/chat/completions \
   }'
 ```
 
-Response includes:
+Response includes standard OpenAI fields plus custom extensions:
 
 - `choices[0].message.content` - The generated response
 - `choices[0].message.annotations` - URL citations from search results
-- `choices[0].message.search_reasoning` - Agent's reasoning for search decisions
+- `choices[0].message.search_reasoning` - Agent's reasoning for search decisions (extension)
+- `choices[0].message.blocked_searches` - Queries blocked by safety filters (extension)
+
+**Streaming:** In addition to standard content chunks, streams custom `web_search_call` events with search status. These use a `chat.completion.chunk` envelope so SDKs don't fail, but the content is custom.
 
 ### Responses API
 
