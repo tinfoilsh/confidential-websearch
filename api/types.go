@@ -23,7 +23,7 @@ type Server struct {
 	Pipeline *pipeline.Pipeline
 }
 
-// WebSearchOptions enables web search when present (OpenAI compatible)
+// WebSearchOptions enables the custom web search tool
 type WebSearchOptions struct {
 	SearchContextSize string        `json:"search_context_size,omitempty"` // "low", "medium", "high"
 	UserLocation      *UserLocation `json:"user_location,omitempty"`
@@ -67,8 +67,9 @@ type Message struct {
 	Annotations []pipeline.Annotation `json:"annotations,omitempty"`
 }
 
-// WebSearchCall represents a search operation in streaming output
-// Includes OpenAI chat.completion.chunk fields for SDK compatibility
+// WebSearchCall represents a custom streaming event for search status.
+// Uses chat.completion.chunk envelope so SDKs don't fail parsing, but the
+// content (type, status, action) is a custom extension not in OpenAI's spec.
 type WebSearchCall struct {
 	Type    string           `json:"type"`
 	ID      string           `json:"id"`
@@ -93,7 +94,8 @@ type StreamingChoice struct {
 	Delta StreamingDelta `json:"delta"`
 }
 
-// StreamingChunk represents a custom streaming chunk for annotations
+// StreamingChunk represents a custom streaming chunk for annotations.
+// This is an extension - OpenAI doesn't stream annotations in Chat Completions.
 type StreamingChunk struct {
 	ID      string            `json:"id"`
 	Object  string            `json:"object"`
@@ -102,7 +104,7 @@ type StreamingChunk struct {
 	Choices []StreamingChoice `json:"choices"`
 }
 
-// FlatAnnotation represents a url_citation annotation (Responses API format, OpenAI-compatible)
+// FlatAnnotation represents a url_citation annotation (Responses API format)
 type FlatAnnotation struct {
 	Type       string `json:"type"`
 	URL        string `json:"url"`
@@ -174,7 +176,11 @@ type BlockedSearch struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// ChatCompletionMessageOutput represents the assistant message with annotations
+// ChatCompletionMessageOutput represents the assistant message.
+// Includes standard OpenAI fields plus custom extensions:
+//   - annotations: URL citations from web search (standard format)
+//   - search_reasoning: Agent's reasoning about search decisions (extension)
+//   - blocked_searches: Queries blocked by safety filters (extension)
 type ChatCompletionMessageOutput struct {
 	Role            string                `json:"role"`
 	Content         string                `json:"content"`

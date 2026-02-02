@@ -38,7 +38,8 @@ func (e *SSEEmitter) emit(data []byte) error {
 	return nil
 }
 
-// EmitSearchCall emits a web search call event with OpenAI-compatible fields for SDK compatibility
+// EmitSearchCall emits a custom web search status event.
+// Wrapped in chat.completion.chunk envelope so SDKs don't fail parsing.
 func (e *SSEEmitter) EmitSearchCall(id, status, query, reason string, created int64, model string) error {
 	event := WebSearchCall{
 		Type:    "web_search_call",
@@ -72,7 +73,8 @@ func (e *SSEEmitter) EmitSearchCall(id, status, query, reason string, created in
 	return e.emit(data)
 }
 
-// EmitMetadata emits annotations and reasoning as a custom chunk
+// EmitMetadata emits annotations and reasoning as a custom chunk.
+// This is an extension - OpenAI doesn't stream annotations in Chat Completions.
 func (e *SSEEmitter) EmitMetadata(id string, created int64, model string, annotations []pipeline.Annotation, reasoning string) error {
 	if len(annotations) == 0 && reasoning == "" {
 		return nil
