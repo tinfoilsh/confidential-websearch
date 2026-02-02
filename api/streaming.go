@@ -127,5 +127,20 @@ func (e *SSEEmitter) EmitDone() error {
 	return e.emit([]byte("[DONE]"))
 }
 
+// EmitResponseStart is a no-op for Chat Completions (Responses API only)
+func (e *SSEEmitter) EmitResponseStart() error {
+	return nil
+}
+
+// EmitMessageStart is a no-op for Chat Completions (Responses API only)
+func (e *SSEEmitter) EmitMessageStart(itemID string) error {
+	return nil
+}
+
+// EmitMessageEnd is a no-op for Chat Completions (Responses API only)
+func (e *SSEEmitter) EmitMessageEnd(text string, annotations []pipeline.Annotation) error {
+	return nil
+}
+
 // Verify SSEEmitter implements EventEmitter
 var _ pipeline.EventEmitter = (*SSEEmitter)(nil)

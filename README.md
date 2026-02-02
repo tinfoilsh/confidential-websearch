@@ -114,11 +114,21 @@ curl http://localhost:8089/v1/responses \
   -H "Authorization: Bearer $TINFOIL_API_KEY" \
   -d '{
     "model": "<responder-model>",
-    "input": "What is the latest news about SpaceX?"
+    "input": "What is the latest news about SpaceX?",
+    "tools": [{"type": "web_search"}],
+    "stream": true
   }'
 ```
 
-Response includes structured output with `web_search_call` events and message content with annotations.
+Response includes structured output with `web_search_call` items and message content with annotations.
+
+**Streaming:** When `stream: true`, emits OpenAI-conformant `response.*` events:
+
+- `response.created`, `response.in_progress` - Lifecycle events
+- `response.web_search_call.in_progress/completed` - Search status
+- `response.output_text.delta` - Content chunks
+- `response.output_text.annotation.added` - URL citations
+- `response.completed` - Final event
 
 ### Health Check
 

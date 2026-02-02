@@ -208,6 +208,35 @@ func (s *Server) handleStreamingChatCompletion(w http.ResponseWriter, r *http.Re
 	log.Infof("Streaming completed: %d searches", len(pctx.SearchResults))
 }
 
+func (s *Server) handleStreamingResponses(w http.ResponseWriter, r *http.Request, req *pipeline.Request, reqOpts []option.RequestOption) {
+	log.Infof("Processing streaming responses request (model: %s)", req.Model)
+
+	responseID := "resp_" + uuid.New().String()[:8]
+	emitter, err := NewResponsesEmitter(w, responseID, req.Model)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Emit response.created and response.in_progress at start
+	if err := emitter.EmitResponseStart(); err != nil {
+		emitter.EmitError(err)
+		return
+	}
+
+	pctx, err := s.Pipeline.Execute(r.Context(), req, emitter, reqOpts...)
+	if pctx != nil && pctx.Cancel != nil {
+		defer pctx.Cancel()
+	}
+
+	if err != nil {
+		emitter.EmitError(err)
+		return
+	}
+
+	log.Infof("Streaming responses completed: %d searches", len(pctx.SearchResults))
+}
+
 func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -240,10 +269,16 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	pipelineReq := &pipeline.Request{
 		Model:                 req.Model,
 		Input:                 req.Input,
+		Stream:                req.Stream,
 		Format:                pipeline.FormatResponses,
 		WebSearchEnabled:      webSearchEnabled,
 		PIICheckEnabled:       piiCheckEnabled,
 		InjectionCheckEnabled: injectionCheckEnabled,
+	}
+
+	if req.Stream {
+		s.handleStreamingResponses(w, r, pipelineReq, reqOpts)
+		return
 	}
 
 	log.Infof("Processing responses request (model: %s)", req.Model)

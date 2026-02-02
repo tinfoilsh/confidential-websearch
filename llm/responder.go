@@ -78,9 +78,19 @@ func (r *TinfoilResponder) Stream(ctx context.Context, params pipeline.Responder
 
 	stream := r.client.NewStreaming(ctx, chatParams, opts...)
 	metadataSent := false
+	messageStarted := false
+	var fullText string
 
 	for stream.Next() {
 		chunk := stream.Current()
+
+		// Emit message start on first chunk (for Responses API)
+		if !messageStarted && len(chunk.Choices) > 0 {
+			if err := emitter.EmitMessageStart("msg_" + chunk.ID); err != nil {
+				return err
+			}
+			messageStarted = true
+		}
 
 		// Send metadata (annotations + reasoning) on first chunk with choices
 		if !metadataSent && len(chunk.Choices) > 0 && (len(annotations) > 0 || reasoning != "") {
@@ -90,6 +100,11 @@ func (r *TinfoilResponder) Stream(ctx context.Context, params pipeline.Responder
 			metadataSent = true
 		}
 
+		// Accumulate text for EmitMessageEnd
+		if len(chunk.Choices) > 0 {
+			fullText += chunk.Choices[0].Delta.Content
+		}
+
 		if err := emitter.EmitChunk([]byte(chunk.RawJSON())); err != nil {
 			return err
 		}
@@ -97,6 +112,13 @@ func (r *TinfoilResponder) Stream(ctx context.Context, params pipeline.Responder
 
 	if err := stream.Err(); err != nil {
 		return emitter.EmitError(err)
+	}
+
+	// Emit message end with full text and annotations (for Responses API)
+	if messageStarted {
+		if err := emitter.EmitMessageEnd(fullText, annotations); err != nil {
+			return err
+		}
 	}
 
 	return emitter.EmitDone()

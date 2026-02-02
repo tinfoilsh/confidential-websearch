@@ -132,4 +132,9 @@ type EventEmitter interface {
 
 	// EmitDone emits the final done signal
 	EmitDone() error
+
+	// Responses API lifecycle methods (no-op for Chat Completions)
+	EmitResponseStart() error
+	EmitMessageStart(itemID string) error
+	EmitMessageEnd(text string, annotations []Annotation) error
 }

@@ -154,6 +154,7 @@ type ResponsesUsage struct {
 type ResponsesRequest struct {
 	Model                 string                 `json:"model"`
 	Input                 string                 `json:"input"`
+	Stream                bool                   `json:"stream,omitempty"`
 	Tools                 []ResponsesTool        `json:"tools,omitempty"`
 	PIICheckOptions       *PIICheckOptions       `json:"pii_check_options,omitempty"`
 	InjectionCheckOptions *InjectionCheckOptions `json:"injection_check_options,omitempty"`
