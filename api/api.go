@@ -317,14 +317,22 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		ID        string            `json:"id"`
 		Object    string            `json:"object"`
 		CreatedAt int64             `json:"created_at"`
+		Status    string            `json:"status"`
 		Model     string            `json:"model"`
 		Output    []ResponsesOutput `json:"output"`
+		Usage     ResponsesUsage    `json:"usage"`
 	}{
 		ID:        "resp_" + uuid.New().String()[:8],
 		Object:    "response",
 		CreatedAt: result.Created,
+		Status:    "completed",
 		Model:     result.Model,
 		Output:    output,
+		Usage: ResponsesUsage{
+			InputTokens:  result.Usage.PromptTokens,
+			OutputTokens: result.Usage.CompletionTokens,
+			TotalTokens:  result.Usage.TotalTokens,
+		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -143,6 +143,13 @@ type ResponsesTool struct {
 	Type string `json:"type"` // "web_search"
 }
 
+// ResponsesUsage represents token usage in the Responses API
+type ResponsesUsage struct {
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
+	TotalTokens  int64 `json:"total_tokens"`
+}
+
 // ResponsesRequest represents the incoming request for the Responses API
 type ResponsesRequest struct {
 	Model                 string                 `json:"model"`
