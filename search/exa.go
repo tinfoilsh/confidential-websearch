@@ -57,7 +57,7 @@ type exaResponse struct {
 func (p *ExaProvider) Search(ctx context.Context, query string, maxResults int) ([]Result, error) {
 	reqBody := exaRequest{
 		Query:      query,
-		Type:       "fast", // Use fast type to guarantee ZDR (Exa maintains the index)
+		Type:       "auto", // Use auto type to intelligently combine neural and keyword search
 		NumResults: maxResults,
 		Contents: &exaContentsParam{
 			Text: &exaTextParam{
