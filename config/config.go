@@ -15,7 +15,7 @@ const (
 
 // Search constants
 const (
-	DefaultMaxSearchResults = 5
+	DefaultMaxSearchResults = 10
 	MaxSearchContentLength  = 2000
 )
 
