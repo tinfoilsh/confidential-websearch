@@ -93,25 +93,25 @@ func TestErrorResponse(t *testing.T) {
 			name:           "validation error",
 			err:            &ValidationError{Field: "model", Message: "is required"},
 			expectedStatus: http.StatusBadRequest,
-			expectedType:   "validation_error",
+			expectedType:   ErrTypeInvalidRequest,
 		},
 		{
 			name:           "agent error",
 			err:            &AgentError{Err: errors.New("failed")},
 			expectedStatus: http.StatusInternalServerError,
-			expectedType:   "agent_error",
+			expectedType:   ErrTypeServer,
 		},
 		{
 			name:           "responder error",
 			err:            &ResponderError{Err: errors.New("failed")},
 			expectedStatus: http.StatusInternalServerError,
-			expectedType:   "responder_error",
+			expectedType:   ErrTypeServer,
 		},
 		{
 			name:           "unknown error",
 			err:            errors.New("something went wrong"),
 			expectedStatus: http.StatusInternalServerError,
-			expectedType:   "api_error",
+			expectedType:   ErrTypeServer,
 		},
 	}
 
@@ -123,7 +123,7 @@ func TestErrorResponse(t *testing.T) {
 				t.Errorf("expected status %d, got %d", tt.expectedStatus, status)
 			}
 
-			errObj, ok := body["error"].(map[string]string)
+			errObj, ok := body["error"].(map[string]any)
 			if !ok {
 				t.Fatal("expected error object in response")
 			}
@@ -146,13 +146,13 @@ func TestErrorResponseWithPipelineWrapper(t *testing.T) {
 		t.Errorf("expected status %d, got %d", http.StatusBadRequest, status)
 	}
 
-	errObj, ok := body["error"].(map[string]string)
+	errObj, ok := body["error"].(map[string]any)
 	if !ok {
 		t.Fatal("expected error object in response")
 	}
 
-	if errObj["type"] != "validation_error" {
-		t.Errorf("expected type %q, got %q", "validation_error", errObj["type"])
+	if errObj["type"] != ErrTypeInvalidRequest {
+		t.Errorf("expected type %q, got %q", ErrTypeInvalidRequest, errObj["type"])
 	}
 }
 

@@ -306,10 +306,14 @@ func TestRecoveryMiddleware_Panic(t *testing.T) {
 		t.Errorf("expected 500, got %d", w.Code)
 	}
 
-	var resp map[string]string
+	var resp map[string]any
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["error"] != "internal server error" {
-		t.Errorf("expected 'internal server error', got '%s'", resp["error"])
+	errObj, ok := resp["error"].(map[string]any)
+	if !ok {
+		t.Fatal("expected error object in response")
+	}
+	if errObj["message"] != "internal server error" {
+		t.Errorf("expected 'internal server error', got '%s'", errObj["message"])
 	}
 }
 
@@ -324,10 +328,14 @@ func TestJsonError(t *testing.T) {
 		t.Errorf("expected Content-Type application/json")
 	}
 
-	var resp map[string]string
+	var resp map[string]any
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["error"] != "test error message" {
-		t.Errorf("expected 'test error message', got '%s'", resp["error"])
+	errObj, ok := resp["error"].(map[string]any)
+	if !ok {
+		t.Fatal("expected error object in response")
+	}
+	if errObj["message"] != "test error message" {
+		t.Errorf("expected 'test error message', got '%s'", errObj["message"])
 	}
 }
 
@@ -336,7 +344,7 @@ func TestJsonErrorResponse(t *testing.T) {
 	body := map[string]any{
 		"error": map[string]string{
 			"message": "detailed error",
-			"type":    "invalid_request_error",
+			"type":    pipeline.ErrTypeInvalidRequest,
 		},
 	}
 	jsonErrorResponse(w, http.StatusUnprocessableEntity, body)

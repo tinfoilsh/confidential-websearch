@@ -244,8 +244,8 @@ func TestSSEEmitter_EmitError(t *testing.T) {
 	if !strings.Contains(body, "something went wrong") {
 		t.Error("expected error message")
 	}
-	if !strings.Contains(body, "api_error") {
-		t.Error("expected api_error type")
+	if !strings.Contains(body, pipeline.ErrTypeServer) {
+		t.Error("expected server_error type")
 	}
 }
 

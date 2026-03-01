@@ -9,6 +9,12 @@ import (
 	openai "github.com/openai/openai-go/v3"
 )
 
+// OpenAI API error type constants
+const (
+	ErrTypeInvalidRequest = "invalid_request_error"
+	ErrTypeServer         = "server_error"
+)
+
 // PipelineError wraps errors that occur during pipeline execution
 type PipelineError struct {
 	Stage string
@@ -86,34 +92,41 @@ func ErrorResponse(err error) (int, map[string]any) {
 	switch {
 	case errors.As(err, &validationErr):
 		return http.StatusBadRequest, map[string]any{
-			"error": map[string]string{
+			"error": map[string]any{
 				"message": validationErr.Message,
-				"type":    "validation_error",
-				"field":   validationErr.Field,
+				"type":    ErrTypeInvalidRequest,
+				"param":   validationErr.Field,
+				"code":    nil,
 			},
 		}
 
 	case errors.As(err, &agentErr):
 		return http.StatusInternalServerError, map[string]any{
-			"error": map[string]string{
+			"error": map[string]any{
 				"message": "agent processing failed",
-				"type":    "agent_error",
+				"type":    ErrTypeServer,
+				"param":   nil,
+				"code":    nil,
 			},
 		}
 
 	case errors.As(err, &responderErr):
 		return http.StatusInternalServerError, map[string]any{
-			"error": map[string]string{
+			"error": map[string]any{
 				"message": "response generation failed",
-				"type":    "responder_error",
+				"type":    ErrTypeServer,
+				"param":   nil,
+				"code":    nil,
 			},
 		}
 
 	default:
 		return http.StatusInternalServerError, map[string]any{
-			"error": map[string]string{
+			"error": map[string]any{
 				"message": "internal server error",
-				"type":    "api_error",
+				"type":    ErrTypeServer,
+				"param":   nil,
+				"code":    nil,
 			},
 		}
 	}

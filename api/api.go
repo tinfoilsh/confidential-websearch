@@ -29,10 +29,14 @@ func RecoveryMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 func jsonError(w http.ResponseWriter, message string, code int) {
 	log.WithField("code", code).Warn(message)
+	errType := pipeline.ErrTypeInvalidRequest
+	if code >= 500 {
+		errType = pipeline.ErrTypeServer
+	}
 	jsonErrorResponse(w, code, map[string]any{
 		"error": map[string]any{
 			"message": message,
-			"type":    "invalid_request_error",
+			"type":    errType,
 			"code":    nil,
 			"param":   nil,
 		},
@@ -387,6 +391,10 @@ func (s *Server) HandleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) HandleRoot(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		jsonError(w, fmt.Sprintf("Invalid URL (%s %s)", r.Method, r.URL.Path), http.StatusNotFound)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"service": "confidential-websearch", "status": "ok"})
 }
