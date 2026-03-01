@@ -2,11 +2,13 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync/atomic"
 	"time"
 
+	openai "github.com/openai/openai-go/v3"
 	"github.com/tinfoilsh/confidential-websearch/pipeline"
 )
 
@@ -338,6 +340,19 @@ func (e *ResponsesEmitter) EmitMessageEnd(text string, annotations []pipeline.An
 
 // EmitError emits an error event
 func (e *ResponsesEmitter) EmitError(err error) error {
+	// Pass through upstream API errors with their original structured fields
+	var apiErr *openai.Error
+	if errors.As(err, &apiErr) && apiErr.RawJSON() != "" {
+		var rawError map[string]any
+		if json.Unmarshal([]byte(apiErr.RawJSON()), &rawError) == nil {
+			return e.emit("error", map[string]any{
+				"type":            "error",
+				"sequence_number": e.nextSeq(),
+				"error":           rawError,
+			})
+		}
+	}
+
 	return e.emit("error", map[string]any{
 		"type":            "error",
 		"sequence_number": e.nextSeq(),

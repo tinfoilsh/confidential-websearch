@@ -29,7 +29,14 @@ func RecoveryMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 func jsonError(w http.ResponseWriter, message string, code int) {
 	log.WithField("code", code).Warn(message)
-	jsonErrorResponse(w, code, map[string]any{"error": message})
+	jsonErrorResponse(w, code, map[string]any{
+		"error": map[string]any{
+			"message": message,
+			"type":    "invalid_request_error",
+			"code":    nil,
+			"param":   nil,
+		},
+	})
 }
 
 func jsonErrorResponse(w http.ResponseWriter, code int, body map[string]any) {

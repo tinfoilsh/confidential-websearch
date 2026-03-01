@@ -1,9 +1,12 @@
 package pipeline
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+
+	openai "github.com/openai/openai-go/v3"
 )
 
 // PipelineError wraps errors that occur during pipeline execution
@@ -69,6 +72,15 @@ func ErrorResponse(err error) (int, map[string]any) {
 	// Check for pipeline error first and unwrap
 	if errors.As(err, &pipelineErr) {
 		err = pipelineErr.Err
+	}
+
+	// Pass through upstream API errors with their original status code and structured fields
+	var apiErr *openai.Error
+	if errors.As(err, &apiErr) && apiErr.RawJSON() != "" {
+		var rawError map[string]any
+		if json.Unmarshal([]byte(apiErr.RawJSON()), &rawError) == nil {
+			return apiErr.StatusCode, map[string]any{"error": rawError}
+		}
 	}
 
 	switch {
