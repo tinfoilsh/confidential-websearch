@@ -122,9 +122,11 @@ func (e *SSEEmitter) EmitError(err error) error {
 	}
 
 	errData, marshalErr := json.Marshal(map[string]any{
-		"error": map[string]string{
+		"error": map[string]any{
 			"message": err.Error(),
-			"type":    "api_error",
+			"type":    pipeline.ErrTypeServer,
+			"param":   nil,
+			"code":    nil,
 		},
 	})
 	if marshalErr != nil {

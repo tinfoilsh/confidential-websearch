@@ -357,8 +357,10 @@ func (e *ResponsesEmitter) EmitError(err error) error {
 		"type":            "error",
 		"sequence_number": e.nextSeq(),
 		"error": map[string]any{
-			"type":    "api_error",
+			"type":    pipeline.ErrTypeServer,
+			"code":    pipeline.ErrTypeServer,
 			"message": err.Error(),
+			"param":   nil,
 		},
 	})
 }
