@@ -206,6 +206,13 @@ func (s *Server) handleStreamingChatCompletion(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf("panic recovered in streaming chat completion: %v", r)
+			emitter.EmitError(fmt.Errorf("internal server error"))
+		}
+	}()
+
 	pctx, err := s.Pipeline.Execute(r.Context(), req, emitter, reqOpts...)
 	if pctx != nil && pctx.Cancel != nil {
 		defer pctx.Cancel()
@@ -228,6 +235,13 @@ func (s *Server) handleStreamingResponses(w http.ResponseWriter, r *http.Request
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf("panic recovered in streaming responses: %v", r)
+			emitter.EmitError(fmt.Errorf("internal server error"))
+		}
+	}()
 
 	// Emit response.created and response.in_progress at start
 	if err := emitter.EmitResponseStart(); err != nil {
