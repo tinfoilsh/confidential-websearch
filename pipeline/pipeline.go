@@ -2,33 +2,29 @@ package pipeline
 
 import (
 	"context"
-	"time"
 
 	"github.com/openai/openai-go/v3/option"
 )
 
 // Pipeline orchestrates the execution of stages for processing requests
 type Pipeline struct {
-	stages  []Stage
-	timeout time.Duration
+	stages []Stage
 }
 
 // NewPipeline creates a new pipeline with the given stages
-func NewPipeline(stages []Stage, timeout time.Duration) *Pipeline {
+func NewPipeline(stages []Stage) *Pipeline {
 	return &Pipeline{
-		stages:  stages,
-		timeout: timeout,
+		stages: stages,
 	}
 }
 
 // Execute runs all stages in order, stopping on first error
 func (p *Pipeline) Execute(ctx context.Context, req *Request, emitter EventEmitter, reqOpts ...option.RequestOption) (*Context, error) {
-	// Create context with timeout
-	timeoutCtx, cancel := context.WithTimeout(ctx, p.timeout)
+	ctx, cancel := context.WithCancel(ctx)
 
 	// Create pipeline context
 	pctx := &Context{
-		Context: timeoutCtx,
+		Context: ctx,
 		Request: req,
 		State:   NewStateTracker(),
 		Emitter: emitter,

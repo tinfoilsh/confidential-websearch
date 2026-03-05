@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"time"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/tinfoilsh/tinfoil-go"
@@ -13,7 +12,6 @@ import (
 
 const (
 	MaxRequestBodySize = 200 << 20 // 200 MB
-	RequestTimeout     = 2 * time.Minute
 )
 
 // Server holds all dependencies for the HTTP handlers

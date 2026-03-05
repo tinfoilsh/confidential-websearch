@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
-	"time"
 )
 
 // toJSON marshals a string to json.RawMessage for tests
@@ -38,9 +37,7 @@ func TestNewPipeline(t *testing.T) {
 		&MockStage{name: "stage1"},
 		&MockStage{name: "stage2"},
 	}
-	timeout := 30 * time.Second
-
-	p := NewPipeline(stages, timeout)
+	p := NewPipeline(stages)
 
 	if p == nil {
 		t.Fatal("expected non-nil pipeline")
@@ -49,10 +46,6 @@ func TestNewPipeline(t *testing.T) {
 	if len(p.stages) != 2 {
 		t.Errorf("expected 2 stages, got %d", len(p.stages))
 	}
-
-	if p.timeout != timeout {
-		t.Errorf("expected timeout %v, got %v", timeout, p.timeout)
-	}
 }
 
 func TestPipelineExecute_AllStagesRun(t *testing.T) {
@@ -60,7 +53,7 @@ func TestPipelineExecute_AllStagesRun(t *testing.T) {
 	stage2 := &MockStage{name: "stage2"}
 	stage3 := &MockStage{name: "stage3"}
 
-	p := NewPipeline([]Stage{stage1, stage2, stage3}, 30*time.Second)
+	p := NewPipeline([]Stage{stage1, stage2, stage3})
 
 	req := &Request{
 		Model:    "gpt-4",
@@ -100,7 +93,7 @@ func TestPipelineExecute_StopsOnError(t *testing.T) {
 	}
 	stage3 := &MockStage{name: "stage3"}
 
-	p := NewPipeline([]Stage{stage1, stage2, stage3}, 30*time.Second)
+	p := NewPipeline([]Stage{stage1, stage2, stage3})
 
 	req := &Request{
 		Model:    "gpt-4",
@@ -150,7 +143,7 @@ func TestPipelineExecute_SetsEmitter(t *testing.T) {
 		},
 	}
 
-	p := NewPipeline([]Stage{stage}, 30*time.Second)
+	p := NewPipeline([]Stage{stage})
 
 	req := &Request{
 		Model:    "gpt-4",
@@ -178,7 +171,7 @@ func TestPipelineExecute_SetsStateTracker(t *testing.T) {
 		},
 	}
 
-	p := NewPipeline([]Stage{stage}, 30*time.Second)
+	p := NewPipeline([]Stage{stage})
 
 	req := &Request{
 		Model:    "gpt-4",
@@ -203,7 +196,7 @@ func TestPipelineExecute_PassesRequestOptions(t *testing.T) {
 		},
 	}
 
-	p := NewPipeline([]Stage{stage}, 30*time.Second)
+	p := NewPipeline([]Stage{stage})
 
 	req := &Request{
 		Model:    "gpt-4",
@@ -233,7 +226,7 @@ func TestPipelineExecute_SetsCancelFunc(t *testing.T) {
 		},
 	}
 
-	p := NewPipeline([]Stage{stage}, 30*time.Second)
+	p := NewPipeline([]Stage{stage})
 
 	req := &Request{
 		Model:    "gpt-4",
@@ -266,7 +259,7 @@ func TestPipelineExecute_ContextPassedBetweenStages(t *testing.T) {
 		},
 	}
 
-	p := NewPipeline([]Stage{stage1, stage2}, 30*time.Second)
+	p := NewPipeline([]Stage{stage1, stage2})
 
 	req := &Request{
 		Model:    "gpt-4",
@@ -281,7 +274,7 @@ func TestPipelineExecute_ContextPassedBetweenStages(t *testing.T) {
 }
 
 func TestPipelineExecute_EmptyPipeline(t *testing.T) {
-	p := NewPipeline([]Stage{}, 30*time.Second)
+	p := NewPipeline([]Stage{})
 
 	req := &Request{
 		Model:    "gpt-4",
@@ -309,7 +302,7 @@ func TestPipelineExecute_ErrorMetadata(t *testing.T) {
 		},
 	}
 
-	p := NewPipeline([]Stage{stage}, 30*time.Second)
+	p := NewPipeline([]Stage{stage})
 
 	req := &Request{
 		Model:    "gpt-4",
