@@ -63,7 +63,7 @@ func main() {
 		},
 		&pipeline.BuildMessagesStage{Builder: messageBuilder},
 		&pipeline.ResponderStage{Responder: responder},
-	}, api.RequestTimeout)
+	})
 
 	srv := &api.Server{
 		Cfg:      cfg,

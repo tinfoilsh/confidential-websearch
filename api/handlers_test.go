@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/openai/openai-go/v3/option"
 
@@ -510,12 +509,6 @@ func TestChatCompletions_PipelineError(t *testing.T) {
 
 	if w.Code == http.StatusOK {
 		t.Error("expected error status code")
-	}
-}
-
-func TestRequestTimeout_Constant(t *testing.T) {
-	if RequestTimeout != 2*time.Minute {
-		t.Errorf("expected RequestTimeout to be 2 minutes, got %v", RequestTimeout)
 	}
 }
 

@@ -73,7 +73,7 @@ func setupIntegrationServer(t *testing.T) *api.Server {
 		},
 		&pipeline.BuildMessagesStage{Builder: messageBuilder},
 		&pipeline.ResponderStage{Responder: responder},
-	}, api.RequestTimeout)
+	})
 
 	return &api.Server{
 		Cfg:      cfg,
