@@ -35,7 +35,7 @@ func TestBuildSimpleMessages(t *testing.T) {
 		{Role: "user", Content: toJSON("What is the weather?")},
 	}
 
-	result := builder.Build(messages, nil)
+	result := builder.Build(messages, nil, nil)
 
 	if len(result) != 4 {
 		t.Fatalf("expected 4 messages, got %d", len(result))
@@ -88,7 +88,7 @@ func TestBuildWithSearchResults(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(messages, searchResults)
+	result := builder.Build(messages, nil, searchResults)
 
 	// Should have: user message + user message with search results
 	if len(result) != 2 {
@@ -137,7 +137,7 @@ func TestBuildWithMultipleToolCalls(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(messages, searchResults)
+	result := builder.Build(messages, nil, searchResults)
 
 	// Should have: user message + user message with all search results combined
 	if len(result) != 2 {
@@ -164,7 +164,7 @@ func TestBuildWithEmptySearchResults(t *testing.T) {
 	// Empty search results
 	searchResults := []agent.ToolCall{}
 
-	result := builder.Build(messages, searchResults)
+	result := builder.Build(messages, nil, searchResults)
 
 	// Should only have the user message (no search results injection)
 	if len(result) != 1 {
@@ -179,7 +179,7 @@ func TestBuildWithNilSearchResults(t *testing.T) {
 		{Role: "user", Content: toJSON("Hello")},
 	}
 
-	result := builder.Build(messages, nil)
+	result := builder.Build(messages, nil, nil)
 
 	if len(result) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(result))
@@ -204,7 +204,7 @@ func TestSearchResultsContainFormattedResults(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(messages, searchResults)
+	result := builder.Build(messages, nil, searchResults)
 
 	// Get the search results message (now a user message with plain text)
 	if result[1].OfUser == nil {
@@ -234,7 +234,7 @@ func TestSearchResultsMessageContainsPrompt(t *testing.T) {
 		{ID: "call_1", Query: "something", Results: []search.Result{{Title: "T", URL: "U", Content: "C"}}},
 	}
 
-	result := builder.Build(messages, searchResults)
+	result := builder.Build(messages, nil, searchResults)
 
 	// Last message should contain both search results and the prompt
 	lastMsg := result[len(result)-1]

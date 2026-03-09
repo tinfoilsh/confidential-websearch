@@ -16,6 +16,7 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/agent"
 	"github.com/tinfoilsh/confidential-websearch/api"
 	"github.com/tinfoilsh/confidential-websearch/config"
+	"github.com/tinfoilsh/confidential-websearch/fetch"
 	"github.com/tinfoilsh/confidential-websearch/llm"
 	"github.com/tinfoilsh/confidential-websearch/pipeline"
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
@@ -51,9 +52,11 @@ func main() {
 
 	// Wrap agent with SafeAgent to support per-request PII filtering via tools
 	agentRunner := agent.NewSafeAgent(baseAgent, safeguardClient)
+	urlFetcher := fetch.NewFetcher()
 
 	p := pipeline.NewPipeline([]pipeline.Stage{
 		&pipeline.ValidateStage{},
+		&pipeline.FetchURLsStage{Fetcher: urlFetcher},
 		&pipeline.AgentStage{Agent: agentRunner},
 		&pipeline.SearchStage{Searcher: searcher},
 		&pipeline.FilterResultsStage{

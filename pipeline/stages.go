@@ -11,6 +11,7 @@ import (
 
 	"github.com/tinfoilsh/confidential-websearch/agent"
 	"github.com/tinfoilsh/confidential-websearch/config"
+	"github.com/tinfoilsh/confidential-websearch/fetch"
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
 	"github.com/tinfoilsh/confidential-websearch/search"
 )
@@ -33,7 +34,7 @@ type SafeguardChecker interface {
 
 // MessageBuilder defines the interface for building responder messages
 type MessageBuilder interface {
-	Build(inputMessages []Message, searchResults []agent.ToolCall) []openai.ChatCompletionMessageParamUnion
+	Build(inputMessages []Message, fetchedPages []fetch.FetchedPage, searchResults []agent.ToolCall) []openai.ChatCompletionMessageParamUnion
 }
 
 // ResponderParams contains parameters for a responder LLM call
@@ -94,6 +95,31 @@ func (s *ValidateStage) Execute(ctx *Context) error {
 		}
 		ctx.UserQuery = ctx.Request.Input
 	}
+
+	return nil
+}
+
+// URLFetcher defines the interface for fetching URL contents
+type URLFetcher interface {
+	FetchURLs(ctx context.Context, urls []string) []fetch.FetchedPage
+}
+
+// FetchURLsStage extracts URLs from user messages and fetches their contents
+type FetchURLsStage struct {
+	Fetcher URLFetcher
+}
+
+func (s *FetchURLsStage) Name() string { return "fetch_urls" }
+
+func (s *FetchURLsStage) Execute(ctx *Context) error {
+	urls := fetch.ExtractURLs(ctx.UserQuery)
+	if len(urls) == 0 {
+		return nil
+	}
+
+	log.Debugf("Found %d URL(s) in user message, fetching contents", len(urls))
+	ctx.FetchedPages = s.Fetcher.FetchURLs(ctx.Context, urls)
+	log.Debugf("Successfully fetched %d/%d page(s)", len(ctx.FetchedPages), len(urls))
 
 	return nil
 }
@@ -295,7 +321,7 @@ func (s *BuildMessagesStage) Execute(ctx *Context) error {
 		messages = []Message{{Role: "user", Content: contentJSON}}
 	}
 
-	ctx.ResponderMessages = s.Builder.Build(messages, ctx.SearchResults)
+	ctx.ResponderMessages = s.Builder.Build(messages, ctx.FetchedPages, ctx.SearchResults)
 	return nil
 }
 

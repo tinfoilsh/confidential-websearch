@@ -7,6 +7,7 @@ import (
 	"github.com/openai/openai-go/v3"
 
 	"github.com/tinfoilsh/confidential-websearch/agent"
+	"github.com/tinfoilsh/confidential-websearch/fetch"
 	"github.com/tinfoilsh/confidential-websearch/pipeline"
 )
 
@@ -19,7 +20,7 @@ func NewMessageBuilder() *MessageBuilder {
 }
 
 // Build creates the message array for the responder LLM call
-func (b *MessageBuilder) Build(inputMessages []pipeline.Message, searchResults []agent.ToolCall) []openai.ChatCompletionMessageParamUnion {
+func (b *MessageBuilder) Build(inputMessages []pipeline.Message, fetchedPages []fetch.FetchedPage, searchResults []agent.ToolCall) []openai.ChatCompletionMessageParamUnion {
 	var messages []openai.ChatCompletionMessageParamUnion
 
 	for _, msg := range inputMessages {
@@ -35,6 +36,15 @@ func (b *MessageBuilder) Build(inputMessages []pipeline.Message, searchResults [
 				messages = append(messages, openai.AssistantMessage(contentToString(msg.Content)))
 			}
 		}
+	}
+
+	// If we have fetched pages (from URLs in user messages), include their contents
+	if len(fetchedPages) > 0 {
+		var pagesText string
+		for _, page := range fetchedPages {
+			pagesText += fmt.Sprintf("[%s]\n%s\n\n", page.URL, page.Content)
+		}
+		messages = append(messages, openai.UserMessage("Here are the contents of pages linked in the conversation:\n\n"+pagesText+"Use these page contents to inform your response."))
 	}
 
 	// If we have search results, include them as plain text context.
