@@ -9,6 +9,7 @@ import (
 	"github.com/openai/openai-go/v3/option"
 
 	"github.com/tinfoilsh/confidential-websearch/agent"
+	"github.com/tinfoilsh/confidential-websearch/fetch"
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
 	"github.com/tinfoilsh/confidential-websearch/search"
 )
@@ -27,12 +28,12 @@ func (m *MockAgentRunner) RunWithContext(ctx context.Context, messages []agent.C
 
 // MockMessageBuilder implements MessageBuilder for testing
 type MockMessageBuilder struct {
-	BuildFunc func(inputMessages []Message, searchResults []agent.ToolCall) []openai.ChatCompletionMessageParamUnion
+	BuildFunc func(inputMessages []Message, fetchedPages []fetch.FetchedPage, searchResults []agent.ToolCall) []openai.ChatCompletionMessageParamUnion
 }
 
-func (m *MockMessageBuilder) Build(inputMessages []Message, searchResults []agent.ToolCall) []openai.ChatCompletionMessageParamUnion {
+func (m *MockMessageBuilder) Build(inputMessages []Message, fetchedPages []fetch.FetchedPage, searchResults []agent.ToolCall) []openai.ChatCompletionMessageParamUnion {
 	if m.BuildFunc != nil {
-		return m.BuildFunc(inputMessages, searchResults)
+		return m.BuildFunc(inputMessages, fetchedPages, searchResults)
 	}
 	return []openai.ChatCompletionMessageParamUnion{}
 }
@@ -349,7 +350,7 @@ func TestAgentStage_Error(t *testing.T) {
 
 func TestBuildMessagesStage_Success(t *testing.T) {
 	mockBuilder := &MockMessageBuilder{
-		BuildFunc: func(inputMessages []Message, searchResults []agent.ToolCall) []openai.ChatCompletionMessageParamUnion {
+		BuildFunc: func(inputMessages []Message, fetchedPages []fetch.FetchedPage, searchResults []agent.ToolCall) []openai.ChatCompletionMessageParamUnion {
 			return []openai.ChatCompletionMessageParamUnion{
 				openai.UserMessage("test"),
 			}

@@ -8,6 +8,7 @@ import (
 	"github.com/openai/openai-go/v3/option"
 
 	"github.com/tinfoilsh/confidential-websearch/agent"
+	"github.com/tinfoilsh/confidential-websearch/fetch"
 )
 
 // APIFormat indicates which API format the request uses
@@ -95,7 +96,8 @@ type Context struct {
 
 	// Intermediate results
 	AgentResult       *agent.Result
-	SearchResults     []agent.ToolCall // Executed search results
+	FetchedPages      []fetch.FetchedPage // Pages fetched from URLs in user messages
+	SearchResults     []agent.ToolCall    // Executed search results
 	ResponderMessages []openai.ChatCompletionMessageParamUnion
 	ResponderResult   *ResponderResultData // Non-streaming responder result
 
