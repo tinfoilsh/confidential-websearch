@@ -39,7 +39,7 @@ type Config struct {
 // Load creates a new config from environment variables
 func Load() *Config {
 	return &Config{
-		AgentModel:           getEnv("AGENT_MODEL", "gpt-oss-120b-free"),
+		AgentModel:           getEnv("AGENT_MODEL", "gpt-oss-120b"),
 		TinfoilAPIKey:        os.Getenv("TINFOIL_API_KEY"),
 		ExaAPIKey:            os.Getenv("EXA_API_KEY"),
 		ListenAddr:           getEnv("LISTEN_ADDR", ":8089"),
