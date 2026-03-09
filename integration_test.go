@@ -181,7 +181,8 @@ func TestIntegration_ChatCompletions_SearchQuery(t *testing.T) {
 		"messages": []map[string]string{
 			{"role": "user", "content": "What is the current weather in San Francisco? Search the web for the latest information."},
 		},
-		"stream": false,
+		"stream":             false,
+		"web_search_options": map[string]any{},
 	}
 	bodyBytes, _ := json.Marshal(requestBody)
 
