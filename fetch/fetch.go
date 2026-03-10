@@ -20,6 +20,7 @@ const (
 	maxContentLength  = 50000      // 50K chars max output per page
 	fetchTimeout      = 10 * time.Second
 	maxConcurrentURLs = 5
+	maxURLsPerMessage = 10
 )
 
 // httpDoer is the interface for making HTTP requests (satisfied by both http.Client and safeurl.WrappedClient)
@@ -75,6 +76,9 @@ func ExtractURLs(text string) []string {
 			seen[u] = true
 			unique = append(unique, u)
 		}
+	}
+	if len(unique) > maxURLsPerMessage {
+		unique = unique[:maxURLsPerMessage]
 	}
 	return unique
 }
