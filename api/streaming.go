@@ -44,10 +44,10 @@ func (e *SSEEmitter) emit(data []byte) error {
 // Wrapped in chat.completion.chunk envelope so SDKs don't fail parsing.
 func (e *SSEEmitter) EmitSearchCall(id, status, query, reason string, created int64, model string) error {
 	event := WebSearchCall{
-		Type:    "web_search_call",
+		Type:    ItemTypeWebSearchCall,
 		ID:      id,
 		Status:  status,
-		Object:  "chat.completion.chunk",
+		Object:  ObjectChatCompletionChunk,
 		Created: created,
 		Model:   model,
 		Choices: []any{},
@@ -59,13 +59,44 @@ func (e *SSEEmitter) EmitSearchCall(id, status, query, reason string, created in
 
 	if query != "" {
 		event.Action = &WebSearchAction{
-			Type:  "search",
+			Type:  ActionTypeSearch,
 			Query: query,
 		}
 	}
 
 	if reason != "" {
 		event.Reason = reason
+	}
+
+	data, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	return e.emit(data)
+}
+
+// EmitFetchCall emits a URL fetch status event (action.type "open_page").
+// Wrapped in chat.completion.chunk envelope so SDKs don't fail parsing.
+func (e *SSEEmitter) EmitFetchCall(id, status, url string, created int64, model string) error {
+	event := WebSearchCall{
+		Type:    ItemTypeWebSearchCall,
+		ID:      id,
+		Status:  status,
+		Object:  ObjectChatCompletionChunk,
+		Created: created,
+		Model:   model,
+		Choices: []any{},
+	}
+
+	if created == 0 {
+		event.Created = time.Now().Unix()
+	}
+
+	if url != "" {
+		event.Action = &WebSearchAction{
+			Type: ActionTypeOpenPage,
+			URL:  url,
+		}
 	}
 
 	data, err := json.Marshal(event)
@@ -84,7 +115,7 @@ func (e *SSEEmitter) EmitMetadata(id string, created int64, model string, annota
 
 	chunk := StreamingChunk{
 		ID:      id,
-		Object:  "chat.completion.chunk",
+		Object:  ObjectChatCompletionChunk,
 		Created: created,
 		Model:   model,
 		Choices: []StreamingChoice{

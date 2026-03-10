@@ -57,6 +57,10 @@ type mockMetadataCall struct {
 	SearchReasoning string
 }
 
+func (m *MockEventEmitter) EmitFetchCall(id, status, url string, created int64, model string) error {
+	return nil
+}
+
 func (m *MockEventEmitter) EmitSearchCall(id, status, query, reason string, created int64, model string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

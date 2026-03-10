@@ -12,6 +12,39 @@ import (
 
 const (
 	MaxRequestBodySize = 200 << 20 // 200 MB
+
+	// Object types
+	ObjectChatCompletionChunk = "chat.completion.chunk"
+	ObjectResponse            = "response"
+
+	// Item types
+	ItemTypeWebSearchCall = "web_search_call"
+	ItemTypeMessage       = "message"
+
+	// Content types
+	ContentTypeOutputText  = "output_text"
+	ContentTypeURLCitation = "url_citation"
+
+	// Action types
+	ActionTypeSearch   = "search"
+	ActionTypeOpenPage = "open_page"
+
+	// Status values
+	StatusInProgress = "in_progress"
+	StatusCompleted  = "completed"
+	StatusFailed     = "failed"
+	StatusBlocked    = "blocked"
+
+	// Roles
+	RoleAssistant = "assistant"
+
+	// Finish reasons
+	FinishReasonStop = "stop"
+
+	// ID prefixes
+	IDPrefixWebSearch = "ws_"
+	IDPrefixResponse  = "resp_"
+	IDPrefixMessage   = "msg_"
 )
 
 // Server holds all dependencies for the HTTP handlers
@@ -114,7 +147,8 @@ type FlatAnnotation struct {
 // WebSearchAction contains the search query details
 type WebSearchAction struct {
 	Type  string `json:"type"`
-	Query string `json:"query"`
+	Query string `json:"query,omitempty"`
+	URL   string `json:"url,omitempty"`
 }
 
 // ResponsesOutput represents the output array in Responses API
@@ -187,10 +221,18 @@ type BlockedSearch struct {
 //   - annotations: URL citations from web search (standard format)
 //   - search_reasoning: Agent's reasoning about search decisions (extension)
 //   - blocked_searches: Queries blocked by safety filters (extension)
+// FetchCall represents a URL fetch that was performed
+type FetchCall struct {
+	ID     string           `json:"id"`
+	Status string           `json:"status"`
+	Action *WebSearchAction `json:"action"`
+}
+
 type ChatCompletionMessageOutput struct {
 	Role            string                `json:"role"`
 	Content         string                `json:"content"`
 	Annotations     []pipeline.Annotation `json:"annotations,omitempty"`
 	SearchReasoning string                `json:"search_reasoning,omitempty"`
 	BlockedSearches []BlockedSearch       `json:"blocked_searches,omitempty"`
+	FetchCalls      []FetchCall           `json:"fetch_calls,omitempty"`
 }

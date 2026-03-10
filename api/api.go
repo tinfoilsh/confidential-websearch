@@ -79,7 +79,7 @@ func buildFlatAnnotations(toolCalls []agent.ToolCall) []FlatAnnotation {
 	for _, tc := range toolCalls {
 		for _, r := range tc.Results {
 			annotations = append(annotations, FlatAnnotation{
-				Type:  "url_citation",
+				Type:  ContentTypeURLCitation,
 				URL:   r.URL,
 				Title: r.Title,
 			})
@@ -172,6 +172,19 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 		}
 	}
 
+	// Build fetch calls from pages that made it through the pipeline
+	var fetchCalls []FetchCall
+	for i, fp := range pctx.FetchedPages {
+		fetchCalls = append(fetchCalls, FetchCall{
+			ID:     fmt.Sprintf("%s%s%d", IDPrefixWebSearch, pipeline.FetchIDPrefix, i),
+			Status: StatusCompleted,
+			Action: &WebSearchAction{
+				Type: ActionTypeOpenPage,
+				URL:  fp.URL,
+			},
+		})
+	}
+
 	response := ChatCompletionResponse{
 		ID:      result.ID,
 		Object:  result.Object,
@@ -181,13 +194,14 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 		Choices: []ChatCompletionChoiceOutput{
 			{
 				Index:        0,
-				FinishReason: "stop",
+				FinishReason: FinishReasonStop,
 				Message: ChatCompletionMessageOutput{
-					Role:            "assistant",
+					Role:            RoleAssistant,
 					Content:         result.Content,
 					Annotations:     annotations,
 					SearchReasoning: agentReasoning,
 					BlockedSearches: blockedSearches,
+					FetchCalls:      fetchCalls,
 				},
 			},
 		},
@@ -229,7 +243,7 @@ func (s *Server) handleStreamingChatCompletion(w http.ResponseWriter, r *http.Re
 func (s *Server) handleStreamingResponses(w http.ResponseWriter, r *http.Request, req *pipeline.Request, reqOpts []option.RequestOption) {
 	log.Infof("Processing streaming responses request (model: %s)", req.Model)
 
-	responseID := "resp_" + uuid.New().String()[:8]
+	responseID := IDPrefixResponse + uuid.New().String()[:8]
 	emitter, err := NewResponsesEmitter(w, responseID, req.Model)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -334,38 +348,51 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	if pctx.AgentResult != nil {
 		for _, bq := range pctx.AgentResult.BlockedQueries {
 			output = append(output, ResponsesOutput{
-				Type:   "web_search_call",
-				ID:     "ws_" + bq.ID,
-				Status: "blocked",
+				Type:   ItemTypeWebSearchCall,
+				ID:     IDPrefixWebSearch + bq.ID,
+				Status: StatusBlocked,
 				Reason: bq.Reason,
 				Action: &WebSearchAction{
-					Type:  "search",
+					Type:  ActionTypeSearch,
 					Query: bq.Query,
 				},
 			})
 		}
 	}
 
+	// Add fetch calls for pages that made it through the pipeline
+	for i, fp := range pctx.FetchedPages {
+		output = append(output, ResponsesOutput{
+			Type:   ItemTypeWebSearchCall,
+			ID:     fmt.Sprintf("%s%s%d", IDPrefixWebSearch, pipeline.FetchIDPrefix, i),
+			Status: StatusCompleted,
+			Action: &WebSearchAction{
+				Type: ActionTypeOpenPage,
+				URL:  fp.URL,
+			},
+		})
+	}
+
 	for _, tc := range pctx.SearchResults {
 		output = append(output, ResponsesOutput{
-			Type:   "web_search_call",
-			ID:     "ws_" + tc.ID,
-			Status: "completed",
+			Type:   ItemTypeWebSearchCall,
+			ID:     IDPrefixWebSearch + tc.ID,
+			Status: StatusCompleted,
 			Action: &WebSearchAction{
-				Type:  "search",
+				Type:  ActionTypeSearch,
 				Query: tc.Query,
 			},
 		})
 	}
 
 	output = append(output, ResponsesOutput{
-		Type:   "message",
-		ID:     "msg_" + uuid.New().String()[:8],
-		Status: "completed",
-		Role:   "assistant",
+		Type:   ItemTypeMessage,
+		ID:     IDPrefixMessage + uuid.New().String()[:8],
+		Status: StatusCompleted,
+		Role:   RoleAssistant,
 		Content: []ResponsesContent{
 			{
-				Type:            "output_text",
+				Type:            ContentTypeOutputText,
 				Text:            result.Content,
 				Annotations:     flatAnnotations,
 				SearchReasoning: agentReasoning,
@@ -382,10 +409,10 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		Output    []ResponsesOutput `json:"output"`
 		Usage     ResponsesUsage    `json:"usage"`
 	}{
-		ID:        "resp_" + uuid.New().String()[:8],
-		Object:    "response",
+		ID:        IDPrefixResponse + uuid.New().String()[:8],
+		Object:    ObjectResponse,
 		CreatedAt: result.Created,
-		Status:    "completed",
+		Status:    StatusCompleted,
 		Model:     result.Model,
 		Output:    output,
 		Usage: ResponsesUsage{
