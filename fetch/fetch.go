@@ -87,7 +87,14 @@ func (f *Fetcher) FetchURLs(ctx context.Context, urls []string) []FetchedPage {
 	sem := make(chan struct{}, maxConcurrentURLs)
 
 	for _, u := range urls {
-		sem <- struct{}{} // acquire before spawning goroutine
+		// Respect context cancellation while waiting for a semaphore slot
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+		}
+		if ctx.Err() != nil {
+			break
+		}
 		wg.Add(1)
 		go func(rawURL string) {
 			defer wg.Done()
