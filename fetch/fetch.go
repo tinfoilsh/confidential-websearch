@@ -16,9 +16,10 @@ import (
 )
 
 const (
-	maxResponseBytes = 512 * 1024 // 512KB max response body
-	maxContentLength = 50000      // 50K chars max output per page
-	fetchTimeout     = 10 * time.Second
+	maxResponseBytes  = 512 * 1024 // 512KB max response body
+	maxContentLength  = 50000      // 50K chars max output per page
+	fetchTimeout      = 10 * time.Second
+	maxConcurrentURLs = 5
 )
 
 // httpDoer is the interface for making HTTP requests (satisfied by both http.Client and safeurl.WrappedClient)
@@ -83,11 +84,14 @@ func (f *Fetcher) FetchURLs(ctx context.Context, urls []string) []FetchedPage {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var pages []FetchedPage
+	sem := make(chan struct{}, maxConcurrentURLs)
 
 	for _, u := range urls {
+		sem <- struct{}{} // acquire before spawning goroutine
 		wg.Add(1)
 		go func(rawURL string) {
 			defer wg.Done()
+			defer func() { <-sem }()
 
 			content, err := f.fetchURL(ctx, rawURL)
 			if err != nil {
