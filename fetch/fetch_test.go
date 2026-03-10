@@ -163,9 +163,7 @@ func TestFetchURLs_Markdown(t *testing.T) {
 }
 
 func TestFetchURLs_ParallelMultipleURLs(t *testing.T) {
-	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
 		w.Header().Set("Content-Type", "text/plain")
 		w.Write([]byte("page " + r.URL.Path))
 	}))
