@@ -11,6 +11,7 @@ import (
 	"time"
 
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
+	"github.com/doyensec/safeurl"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -20,6 +21,11 @@ const (
 	fetchTimeout     = 10 * time.Second
 )
 
+// httpDoer is the interface for making HTTP requests (satisfied by both http.Client and safeurl.WrappedClient)
+type httpDoer interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
 // FetchedPage represents a fetched URL and its text content
 type FetchedPage struct {
 	URL     string
@@ -28,25 +34,25 @@ type FetchedPage struct {
 
 // Fetcher fetches URL contents from user messages
 type Fetcher struct {
-	client *http.Client
+	client httpDoer
 }
 
-// NewFetcher creates a new URL fetcher
+// NewFetcher creates a new URL fetcher with SSRF protection
 func NewFetcher() *Fetcher {
+	config := safeurl.GetConfigBuilder().
+		SetTimeout(fetchTimeout).
+		SetAllowedSchemes("http", "https").
+		Build()
+	return &Fetcher{
+		client: safeurl.Client(config),
+	}
+}
+
+// newUnsafeFetcher creates a fetcher without SSRF checks (for testing with httptest)
+func newUnsafeFetcher() *Fetcher {
 	return &Fetcher{
 		client: &http.Client{
 			Timeout: fetchTimeout,
-			Transport: &http.Transport{
-				MaxIdleConns:        20,
-				MaxIdleConnsPerHost: 5,
-				IdleConnTimeout:     30 * time.Second,
-			},
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 5 {
-					return fmt.Errorf("too many redirects")
-				}
-				return nil
-			},
 		},
 	}
 }
@@ -106,8 +112,8 @@ func (f *Fetcher) FetchURLs(ctx context.Context, urls []string) []FetchedPage {
 }
 
 // fetchURL fetches a single URL and returns its content as clean text/markdown
-func (f *Fetcher) fetchURL(ctx context.Context, url string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+func (f *Fetcher) fetchURL(ctx context.Context, rawURL string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return "", err
 	}
