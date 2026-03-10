@@ -62,21 +62,38 @@ func newUnsafeFetcher() *Fetcher {
 // urlPattern matches http/https URLs in text
 var urlPattern = regexp.MustCompile(`https?://[^\s<>"'\)\]\}]+`)
 
+// bareDomainPattern matches bare domains like example.com or sub.example.com/path
+// Must have a valid TLD (2+ alpha chars) and not be preceded by :// (already matched above)
+var bareDomainPattern = regexp.MustCompile(`(?:^|[\s(])([a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}(?:/[^\s<>"'\)\]\}]*)?)`)
+
 // ExtractURLs finds all URLs in the given text
 func ExtractURLs(text string) []string {
-	matches := urlPattern.FindAllString(text, -1)
-
-	// Deduplicate and clean
 	seen := make(map[string]bool)
 	var unique []string
-	for _, u := range matches {
-		// Trim trailing punctuation that's likely not part of the URL
+
+	add := func(u string) {
 		u = strings.TrimRight(u, ".,;:!?")
 		if !seen[u] {
 			seen[u] = true
 			unique = append(unique, u)
 		}
 	}
+
+	// Match explicit http/https URLs first
+	for _, u := range urlPattern.FindAllString(text, -1) {
+		add(u)
+	}
+
+	// Match bare domains (e.g. example.com, example.com/path) and prepend https://
+	for _, m := range bareDomainPattern.FindAllStringSubmatch(text, -1) {
+		bare := strings.TrimRight(m[1], ".,;:!?")
+		full := "https://" + bare
+		if seen[full] || seen["http://"+bare] {
+			continue
+		}
+		add(full)
+	}
+
 	if len(unique) > maxURLsPerMessage {
 		unique = unique[:maxURLsPerMessage]
 	}

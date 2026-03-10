@@ -58,6 +58,41 @@ func TestExtractURLs(t *testing.T) {
 			input:    "see https://example.com/page#section",
 			expected: []string{"https://example.com/page#section"},
 		},
+		{
+			name:     "bare domain",
+			input:    "what does example.com say about this?",
+			expected: []string{"https://example.com"},
+		},
+		{
+			name:     "bare domain with path",
+			input:    "check out example.com/about for more info",
+			expected: []string{"https://example.com/about"},
+		},
+		{
+			name:     "bare subdomain",
+			input:    "see docs.example.com for details",
+			expected: []string{"https://docs.example.com"},
+		},
+		{
+			name:     "bare domain at start of text",
+			input:    "example.com has great content",
+			expected: []string{"https://example.com"},
+		},
+		{
+			name:     "bare domain not duplicated with full URL",
+			input:    "visit https://example.com or example.com",
+			expected: []string{"https://example.com"},
+		},
+		{
+			name:     "not a domain - single word",
+			input:    "hello world",
+			expected: nil,
+		},
+		{
+			name:     "not a domain - no TLD",
+			input:    "check localhost for details",
+			expected: nil,
+		},
 	}
 
 	for _, tt := range tests {
