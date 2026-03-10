@@ -238,7 +238,37 @@ func (s *FilterResultsStage) Execute(ctx *Context) error {
 	if ctx.Request != nil {
 		enabled = ctx.Request.InjectionCheckEnabled
 	}
-	if !enabled || s.Checker == nil || len(ctx.SearchResults) == 0 {
+	if !enabled || s.Checker == nil {
+		return nil
+	}
+
+	// Filter fetched pages for prompt injection
+	if len(ctx.FetchedPages) > 0 {
+		var pageContents []string
+		for _, p := range ctx.FetchedPages {
+			pageContents = append(pageContents, p.Content)
+		}
+		pageResults := safeguard.CheckItems(ctx.Context, s.Checker, s.Policy, pageContents)
+		var cleanPages []fetch.FetchedPage
+		for i, r := range pageResults {
+			if r.Err != nil {
+				log.Errorf("Injection check failed for fetched page: %v", r.Err)
+				cleanPages = append(cleanPages, ctx.FetchedPages[i])
+				continue
+			}
+			if r.Violation {
+				log.Warnf("Prompt injection detected in fetched page %s: %s", ctx.FetchedPages[i].URL, r.Rationale)
+				continue
+			}
+			cleanPages = append(cleanPages, ctx.FetchedPages[i])
+		}
+		if removed := len(ctx.FetchedPages) - len(cleanPages); removed > 0 {
+			log.Infof("Injection filter: removed %d fetched page(s)", removed)
+		}
+		ctx.FetchedPages = cleanPages
+	}
+
+	if len(ctx.SearchResults) == 0 {
 		return nil
 	}
 
