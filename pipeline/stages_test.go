@@ -85,6 +85,10 @@ func (m *MockEventEmitter) EmitSearchCall(id, status, query, reason string, crea
 	return nil
 }
 
+func (m *MockEventEmitter) EmitFetchCall(id, status, url string, created int64, model string) error {
+	return nil
+}
+
 func (m *MockEventEmitter) EmitMetadata(id string, created int64, model string, annotations []Annotation, searchReasoning string) error {
 	m.MetadataCalls = append(m.MetadataCalls, struct {
 		Annotations     []Annotation

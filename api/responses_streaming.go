@@ -72,9 +72,9 @@ func (e *ResponsesEmitter) EmitResponseStart() error {
 		"sequence_number": e.nextSeq(),
 		"response": map[string]any{
 			"id":         e.responseID,
-			"object":     "response",
+			"object":     ObjectResponse,
 			"created_at": e.createdAt,
-			"status":     "in_progress",
+			"status":     StatusInProgress,
 			"model":      e.model,
 			"output":     []any{},
 		},
@@ -88,38 +88,32 @@ func (e *ResponsesEmitter) EmitResponseStart() error {
 		"sequence_number": e.nextSeq(),
 		"response": map[string]any{
 			"id":         e.responseID,
-			"object":     "response",
+			"object":     ObjectResponse,
 			"created_at": e.createdAt,
-			"status":     "in_progress",
+			"status":     StatusInProgress,
 			"model":      e.model,
 		},
 	})
 }
 
-// EmitSearchCall emits web search status events (response.web_search_call.*)
-func (e *ResponsesEmitter) EmitSearchCall(id, status, query, reason string, created int64, model string) error {
-	itemID := "ws_" + id
-
+// emitWebSearchCallEvents emits the standard event sequence for a web_search_call item
+func (e *ResponsesEmitter) emitWebSearchCallEvents(itemID, status string, action map[string]any, reason string) error {
 	switch status {
-	case "in_progress":
-		// First emit output_item.added
+	case StatusInProgress:
+		item := map[string]any{
+			"type":   ItemTypeWebSearchCall,
+			"id":     itemID,
+			"status": StatusInProgress,
+			"action": action,
+		}
 		if err := e.emit("response.output_item.added", map[string]any{
 			"type":            "response.output_item.added",
 			"sequence_number": e.nextSeq(),
 			"output_index":    e.outputIdx,
-			"item": map[string]any{
-				"type":   "web_search_call",
-				"id":     itemID,
-				"status": "in_progress",
-				"action": map[string]any{
-					"type":  "search",
-					"query": query,
-				},
-			},
+			"item":            item,
 		}); err != nil {
 			return err
 		}
-		// Then emit web_search_call.in_progress
 		return e.emit("response.web_search_call.in_progress", map[string]any{
 			"type":            "response.web_search_call.in_progress",
 			"sequence_number": e.nextSeq(),
@@ -127,16 +121,7 @@ func (e *ResponsesEmitter) EmitSearchCall(id, status, query, reason string, crea
 			"item_id":         itemID,
 		})
 
-	case "searching":
-		return e.emit("response.web_search_call.searching", map[string]any{
-			"type":            "response.web_search_call.searching",
-			"sequence_number": e.nextSeq(),
-			"output_index":    e.outputIdx,
-			"item_id":         itemID,
-		})
-
-	case "completed":
-		// Emit web_search_call.completed
+	case StatusCompleted:
 		if err := e.emit("response.web_search_call.completed", map[string]any{
 			"type":            "response.web_search_call.completed",
 			"sequence_number": e.nextSeq(),
@@ -145,19 +130,15 @@ func (e *ResponsesEmitter) EmitSearchCall(id, status, query, reason string, crea
 		}); err != nil {
 			return err
 		}
-		// Emit output_item.done
 		if err := e.emit("response.output_item.done", map[string]any{
 			"type":            "response.output_item.done",
 			"sequence_number": e.nextSeq(),
 			"output_index":    e.outputIdx,
 			"item": map[string]any{
-				"type":   "web_search_call",
+				"type":   ItemTypeWebSearchCall,
 				"id":     itemID,
-				"status": "completed",
-				"action": map[string]any{
-					"type":  "search",
-					"query": query,
-				},
+				"status": StatusCompleted,
+				"action": action,
 			},
 		}); err != nil {
 			return err
@@ -165,35 +146,40 @@ func (e *ResponsesEmitter) EmitSearchCall(id, status, query, reason string, crea
 		e.outputIdx++
 		return nil
 
-	case "blocked", "failed":
-		// Emit as completed with status
+	case StatusBlocked, StatusFailed:
+		item := map[string]any{
+			"type":   ItemTypeWebSearchCall,
+			"id":     itemID,
+			"status": status,
+		}
+		if reason != "" {
+			item["reason"] = reason
+		}
+		if action != nil {
+			item["action"] = action
+		}
 		if err := e.emit("response.output_item.added", map[string]any{
 			"type":            "response.output_item.added",
 			"sequence_number": e.nextSeq(),
 			"output_index":    e.outputIdx,
-			"item": map[string]any{
-				"type":   "web_search_call",
-				"id":     itemID,
-				"status": status,
-				"reason": reason,
-				"action": map[string]any{
-					"type":  "search",
-					"query": query,
-				},
-			},
+			"item":            item,
 		}); err != nil {
 			return err
+		}
+		// Done item omits action
+		doneItem := map[string]any{
+			"type":   ItemTypeWebSearchCall,
+			"id":     itemID,
+			"status": status,
+		}
+		if reason != "" {
+			doneItem["reason"] = reason
 		}
 		if err := e.emit("response.output_item.done", map[string]any{
 			"type":            "response.output_item.done",
 			"sequence_number": e.nextSeq(),
 			"output_index":    e.outputIdx,
-			"item": map[string]any{
-				"type":   "web_search_call",
-				"id":     itemID,
-				"status": status,
-				"reason": reason,
-			},
+			"item":            doneItem,
 		}); err != nil {
 			return err
 		}
@@ -202,6 +188,37 @@ func (e *ResponsesEmitter) EmitSearchCall(id, status, query, reason string, crea
 	}
 
 	return nil
+}
+
+// EmitSearchCall emits web search status events (response.web_search_call.*)
+func (e *ResponsesEmitter) EmitSearchCall(id, status, query, reason string, created int64, model string) error {
+	itemID := IDPrefixWebSearch + id
+
+	if status == "searching" {
+		return e.emit("response.web_search_call.searching", map[string]any{
+			"type":            "response.web_search_call.searching",
+			"sequence_number": e.nextSeq(),
+			"output_index":    e.outputIdx,
+			"item_id":         itemID,
+		})
+	}
+
+	action := map[string]any{
+		"type":  ActionTypeSearch,
+		"query": query,
+	}
+	return e.emitWebSearchCallEvents(itemID, status, action, reason)
+}
+
+// EmitFetchCall emits URL fetch status events (action.type "open_page")
+func (e *ResponsesEmitter) EmitFetchCall(id, status, url string, created int64, model string) error {
+	itemID := IDPrefixWebSearch + id
+
+	action := map[string]any{
+		"type": ActionTypeOpenPage,
+		"url":  url,
+	}
+	return e.emitWebSearchCallEvents(itemID, status, action, "")
 }
 
 // EmitMetadata stores reasoning for later emission in EmitMessageEnd.
@@ -221,10 +238,10 @@ func (e *ResponsesEmitter) EmitMessageStart(itemID string) error {
 		"sequence_number": e.nextSeq(),
 		"output_index":    e.outputIdx,
 		"item": map[string]any{
-			"type":   "message",
+			"type":   ItemTypeMessage,
 			"id":     itemID,
-			"role":   "assistant",
-			"status": "in_progress",
+			"role":   RoleAssistant,
+			"status": StatusInProgress,
 		},
 	}); err != nil {
 		return err
@@ -237,7 +254,7 @@ func (e *ResponsesEmitter) EmitMessageStart(itemID string) error {
 		"output_index":    e.outputIdx,
 		"content_index":   0,
 		"part": map[string]any{
-			"type": "output_text",
+			"type": ContentTypeOutputText,
 			"text": "",
 		},
 	})
@@ -283,7 +300,7 @@ func (e *ResponsesEmitter) EmitMessageEnd(text string, annotations []pipeline.An
 			"content_index":    0,
 			"annotation_index": i,
 			"annotation": map[string]any{
-				"type":        "url_citation",
+				"type":        ContentTypeURLCitation,
 				"url":         ann.URLCitation.URL,
 				"title":       ann.URLCitation.Title,
 				"start_index": ann.URLCitation.StartIndex,
@@ -307,7 +324,7 @@ func (e *ResponsesEmitter) EmitMessageEnd(text string, annotations []pipeline.An
 
 	// Emit content_part.done
 	part := map[string]any{
-		"type":        "output_text",
+		"type":        ContentTypeOutputText,
 		"text":        text,
 		"annotations": annotations,
 	}
@@ -330,10 +347,10 @@ func (e *ResponsesEmitter) EmitMessageEnd(text string, annotations []pipeline.An
 		"sequence_number": e.nextSeq(),
 		"output_index":    e.outputIdx,
 		"item": map[string]any{
-			"type":   "message",
+			"type":   ItemTypeMessage,
 			"id":     e.messageItemID,
-			"role":   "assistant",
-			"status": "completed",
+			"role":   RoleAssistant,
+			"status": StatusCompleted,
 		},
 	})
 }
@@ -372,9 +389,9 @@ func (e *ResponsesEmitter) EmitDone() error {
 		"sequence_number": e.nextSeq(),
 		"response": map[string]any{
 			"id":         e.responseID,
-			"object":     "response",
+			"object":     ObjectResponse,
 			"created_at": e.createdAt,
-			"status":     "completed",
+			"status":     StatusCompleted,
 			"model":      e.model,
 		},
 	})

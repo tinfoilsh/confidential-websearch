@@ -19,6 +19,24 @@ const (
 	FormatResponses
 )
 
+// Emitter status values
+const (
+	EmitStatusInProgress = "in_progress"
+	EmitStatusCompleted  = "completed"
+	EmitStatusFailed     = "failed"
+	EmitStatusBlocked    = "blocked"
+)
+
+// Annotation type
+const (
+	AnnotationTypeURLCitation = "url_citation"
+)
+
+// Fetch ID prefix for generating fetch call IDs
+const (
+	FetchIDPrefix = "fetch_"
+)
+
 // Message represents a chat message
 type Message struct {
 	Role        string          `json:"role"`
@@ -96,7 +114,7 @@ type Context struct {
 
 	// Intermediate results
 	AgentResult       *agent.Result
-	FetchedPages      []fetch.FetchedPage // Pages fetched from URLs in user messages
+	FetchedPages      []fetch.FetchedPage // Pages fetched from URLs in user messages (post-filtering)
 	SearchResults     []agent.ToolCall    // Executed search results
 	ResponderMessages []openai.ChatCompletionMessageParamUnion
 	ResponderResult   *ResponderResultData // Non-streaming responder result
@@ -122,6 +140,9 @@ type EventEmitter interface {
 	// EmitSearchCall emits a web search call event with OpenAI-compatible fields
 	// (reason is optional, used for blocked status; created/model for SDK compatibility)
 	EmitSearchCall(id, status, query, reason string, created int64, model string) error
+
+	// EmitFetchCall emits a URL fetch event (action.type "open_page")
+	EmitFetchCall(id, status, url string, created int64, model string) error
 
 	// EmitMetadata emits annotations and reasoning before content
 	EmitMetadata(id string, created int64, model string, annotations []Annotation, reasoning string) error

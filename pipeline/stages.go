@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 
 	"github.com/openai/openai-go/v3"
@@ -117,9 +118,33 @@ func (s *FetchURLsStage) Execute(ctx *Context) error {
 		return nil
 	}
 
+	// Emit in_progress events for each URL
+	if ctx.Emitter != nil {
+		for i, u := range urls {
+			id := fmt.Sprintf("%s%d", FetchIDPrefix, i)
+			ctx.Emitter.EmitFetchCall(id, EmitStatusInProgress, u, 0, ctx.Request.Model)
+		}
+	}
+
 	log.Debugf("Found %d URL(s) in user message, fetching contents", len(urls))
 	ctx.FetchedPages = s.Fetcher.FetchURLs(ctx.Context, urls)
 	log.Debugf("Successfully fetched %d/%d page(s)", len(ctx.FetchedPages), len(urls))
+
+	// Emit completed/failed events for each URL
+	if ctx.Emitter != nil {
+		fetched := make(map[string]bool, len(ctx.FetchedPages))
+		for _, p := range ctx.FetchedPages {
+			fetched[p.URL] = true
+		}
+		for i, u := range urls {
+			id := fmt.Sprintf("%s%d", FetchIDPrefix, i)
+			if fetched[u] {
+				ctx.Emitter.EmitFetchCall(id, EmitStatusCompleted, u, 0, ctx.Request.Model)
+			} else {
+				ctx.Emitter.EmitFetchCall(id, EmitStatusFailed, u, 0, ctx.Request.Model)
+			}
+		}
+	}
 
 	return nil
 }
@@ -168,7 +193,7 @@ func (s *SearchStage) Execute(ctx *Context) error {
 	// Emit blocked query events first (before early return check)
 	if ctx.AgentResult != nil && ctx.Emitter != nil {
 		for _, bq := range ctx.AgentResult.BlockedQueries {
-			ctx.Emitter.EmitSearchCall(bq.ID, "blocked", bq.Query, bq.Reason, 0, ctx.Request.Model)
+			ctx.Emitter.EmitSearchCall(bq.ID, EmitStatusBlocked, bq.Query, bq.Reason, 0, ctx.Request.Model)
 		}
 	}
 
@@ -179,7 +204,7 @@ func (s *SearchStage) Execute(ctx *Context) error {
 	// Emit in_progress events for all pending searches
 	if ctx.Emitter != nil {
 		for _, ps := range ctx.AgentResult.PendingSearches {
-			ctx.Emitter.EmitSearchCall(ps.ID, "in_progress", ps.Query, "", 0, ctx.Request.Model)
+			ctx.Emitter.EmitSearchCall(ps.ID, EmitStatusInProgress, ps.Query, "", 0, ctx.Request.Model)
 		}
 	}
 
@@ -198,7 +223,7 @@ func (s *SearchStage) Execute(ctx *Context) error {
 			if err != nil {
 				log.Errorf("Search failed: %v", err)
 				if ctx.Emitter != nil {
-					ctx.Emitter.EmitSearchCall(pending.ID, "failed", pending.Query, err.Error(), 0, ctx.Request.Model)
+					ctx.Emitter.EmitSearchCall(pending.ID, EmitStatusFailed, pending.Query, err.Error(), 0, ctx.Request.Model)
 				}
 				return
 			}
@@ -213,7 +238,7 @@ func (s *SearchStage) Execute(ctx *Context) error {
 
 			// Emit completed event
 			if ctx.Emitter != nil {
-				ctx.Emitter.EmitSearchCall(pending.ID, "completed", pending.Query, "", 0, ctx.Request.Model)
+				ctx.Emitter.EmitSearchCall(pending.ID, EmitStatusCompleted, pending.Query, "", 0, ctx.Request.Model)
 			}
 		}(ps)
 	}
@@ -407,7 +432,7 @@ func BuildAnnotations(searchResults []agent.ToolCall) []Annotation {
 	for _, tc := range searchResults {
 		for _, r := range tc.Results {
 			annotations = append(annotations, Annotation{
-				Type: "url_citation",
+				Type: AnnotationTypeURLCitation,
 				URLCitation: URLCitation{
 					URL:   r.URL,
 					Title: r.Title,
