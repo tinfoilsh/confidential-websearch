@@ -23,8 +23,8 @@ func TestLoad_Defaults(t *testing.T) {
 
 	cfg := Load()
 
-	if cfg.AgentModel != "gpt-oss-120b-free" {
-		t.Errorf("AgentModel: expected 'gpt-oss-120b-free', got '%s'", cfg.AgentModel)
+	if cfg.AgentModel != "gpt-oss-120b" {
+		t.Errorf("AgentModel: expected 'gpt-oss-120b', got '%s'", cfg.AgentModel)
 	}
 	if cfg.ListenAddr != ":8089" {
 		t.Errorf("ListenAddr: expected ':8089', got '%s'", cfg.ListenAddr)
