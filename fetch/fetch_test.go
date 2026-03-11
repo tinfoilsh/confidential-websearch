@@ -93,6 +93,26 @@ func TestExtractURLs(t *testing.T) {
 			input:    "check localhost for details",
 			expected: nil,
 		},
+		{
+			name:     "not a URL - file extension txt",
+			input:    "open myfile.txt please",
+			expected: nil,
+		},
+		{
+			name:     "not a URL - file extension json",
+			input:    "edit config.json now",
+			expected: nil,
+		},
+		{
+			name:     "not a URL - file extension yaml",
+			input:    "check values.yaml",
+			expected: nil,
+		},
+		{
+			name:     "valid bare domain with real TLD",
+			input:    "go to google.com",
+			expected: []string{"https://google.com"},
+		},
 	}
 
 	for _, tt := range tests {
