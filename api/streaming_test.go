@@ -69,7 +69,7 @@ func TestSSEEmitter_EmitSearchCall(t *testing.T) {
 	w := httptest.NewRecorder()
 	emitter, _ := NewSSEEmitter(w)
 
-	err := emitter.EmitSearchCall("call_123", "in_progress", "test query", "", 1234567890, "gpt-oss-120b-free")
+	err := emitter.EmitSearchCall("call_123", "in_progress", "test query", "", 1234567890, "gpt-oss-120b")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestSSEEmitter_EmitSearchCall(t *testing.T) {
 	if !strings.Contains(body, "1234567890") {
 		t.Error("expected created timestamp")
 	}
-	if !strings.Contains(body, "gpt-oss-120b-free") {
+	if !strings.Contains(body, "gpt-oss-120b") {
 		t.Error("expected model")
 	}
 	if !strings.Contains(body, `"choices":[]`) {
@@ -109,7 +109,7 @@ func TestSSEEmitter_EmitSearchCall_NoQuery(t *testing.T) {
 	w := httptest.NewRecorder()
 	emitter, _ := NewSSEEmitter(w)
 
-	err := emitter.EmitSearchCall("call_123", "completed", "", "", 1234567890, "gpt-oss-120b-free")
+	err := emitter.EmitSearchCall("call_123", "completed", "", "", 1234567890, "gpt-oss-120b")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestSSEEmitter_EmitSearchCall_Blocked(t *testing.T) {
 	w := httptest.NewRecorder()
 	emitter, _ := NewSSEEmitter(w)
 
-	err := emitter.EmitSearchCall("call_123", "blocked", "john.smith@gmail.com", "email identifies individual", 1234567890, "gpt-oss-120b-free")
+	err := emitter.EmitSearchCall("call_123", "blocked", "john.smith@gmail.com", "email identifies individual", 1234567890, "gpt-oss-120b")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestSSEEmitter_EmitMetadata(t *testing.T) {
 		},
 	}
 
-	err := emitter.EmitMetadata("chatcmpl-123", 1234567890, "gpt-oss-120b-free", annotations, "Search reasoning")
+	err := emitter.EmitMetadata("chatcmpl-123", 1234567890, "gpt-oss-120b", annotations, "Search reasoning")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestSSEEmitter_EmitMetadata(t *testing.T) {
 	if !strings.Contains(body, "1234567890") {
 		t.Error("expected created timestamp")
 	}
-	if !strings.Contains(body, "gpt-oss-120b-free") {
+	if !strings.Contains(body, "gpt-oss-120b") {
 		t.Error("expected model")
 	}
 	if !strings.Contains(body, "Test Title") {
@@ -285,8 +285,8 @@ func TestSSEEmitter_MultipleEvents(t *testing.T) {
 	emitter, _ := NewSSEEmitter(w)
 
 	// Emit multiple events in sequence
-	emitter.EmitSearchCall("call_1", "in_progress", "query 1", "", 1234567890, "gpt-oss-120b-free")
-	emitter.EmitSearchCall("call_1", "completed", "", "", 1234567890, "gpt-oss-120b-free")
+	emitter.EmitSearchCall("call_1", "in_progress", "query 1", "", 1234567890, "gpt-oss-120b")
+	emitter.EmitSearchCall("call_1", "completed", "", "", 1234567890, "gpt-oss-120b")
 	emitter.EmitChunk([]byte(`{"content":"hello"}`))
 	emitter.EmitDone()
 
