@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	tld "github.com/bombsimon/tld-validator"
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/doyensec/safeurl"
 	log "github.com/sirupsen/logrus"
@@ -87,6 +88,9 @@ func ExtractURLs(text string) []string {
 	// Match bare domains (e.g. example.com, example.com/path) and prepend https://
 	for _, m := range bareDomainPattern.FindAllStringSubmatch(text, -1) {
 		bare := strings.TrimRight(m[1], ".,;:!?")
+		if !hasValidTLD(bare) {
+			continue
+		}
 		full := "https://" + bare
 		if seen[full] || seen["http://"+bare] {
 			continue
@@ -98,6 +102,19 @@ func ExtractURLs(text string) []string {
 		unique = unique[:maxURLsPerMessage]
 	}
 	return unique
+}
+
+// hasValidTLD checks if the domain portion of a bare domain (with optional path) has a valid IANA TLD.
+func hasValidTLD(bare string) bool {
+	domain := bare
+	if idx := strings.Index(bare, "/"); idx != -1 {
+		domain = bare[:idx]
+	}
+	lastDot := strings.LastIndex(domain, ".")
+	if lastDot == -1 {
+		return false
+	}
+	return tld.IsValid(domain[lastDot+1:])
 }
 
 // FetchURLs fetches the contents of the given URLs in parallel
