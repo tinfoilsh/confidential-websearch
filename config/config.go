@@ -10,6 +10,7 @@ const (
 	AgentTemperature     = 0.3
 	AgentMaxTokens       = 1024
 	AgentMaxTurns        = 3 // Max conversation turns to send to agent
+	AgentMaxIterations   = 5 // Max tool-calling loop iterations per request
 	SafeguardTemperature = 0.0
 )
 
