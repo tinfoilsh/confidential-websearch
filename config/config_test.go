@@ -148,8 +148,8 @@ func TestGetEnvBool_Unset(t *testing.T) {
 }
 
 func TestConstants(t *testing.T) {
-	if AgentTemperature != 0.3 {
-		t.Errorf("AgentTemperature: expected 0.3, got %f", AgentTemperature)
+	if AgentTemperature != 0.1 {
+		t.Errorf("AgentTemperature: expected 0.1, got %f", AgentTemperature)
 	}
 	if AgentMaxTokens != 1024 {
 		t.Errorf("AgentMaxTokens: expected 1024, got %d", AgentMaxTokens)
