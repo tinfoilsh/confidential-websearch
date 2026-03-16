@@ -2,6 +2,7 @@ package fetch
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -130,101 +131,95 @@ func TestExtractURLs(t *testing.T) {
 	}
 }
 
-func TestFetchURLs_PlainText(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("This is plain text content"))
-	}))
-	defer server.Close()
-
-	fetcher := newUnsafeFetcher()
-	pages := fetcher.FetchURLs(context.Background(), []string{server.URL})
-
-	if len(pages) != 1 {
-		t.Fatalf("expected 1 page, got %d", len(pages))
-	}
-	if pages[0].Content != "This is plain text content" {
-		t.Errorf("unexpected content: %q", pages[0].Content)
-	}
-	if pages[0].URL != server.URL {
-		t.Errorf("expected URL %q, got %q", server.URL, pages[0].URL)
+// newTestFetcher creates a Fetcher that points at a test server instead of Cloudflare
+func newTestFetcher(apiURL string) *Fetcher {
+	return &Fetcher{
+		client:   http.DefaultClient,
+		apiURL:   apiURL,
+		apiToken: "test-token",
 	}
 }
 
-func TestFetchURLs_HTML(t *testing.T) {
+// writeCFResponse writes a Cloudflare-style JSON response
+func writeCFResponse(w http.ResponseWriter, success bool, result string, errors []cfError) {
+	resp := cloudflareResponse{
+		Success: success,
+		Result:  result,
+		Errors:  errors,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func TestFetchURLs_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(`<html><body><h1>Title</h1><p>Hello world</p><script>var x = 1;</script></body></html>`))
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			t.Errorf("unexpected auth header: %s", r.Header.Get("Authorization"))
+		}
+
+		var req cloudflareRequest
+		json.NewDecoder(r.Body).Decode(&req)
+
+		writeCFResponse(w, true, "# Example\n\nThis is markdown from "+req.URL, nil)
 	}))
 	defer server.Close()
 
-	fetcher := newUnsafeFetcher()
-	pages := fetcher.FetchURLs(context.Background(), []string{server.URL})
+	fetcher := newTestFetcher(server.URL)
+	pages := fetcher.FetchURLs(context.Background(), []string{"https://example.com"})
 
 	if len(pages) != 1 {
 		t.Fatalf("expected 1 page, got %d", len(pages))
 	}
-	if pages[0].Content == "" {
-		t.Error("expected non-empty content")
+	if pages[0].URL != "https://example.com" {
+		t.Errorf("expected URL %q, got %q", "https://example.com", pages[0].URL)
+	}
+	if pages[0].Content != "# Example\n\nThis is markdown from https://example.com" {
+		t.Errorf("unexpected content: %q", pages[0].Content)
+	}
+}
+
+func TestFetchURLs_APIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeCFResponse(w, false, "", []cfError{{Code: 1000, Message: "invalid URL"}})
+	}))
+	defer server.Close()
+
+	fetcher := newTestFetcher(server.URL)
+	pages := fetcher.FetchURLs(context.Background(), []string{"https://bad.example"})
+
+	if len(pages) != 0 {
+		t.Fatalf("expected 0 pages for API error, got %d", len(pages))
 	}
 }
 
 func TestFetchURLs_NonOKStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("internal error"))
 	}))
 	defer server.Close()
 
-	fetcher := newUnsafeFetcher()
-	pages := fetcher.FetchURLs(context.Background(), []string{server.URL})
+	fetcher := newTestFetcher(server.URL)
+	pages := fetcher.FetchURLs(context.Background(), []string{"https://example.com"})
 
 	if len(pages) != 0 {
-		t.Fatalf("expected 0 pages for 404, got %d", len(pages))
-	}
-}
-
-func TestFetchURLs_UnsupportedContentType(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/pdf")
-		w.Write([]byte("binary data"))
-	}))
-	defer server.Close()
-
-	fetcher := newUnsafeFetcher()
-	pages := fetcher.FetchURLs(context.Background(), []string{server.URL})
-
-	if len(pages) != 0 {
-		t.Fatalf("expected 0 pages for unsupported content type, got %d", len(pages))
-	}
-}
-
-func TestFetchURLs_Markdown(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/markdown")
-		w.Write([]byte("# Hello\n\nThis is markdown"))
-	}))
-	defer server.Close()
-
-	fetcher := newUnsafeFetcher()
-	pages := fetcher.FetchURLs(context.Background(), []string{server.URL})
-
-	if len(pages) != 1 {
-		t.Fatalf("expected 1 page, got %d", len(pages))
-	}
-	if pages[0].Content != "# Hello\n\nThis is markdown" {
-		t.Errorf("unexpected content: %q", pages[0].Content)
+		t.Fatalf("expected 0 pages for 500, got %d", len(pages))
 	}
 }
 
 func TestFetchURLs_ParallelMultipleURLs(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("page " + r.URL.Path))
+		var req cloudflareRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		writeCFResponse(w, true, "page for "+req.URL, nil)
 	}))
 	defer server.Close()
 
-	fetcher := newUnsafeFetcher()
-	urls := []string{server.URL + "/a", server.URL + "/b", server.URL + "/c"}
+	fetcher := newTestFetcher(server.URL)
+	urls := []string{"https://a.com", "https://b.com", "https://c.com"}
 	pages := fetcher.FetchURLs(context.Background(), urls)
 
 	if len(pages) != 3 {
@@ -234,19 +229,32 @@ func TestFetchURLs_ParallelMultipleURLs(t *testing.T) {
 
 func TestFetchURLs_ContextCanceled(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("content"))
+		writeCFResponse(w, true, "content", nil)
 	}))
 	defer server.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	fetcher := newUnsafeFetcher()
-	pages := fetcher.FetchURLs(ctx, []string{server.URL})
+	fetcher := newTestFetcher(server.URL)
+	pages := fetcher.FetchURLs(ctx, []string{"https://example.com"})
 
 	if len(pages) != 0 {
 		t.Fatalf("expected 0 pages for canceled context, got %d", len(pages))
+	}
+}
+
+func TestFetchURLs_EmptyResult(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeCFResponse(w, true, "   ", nil)
+	}))
+	defer server.Close()
+
+	fetcher := newTestFetcher(server.URL)
+	pages := fetcher.FetchURLs(context.Background(), []string{"https://example.com"})
+
+	if len(pages) != 0 {
+		t.Fatalf("expected 0 pages for empty content, got %d", len(pages))
 	}
 }
 
@@ -266,41 +274,5 @@ func TestTruncate(t *testing.T) {
 	}
 	if result[maxContentLength:] != "\n\n[content truncated]" {
 		t.Error("expected truncation notice")
-	}
-}
-
-// --- SSRF Protection Tests ---
-
-func TestSSRF_BlocksLocalhost(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("should not reach here"))
-	}))
-	defer server.Close()
-
-	// Use the real fetcher with SSRF protection
-	fetcher := NewFetcher()
-	pages := fetcher.FetchURLs(context.Background(), []string{server.URL})
-
-	if len(pages) != 0 {
-		t.Fatalf("SSRF: fetcher should block localhost, but got %d pages", len(pages))
-	}
-}
-
-func TestSSRF_BlocksPrivateIPs(t *testing.T) {
-	fetcher := NewFetcher()
-
-	privateURLs := []string{
-		"http://10.0.0.1/internal",
-		"http://172.16.0.1/internal",
-		"http://192.168.1.1/internal",
-		"http://169.254.169.254/latest/meta-data/",
-	}
-
-	for _, u := range privateURLs {
-		pages := fetcher.FetchURLs(context.Background(), []string{u})
-		if len(pages) != 0 {
-			t.Errorf("SSRF: fetcher should block %s, but got %d pages", u, len(pages))
-		}
 	}
 }
