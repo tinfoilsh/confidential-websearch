@@ -173,10 +173,22 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 	}
 
 	// Build fetch calls from pages that made it through the pipeline
+	fetchIDByURL := make(map[string]string)
+	if pctx.AgentResult != nil {
+		for _, pf := range pctx.AgentResult.PendingFetches {
+			if _, exists := fetchIDByURL[pf.URL]; !exists {
+				fetchIDByURL[pf.URL] = pf.ID
+			}
+		}
+	}
 	var fetchCalls []FetchCall
 	for i, fp := range pctx.FetchedPages {
+		id := fmt.Sprintf("%s%s%d", IDPrefixWebSearch, pipeline.FetchIDPrefix, i)
+		if agentID, ok := fetchIDByURL[fp.URL]; ok {
+			id = IDPrefixWebSearch + agentID
+		}
 		fetchCalls = append(fetchCalls, FetchCall{
-			ID:     fmt.Sprintf("%s%s%d", IDPrefixWebSearch, pipeline.FetchIDPrefix, i),
+			ID:     id,
 			Status: StatusCompleted,
 			Action: &WebSearchAction{
 				Type: ActionTypeOpenPage,
@@ -361,10 +373,22 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Add fetch calls for pages that made it through the pipeline
+	fetchIDByURL := make(map[string]string)
+	if pctx.AgentResult != nil {
+		for _, pf := range pctx.AgentResult.PendingFetches {
+			if _, exists := fetchIDByURL[pf.URL]; !exists {
+				fetchIDByURL[pf.URL] = pf.ID
+			}
+		}
+	}
 	for i, fp := range pctx.FetchedPages {
+		id := fmt.Sprintf("%s%s%d", IDPrefixWebSearch, pipeline.FetchIDPrefix, i)
+		if agentID, ok := fetchIDByURL[fp.URL]; ok {
+			id = IDPrefixWebSearch + agentID
+		}
 		output = append(output, ResponsesOutput{
 			Type:   ItemTypeWebSearchCall,
-			ID:     fmt.Sprintf("%s%s%d", IDPrefixWebSearch, pipeline.FetchIDPrefix, i),
+			ID:     id,
 			Status: StatusCompleted,
 			Action: &WebSearchAction{
 				Type: ActionTypeOpenPage,
