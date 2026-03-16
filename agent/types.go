@@ -31,15 +31,27 @@ type PendingSearch struct {
 	Query string `json:"query"`
 }
 
+// FetchArgs represents the arguments for a URL fetch
+type FetchArgs struct {
+	URL string `json:"url"`
+}
+
+// PendingFetch represents a URL fetch to be executed by the pipeline
+type PendingFetch struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
 // ContextMessage represents a message in the conversation context for the agent
 type ContextMessage struct {
 	Role    string // "user", "assistant", or "system"
 	Content string // The message content
 }
 
-// Result contains the agent's decision about what to search
+// Result contains the agent's decision about what to search or fetch
 type Result struct {
 	PendingSearches []PendingSearch // Searches to execute (after PII filtering)
+	PendingFetches  []PendingFetch  // URLs to fetch
 	BlockedQueries  []BlockedQuery  // Queries blocked by PII filter
 	SearchReasoning string          // Agent's reasoning about search decisions
 }
@@ -57,4 +69,16 @@ var SearchToolParams = map[string]any{
 		},
 	},
 	"required": []string{"query"},
+}
+
+// FetchToolParams is the JSON schema for the fetch tool
+var FetchToolParams = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"url": map[string]any{
+			"type":        "string",
+			"description": "The URL to fetch",
+		},
+	},
+	"required": []string{"url"},
 }

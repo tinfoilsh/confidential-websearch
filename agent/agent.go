@@ -16,14 +16,19 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/config"
 )
 
-const agentInstructions = `You are a search routing agent. Your task is to decide if a web search would help answer the user's request.
+const agentInstructions = `You are a search routing agent. Your task is to decide if a web search or URL fetch would help answer the user's request.
 
-Focus primarily on the most recent user message when deciding what to search for. Earlier messages provide context, but the latest message should drive your search decisions.
+You have two tools:
+- search: Search the web for information. Use this when the user asks a question that requires up-to-date or broad information.
+- fetch: Fetch the contents of a specific URL. Use this when the user shares or references a URL and you need its contents.
+
+You can call multiple tools in a single response. For example, you can fetch a URL and search for related information at the same time.
+
+Focus primarily on the most recent user message. Earlier messages provide context, but the latest message should drive your decisions.
 
 If you're unsure whether a search would help, lean towards searching - it's better to have information available than to miss something useful.
 
-If a search IS needed: Call the search tool with an appropriate query.
-If NO search is needed: Do not call any tools and do not output any text.`
+If no tools are needed: Do not call any tools and do not output any text.`
 
 // FilterResult contains the outcome of filtering search queries
 type FilterResult struct {
@@ -131,6 +136,8 @@ func (a *Agent) RunWithFilter(ctx context.Context, messages []ContextMessage, sy
 	return a.run(ctx, messages, systemPrompt, onChunk, filter)
 }
 
+const maxAgentIterations = 5
+
 // run is the internal implementation
 func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt string, onChunk ChunkCallback, filter SearchFilter) (*Result, error) {
 	searchTool := responses.ToolParamOfFunction(
@@ -139,6 +146,13 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 		false,
 	)
 	searchTool.OfFunction.Description = openai.String("Search the web for current information.")
+
+	fetchTool := responses.ToolParamOfFunction(
+		"fetch",
+		FetchToolParams,
+		false,
+	)
+	fetchTool.OfFunction.Description = openai.String("Fetch the contents of a specific URL.")
 
 	// Build Responses API input from conversation context
 	var input []responses.ResponseInputItemUnionParam
@@ -161,14 +175,6 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 		}
 	}
 
-	params := responses.ResponseNewParams{
-		Model:           shared.ResponsesModel(a.model),
-		Input:           responses.ResponseNewParamsInputUnion{OfInputItemList: input},
-		Tools:           []responses.ToolUnionParam{searchTool},
-		Temperature:     openai.Float(config.AgentTemperature),
-		MaxOutputTokens: openai.Int(config.AgentMaxTokens),
-	}
-
 	// Build complete instructions with context
 	var fullInstructions strings.Builder
 	fullInstructions.WriteString(agentInstructions)
@@ -177,84 +183,115 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 		fullInstructions.WriteString(fmt.Sprintf("\n\nThe user specified the following system prompt for the conversation, which you can use to draw context from in your decision:\n\"%s\"", systemPrompt))
 	}
 
-	params.Instructions = openai.String(fullInstructions.String())
+	result := &Result{}
+	var allReasoning strings.Builder
 
-	var parser *streamParser
-	if onChunk != nil {
-		streamCtx, cancelStream := context.WithCancel(ctx)
-		defer cancelStream()
-
-		parser = newStreamParser(cancelStream)
-		stream := a.client.Responses.NewStreaming(streamCtx, params)
-
-		for stream.Next() {
-			event := stream.Current()
-			onChunk(event)
-			parser.handleEvent(event)
-			if parser.aborted {
-				break
-			}
-		}
-
-		if !parser.aborted {
-			if err := stream.Err(); err != nil {
-				return nil, fmt.Errorf("agent streaming failed: %w", err)
-			}
-		}
-	} else {
-		resp, err := a.client.Responses.New(ctx, params)
-		if err != nil {
-			return nil, fmt.Errorf("agent LLM call failed: %w", err)
-		}
-
-		parser = newStreamParser(nil)
-		parser.parseResponse(resp)
-	}
-
-	result := &Result{
-		SearchReasoning: parser.reasoning.String(),
-	}
-
-	if len(parser.functionCalls) == 0 {
-		log.Debug("Agent decided no search needed")
-		return result, nil
-	}
-
-	log.Debugf("Agent requested %d search(es)", len(parser.functionCalls))
-
-	// Collect queries from function calls
 	type queryItem struct {
 		id    string
 		query string
 	}
 	var queries []queryItem
 
-	for _, fc := range parser.functionCalls {
-		if fc.name != "search" {
-			continue
+	for iteration := range maxAgentIterations {
+		params := responses.ResponseNewParams{
+			Model:           shared.ResponsesModel(a.model),
+			Input:           responses.ResponseNewParamsInputUnion{OfInputItemList: input},
+			Tools:           []responses.ToolUnionParam{searchTool, fetchTool},
+			Temperature:     openai.Float(config.AgentTemperature),
+			MaxOutputTokens: openai.Int(config.AgentMaxTokens),
+			Instructions:    openai.String(fullInstructions.String()),
 		}
 
-		var args SearchArgs
-		if err := json.Unmarshal([]byte(fc.arguments.String()), &args); err != nil {
-			log.Errorf("Failed to parse search arguments: %v", err)
-			continue
+		var parser *streamParser
+		if onChunk != nil {
+			streamCtx, cancelStream := context.WithCancel(ctx)
+
+			parser = newStreamParser(cancelStream)
+			stream := a.client.Responses.NewStreaming(streamCtx, params)
+
+			for stream.Next() {
+				event := stream.Current()
+				onChunk(event)
+				parser.handleEvent(event)
+				if parser.aborted {
+					break
+				}
+			}
+
+			if !parser.aborted {
+				if err := stream.Err(); err != nil {
+					cancelStream()
+					return nil, fmt.Errorf("agent streaming failed: %w", err)
+				}
+			}
+			cancelStream()
+		} else {
+			resp, err := a.client.Responses.New(ctx, params)
+			if err != nil {
+				return nil, fmt.Errorf("agent LLM call failed: %w", err)
+			}
+
+			parser = newStreamParser(nil)
+			parser.parseResponse(resp)
 		}
 
-		query := strings.TrimSpace(args.Query)
-		if query == "" {
-			continue
+		// Accumulate reasoning across iterations
+		if parser.reasoning.Len() > 0 {
+			allReasoning.WriteString(parser.reasoning.String())
 		}
 
-		queries = append(queries, queryItem{id: fc.id, query: query})
+		if len(parser.functionCalls) == 0 {
+			log.Debugf("Agent decided no more tools needed (iteration %d)", iteration+1)
+			break
+		}
+
+		log.Debugf("Agent requested %d tool call(s) (iteration %d)", len(parser.functionCalls), iteration+1)
+
+		// Parse tool calls and append them + acknowledgments to input for next iteration
+		for _, fc := range parser.functionCalls {
+			switch fc.name {
+			case "search":
+				var args SearchArgs
+				if err := json.Unmarshal([]byte(fc.arguments.String()), &args); err != nil {
+					log.Errorf("Failed to parse search arguments: %v", err)
+					continue
+				}
+				query := strings.TrimSpace(args.Query)
+				if query == "" {
+					continue
+				}
+				queries = append(queries, queryItem{id: fc.id, query: query})
+
+				// Feed back the tool call and acknowledgment
+				input = append(input, responses.ResponseInputItemParamOfFunctionCall(fc.arguments.String(), fc.id, "search"))
+				input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(fc.id, "Search queued."))
+
+			case "fetch":
+				var args FetchArgs
+				if err := json.Unmarshal([]byte(fc.arguments.String()), &args); err != nil {
+					log.Errorf("Failed to parse fetch arguments: %v", err)
+					continue
+				}
+				url := strings.TrimSpace(args.URL)
+				if url == "" {
+					continue
+				}
+				result.PendingFetches = append(result.PendingFetches, PendingFetch{
+					ID:  fc.id,
+					URL: url,
+				})
+
+				// Feed back the tool call and acknowledgment
+				input = append(input, responses.ResponseInputItemParamOfFunctionCall(fc.arguments.String(), fc.id, "fetch"))
+				input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(fc.id, "Fetch queued."))
+			}
+		}
 	}
 
-	if len(queries) == 0 {
-		log.Debug("No valid search queries")
-		return result, nil
-	}
+	result.SearchReasoning = allReasoning.String()
 
-	// Apply filter if set
-	if filter != nil {
+	// Apply filter to search queries if set
+	if filter != nil && len(queries) > 0 {
 		queryStrings := make([]string, len(queries))
 		for i, q := range queries {
 			queryStrings[i] = q.query
@@ -285,11 +322,6 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 			}
 		}
 		queries = filtered
-
-		if len(queries) == 0 {
-			log.Debug("All queries filtered out")
-			return result, nil
-		}
 	}
 
 	// Return pending searches for the pipeline to execute
@@ -300,6 +332,6 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 		})
 	}
 
-	log.Debugf("Agent returning %d pending search(es)", len(result.PendingSearches))
+	log.Debugf("Agent returning %d pending search(es), %d pending fetch(es)", len(result.PendingSearches), len(result.PendingFetches))
 	return result, nil
 }
