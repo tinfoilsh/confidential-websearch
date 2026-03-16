@@ -22,6 +22,36 @@ type Stage interface {
 	Execute(ctx *Context) error
 }
 
+// ParallelStages runs multiple stages concurrently, returning the first error encountered.
+type ParallelStages struct {
+	Stages []Stage
+}
+
+func (p *ParallelStages) Name() string { return "parallel" }
+
+func (p *ParallelStages) Execute(ctx *Context) error {
+	var wg sync.WaitGroup
+	errs := make(chan error, len(p.Stages))
+
+	for _, stage := range p.Stages {
+		wg.Add(1)
+		go func(s Stage) {
+			defer wg.Done()
+			if err := s.Execute(ctx); err != nil {
+				errs <- err
+			}
+		}(stage)
+	}
+
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		return err
+	}
+	return nil
+}
+
 // AgentRunner defines the interface for running the agent with full context
 type AgentRunner interface {
 	RunWithContext(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error)

@@ -63,9 +63,7 @@ func setupIntegrationServer(t *testing.T) *api.Server {
 
 	agentRunner := agent.NewSafeAgent(baseAgent, safeguardClient)
 
-	stages := []pipeline.Stage{
-		&pipeline.ValidateStage{},
-		&pipeline.AgentStage{Agent: agentRunner},
+	parallelStages := []pipeline.Stage{
 		&pipeline.SearchStage{Searcher: searcher},
 	}
 
@@ -73,7 +71,13 @@ func setupIntegrationServer(t *testing.T) *api.Server {
 	cloudflareAPIToken := os.Getenv("CLOUDFLARE_API_TOKEN")
 	if cloudflareAccountID != "" && cloudflareAPIToken != "" {
 		urlFetcher := fetch.NewFetcher(cloudflareAccountID, cloudflareAPIToken)
-		stages = append(stages, &pipeline.FetchStage{Fetcher: urlFetcher})
+		parallelStages = append(parallelStages, &pipeline.FetchStage{Fetcher: urlFetcher})
+	}
+
+	stages := []pipeline.Stage{
+		&pipeline.ValidateStage{},
+		&pipeline.AgentStage{Agent: agentRunner},
+		&pipeline.ParallelStages{Stages: parallelStages},
 	}
 
 	stages = append(stages,
