@@ -52,6 +52,9 @@ func main() {
 
 	// Wrap agent with SafeAgent to support per-request PII filtering via tools
 	agentRunner := agent.NewSafeAgent(baseAgent, safeguardClient)
+	if cfg.CloudflareAccountID == "" || cfg.CloudflareAPIToken == "" {
+		log.Fatal("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must be set")
+	}
 	urlFetcher := fetch.NewFetcher(cfg.CloudflareAccountID, cfg.CloudflareAPIToken)
 
 	p := pipeline.NewPipeline([]pipeline.Stage{
