@@ -136,8 +136,6 @@ func (a *Agent) RunWithFilter(ctx context.Context, messages []ContextMessage, sy
 	return a.run(ctx, messages, systemPrompt, onChunk, filter)
 }
 
-const maxAgentIterations = 5
-
 // run is the internal implementation
 func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt string, onChunk ChunkCallback, filter SearchFilter) (*Result, error) {
 	searchTool := responses.ToolParamOfFunction(
@@ -192,7 +190,11 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 	}
 	var queries []queryItem
 
-	for iteration := range maxAgentIterations {
+	for iteration := range config.AgentMaxIterations {
+		if ctx.Err() != nil {
+			break
+		}
+
 		params := responses.ResponseNewParams{
 			Model:           shared.ResponsesModel(a.model),
 			Input:           responses.ResponseNewParamsInputUnion{OfInputItemList: input},
@@ -240,12 +242,19 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 			allReasoning.WriteString(parser.reasoning.String())
 		}
 
-		if len(parser.functionCalls) == 0 {
+		if parser.aborted || len(parser.functionCalls) == 0 {
 			log.Debugf("Agent decided no more tools needed (iteration %d)", iteration+1)
 			break
 		}
 
 		log.Debugf("Agent requested %d tool call(s) (iteration %d)", len(parser.functionCalls), iteration+1)
+
+		// Feed back reasoning so the model has its own thought process for the next iteration
+		if parser.reasoning.Len() > 0 {
+			input = append(input, responses.ResponseInputItemParamOfReasoning("", []responses.ResponseReasoningItemSummaryParam{
+				{Text: parser.reasoning.String()},
+			}))
+		}
 
 		// Parse tool calls and append them + acknowledgments to input for next iteration
 		for _, fc := range parser.functionCalls {

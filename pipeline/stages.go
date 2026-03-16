@@ -172,7 +172,6 @@ func (s *AgentStage) Execute(ctx *Context) error {
 		messages = []agent.ContextMessage{{Role: "user", Content: ctx.UserQuery}}
 	}
 
-
 	// Pass PII check setting to agent via context
 	agentCtx := agent.WithPIICheckEnabled(ctx.Context, ctx.Request.PIICheckEnabled)
 
