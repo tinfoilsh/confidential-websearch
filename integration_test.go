@@ -43,7 +43,7 @@ func setupIntegrationServer(t *testing.T) *api.Server {
 	}
 
 	cfg := &config.Config{
-		AgentModel:           "gpt-oss-120b-free",
+		AgentModel:           "gpt-oss-120b",
 		ExaAPIKey:            exaKey,
 		SafeguardModel:       "gpt-oss-safeguard-120b",
 		EnableInjectionCheck: true,
@@ -132,7 +132,7 @@ func TestIntegration_ChatCompletions_SimpleQuery(t *testing.T) {
 	srv := setupIntegrationServer(t)
 
 	requestBody := map[string]any{
-		"model": "gpt-oss-120b-free",
+		"model": "gpt-oss-120b",
 		"messages": []map[string]string{
 			{"role": "user", "content": "What is 2+2?"},
 		},
@@ -177,7 +177,7 @@ func TestIntegration_ChatCompletions_SearchQuery(t *testing.T) {
 	srv := setupIntegrationServer(t)
 
 	requestBody := map[string]any{
-		"model": "gpt-oss-120b-free",
+		"model": "gpt-oss-120b",
 		"messages": []map[string]string{
 			{"role": "user", "content": "What is the current weather in San Francisco? Search the web for the latest information."},
 		},
@@ -231,7 +231,7 @@ func TestIntegration_Responses_SimpleQuery(t *testing.T) {
 	srv := setupIntegrationServer(t)
 
 	requestBody := map[string]any{
-		"model": "gpt-oss-120b-free",
+		"model": "gpt-oss-120b",
 		"input": "Tell me a joke",
 	}
 	bodyBytes, _ := json.Marshal(requestBody)
