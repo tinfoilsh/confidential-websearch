@@ -59,9 +59,9 @@ func main() {
 
 	p := pipeline.NewPipeline([]pipeline.Stage{
 		&pipeline.ValidateStage{},
-		&pipeline.FetchURLsStage{Fetcher: urlFetcher},
 		&pipeline.AgentStage{Agent: agentRunner},
 		&pipeline.SearchStage{Searcher: searcher},
+		&pipeline.FetchStage{Fetcher: urlFetcher},
 		&pipeline.FilterResultsStage{
 			Checker: safeguardClient,
 			Policy:  safeguard.PromptInjectionPolicy,

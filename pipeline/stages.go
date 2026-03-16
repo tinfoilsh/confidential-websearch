@@ -3,7 +3,6 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"sync"
 
 	"github.com/openai/openai-go/v3"
@@ -105,43 +104,46 @@ type URLFetcher interface {
 	FetchURLs(ctx context.Context, urls []string) []fetch.FetchedPage
 }
 
-// FetchURLsStage extracts URLs from user messages and fetches their contents
-type FetchURLsStage struct {
+// FetchStage executes pending URL fetches from the agent
+type FetchStage struct {
 	Fetcher URLFetcher
 }
 
-func (s *FetchURLsStage) Name() string { return "fetch_urls" }
+func (s *FetchStage) Name() string { return "fetch" }
 
-func (s *FetchURLsStage) Execute(ctx *Context) error {
-	urls := fetch.ExtractURLs(ctx.UserQuery)
-	if len(urls) == 0 {
+func (s *FetchStage) Execute(ctx *Context) error {
+	if ctx.AgentResult == nil || len(ctx.AgentResult.PendingFetches) == 0 {
 		return nil
 	}
 
-	// Emit in_progress events for each URL
+	pending := ctx.AgentResult.PendingFetches
+	urls := make([]string, len(pending))
+	for i, pf := range pending {
+		urls[i] = pf.URL
+	}
+
+	// Emit in_progress events
 	if ctx.Emitter != nil {
-		for i, u := range urls {
-			id := fmt.Sprintf("%s%d", FetchIDPrefix, i)
-			ctx.Emitter.EmitFetchCall(id, EmitStatusInProgress, u, 0, ctx.Request.Model)
+		for _, pf := range pending {
+			ctx.Emitter.EmitFetchCall(pf.ID, EmitStatusInProgress, pf.URL, 0, ctx.Request.Model)
 		}
 	}
 
-	log.Debugf("Found %d URL(s) in user message, fetching contents", len(urls))
+	log.Debugf("Fetching %d URL(s)", len(urls))
 	ctx.FetchedPages = s.Fetcher.FetchURLs(ctx.Context, urls)
 	log.Debugf("Successfully fetched %d/%d page(s)", len(ctx.FetchedPages), len(urls))
 
-	// Emit completed/failed events for each URL
+	// Emit completed/failed events
 	if ctx.Emitter != nil {
 		fetched := make(map[string]bool, len(ctx.FetchedPages))
 		for _, p := range ctx.FetchedPages {
 			fetched[p.URL] = true
 		}
-		for i, u := range urls {
-			id := fmt.Sprintf("%s%d", FetchIDPrefix, i)
-			if fetched[u] {
-				ctx.Emitter.EmitFetchCall(id, EmitStatusCompleted, u, 0, ctx.Request.Model)
+		for _, pf := range pending {
+			if fetched[pf.URL] {
+				ctx.Emitter.EmitFetchCall(pf.ID, EmitStatusCompleted, pf.URL, 0, ctx.Request.Model)
 			} else {
-				ctx.Emitter.EmitFetchCall(id, EmitStatusFailed, u, 0, ctx.Request.Model)
+				ctx.Emitter.EmitFetchCall(pf.ID, EmitStatusFailed, pf.URL, 0, ctx.Request.Model)
 			}
 		}
 	}
@@ -169,6 +171,7 @@ func (s *AgentStage) Execute(ctx *Context) error {
 	if len(messages) == 0 && ctx.UserQuery != "" {
 		messages = []agent.ContextMessage{{Role: "user", Content: ctx.UserQuery}}
 	}
+
 
 	// Pass PII check setting to agent via context
 	agentCtx := agent.WithPIICheckEnabled(ctx.Context, ctx.Request.PIICheckEnabled)
