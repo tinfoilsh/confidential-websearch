@@ -18,6 +18,7 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/agent"
 	"github.com/tinfoilsh/confidential-websearch/api"
 	"github.com/tinfoilsh/confidential-websearch/config"
+	"github.com/tinfoilsh/confidential-websearch/fetch"
 	"github.com/tinfoilsh/confidential-websearch/llm"
 	"github.com/tinfoilsh/confidential-websearch/pipeline"
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
@@ -62,10 +63,20 @@ func setupIntegrationServer(t *testing.T) *api.Server {
 
 	agentRunner := agent.NewSafeAgent(baseAgent, safeguardClient)
 
-	p := pipeline.NewPipeline([]pipeline.Stage{
+	stages := []pipeline.Stage{
 		&pipeline.ValidateStage{},
 		&pipeline.AgentStage{Agent: agentRunner},
 		&pipeline.SearchStage{Searcher: searcher},
+	}
+
+	cloudflareAccountID := os.Getenv("CLOUDFLARE_ACCOUNT_ID")
+	cloudflareAPIToken := os.Getenv("CLOUDFLARE_API_TOKEN")
+	if cloudflareAccountID != "" && cloudflareAPIToken != "" {
+		urlFetcher := fetch.NewFetcher(cloudflareAccountID, cloudflareAPIToken)
+		stages = append(stages, &pipeline.FetchStage{Fetcher: urlFetcher})
+	}
+
+	stages = append(stages,
 		&pipeline.FilterResultsStage{
 			Checker: safeguardClient,
 			Policy:  safeguard.PromptInjectionPolicy,
@@ -73,7 +84,9 @@ func setupIntegrationServer(t *testing.T) *api.Server {
 		},
 		&pipeline.BuildMessagesStage{Builder: messageBuilder},
 		&pipeline.ResponderStage{Responder: responder},
-	})
+	)
+
+	p := pipeline.NewPipeline(stages)
 
 	return &api.Server{
 		Cfg:      cfg,
