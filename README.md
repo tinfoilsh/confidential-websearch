@@ -2,11 +2,11 @@
 
 A proxy that augments LLM responses with real-time web search results, running inside a secure enclave.
 
-Requests flow through a pipeline of specialized models that handle search decisions, safety filtering, and response generation:
+Requests flow through a pipeline of specialized models that handle search/fetch decisions, safety filtering, and response generation:
 
-1. **Agent Model**: A small, fast model that decides whether a search is needed and generates queries
-2. **Safeguard Model**: Filters PII from outgoing queries and detects prompt injection in search results
-3. **Responder Model**: The user's requested model, which generates the final response using search context
+1. **Agent Model**: A small, fast model with `search` and `fetch` tools that decides what external data to retrieve
+2. **Safeguard Model**: Filters PII from outgoing search queries and detects prompt injection in results
+3. **Responder Model**: The user's requested model, which generates the final response using search/fetch context
 
 Uses the [Tinfoil Go SDK](https://github.com/tinfoilsh/tinfoil-go) for secure, attested communication with Tinfoil enclaves.
 
@@ -17,38 +17,45 @@ User Request
   │ model: "<responder-model>"
   │ Authorization: Bearer <api-key>
   ▼
-┌─────────────────────┐
-│    Agent Model      │ ──► Decides: search needed?
-│   (small, fast)     │     Generates search queries
-└─────────────────────┘
-          │
-          ▼ search queries
-┌─────────────────────┐
-│   PII Filter        │ ──► Blocks queries with sensitive data
-│ (Safeguard Model)   │     (SSN, bank accounts, medical IDs)
-└─────────────────────┘
-          │
-          ▼ filtered queries
-┌─────────────────────┐
-│       Exa API       │ ──► Returns search results
-└─────────────────────┘
-          │
-          ▼ search results
-┌─────────────────────┐
-│  Injection Filter   │ ──► Removes results with prompt injection
-│ (Safeguard Model)   │     (instruction overrides, jailbreaks)
-└─────────────────────┘
-          │
-          ▼ clean results
-    ──► SSE: web_search_call events (query + status)
-          │
-          ▼
+┌─────────────────────────────────────────────┐
+│              Agent Model                    │
+│            (small, fast)                    │
+│                                             │
+│  Tools: search(query), fetch(url)           │
+│  Loops up to 5 iterations to collect        │
+│  all needed tool calls, with reasoning      │
+│  fed back between iterations.               │
+└──────────┬──────────────────┬───────────────┘
+           │                  │
+   search queries        fetch URLs
+           │                  │
+           ▼                  │
+┌─────────────────────┐       │
+│   PII Filter        │       │
+│ (Safeguard Model)   │       │
+└─────────┬───────────┘       │
+          │                   │
+          ▼                   ▼
+┌─────────────────┐  ┌───────────────────┐
+│    Exa API      │  │ Cloudflare Render │
+│  (web search)   │  │  (URL fetch)      │
+└────────┬────────┘  └────────┬──────────┘
+         │                    │
+         └────────┬───────────┘
+                  ▼
+┌─────────────────────────────────────┐
+│         Injection Filter            │
+│        (Safeguard Model)            │
+│  Removes results/pages with         │
+│  prompt injection attempts          │
+└──────────────────┬──────────────────┘
+                   ▼
 ┌─────────────────────────────────────┐
 │         Responder Model             │
 │      (from user request)            │
 └─────────────────────────────────────┘
-          │
-          ▼ (streaming)
+                   │
+                   ▼ (streaming)
     1. metadata chunk (annotations + reasoning)
     2. response content chunks...
 ```
@@ -56,8 +63,10 @@ User Request
 ## Quick Start
 
 ```bash
-# Set required API key
+# Set required API keys
 export EXA_API_KEY="your-exa-api-key"
+export CLOUDFLARE_ACCOUNT_ID="your-cloudflare-account-id"
+export CLOUDFLARE_API_TOKEN="your-cloudflare-api-token"
 
 # Run the proxy
 go run .
@@ -71,7 +80,9 @@ go run . -v
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `EXA_API_KEY` | - | Exa AI Search API key (required) |
-| `AGENT_MODEL` | - | Model for search decisions (small, fast) |
+| `CLOUDFLARE_ACCOUNT_ID` | - | Cloudflare account ID for Browser Rendering (required) |
+| `CLOUDFLARE_API_TOKEN` | - | Cloudflare API token for Browser Rendering (required) |
+| `AGENT_MODEL` | - | Model for search/fetch decisions (small, fast) |
 | `SAFEGUARD_MODEL` | - | Model for safety filtering |
 | `ENABLE_INJECTION_CHECK` | `false` | Default for prompt injection detection (can be overridden per-request via tools) |
 | `LISTEN_ADDR` | `:8089` | Address to listen on |
@@ -99,10 +110,11 @@ Response includes standard OpenAI fields plus custom extensions:
 
 - `choices[0].message.content` - The generated response
 - `choices[0].message.annotations` - URL citations from search results
-- `choices[0].message.search_reasoning` - Agent's reasoning for search decisions (extension)
+- `choices[0].message.fetch_calls` - Fetched URLs with status and content (extension)
+- `choices[0].message.search_reasoning` - Agent's reasoning for search/fetch decisions (extension)
 - `choices[0].message.blocked_searches` - Queries blocked by safety filters (extension)
 
-**Streaming:** In addition to standard content chunks, streams custom `web_search_call` events with search status. These use a `chat.completion.chunk` envelope so SDKs don't fail, but the content is custom.
+**Streaming:** In addition to standard content chunks, streams custom `web_search_call` events for both search and fetch status. Search events have `action.type: "search"` with a query, fetch events have `action.type: "open_page"` with a URL. These use a `chat.completion.chunk` envelope so SDKs don't fail, but the content is custom.
 
 ### Responses API
 
@@ -120,12 +132,13 @@ curl http://localhost:8089/v1/responses \
   }'
 ```
 
-Response includes structured output with `web_search_call` items and message content with annotations.
+Response includes structured output with `web_search_call` items (for both searches and URL fetches) and message content with annotations.
 
 **Streaming:** When `stream: true`, emits OpenAI-conformant `response.*` events:
 
 - `response.created`, `response.in_progress` - Lifecycle events
-- `response.web_search_call.in_progress/completed` - Search status
+- `response.web_search_call.in_progress/completed` - Search status (`action.type: "search"`)
+- `response.web_search_call.in_progress/completed` - Fetch status (`action.type: "open_page"`)
 - `response.output_text.delta` - Content chunks
 - `response.output_text.annotation.added` - URL citations
 - `response.completed` - Final event
@@ -159,14 +172,15 @@ Results flagged as containing injection are removed before being passed to the r
 
 ## Pipeline Stages
 
-The request flows through six stages:
+The request flows through seven stages:
 
 1. **ValidateStage** - Validates request format, extracts user query
-2. **AgentStage** - Runs agent model with search tool, returns pending searches
+2. **AgentStage** - Runs agent model with search and fetch tools (up to 5 iterations)
 3. **SearchStage** - Executes pending searches in parallel via Exa API
-4. **FilterResultsStage** - Filters search results for prompt injection
-5. **BuildMessagesStage** - Injects search results into conversation context
-6. **ResponderStage** - Generates final response (streaming or non-streaming)
+4. **FetchStage** - Fetches pending URLs in parallel via Cloudflare Browser Rendering
+5. **FilterResultsStage** - Filters search results and fetched pages for prompt injection
+6. **BuildMessagesStage** - Injects search results and fetched pages into conversation context
+7. **ResponderStage** - Generates final response (streaming or non-streaming)
 
 ## Docker
 
@@ -174,6 +188,8 @@ The request flows through six stages:
 docker build -t websearch-proxy .
 docker run -p 8089:8089 \
   -e EXA_API_KEY=$EXA_API_KEY \
+  -e CLOUDFLARE_ACCOUNT_ID=$CLOUDFLARE_ACCOUNT_ID \
+  -e CLOUDFLARE_API_TOKEN=$CLOUDFLARE_API_TOKEN \
   websearch-proxy
 ```
 
