@@ -28,6 +28,10 @@ type Config struct {
 	TinfoilAPIKey string
 	ExaAPIKey     string
 
+	// Cloudflare Browser Rendering
+	CloudflareAccountID string
+	CloudflareAPIToken  string
+
 	// Server settings
 	ListenAddr string
 
@@ -42,6 +46,8 @@ func Load() *Config {
 		AgentModel:           getEnv("AGENT_MODEL", "gpt-oss-120b"),
 		TinfoilAPIKey:        os.Getenv("TINFOIL_API_KEY"),
 		ExaAPIKey:            os.Getenv("EXA_API_KEY"),
+		CloudflareAccountID: os.Getenv("CLOUDFLARE_ACCOUNT_ID"),
+		CloudflareAPIToken:  os.Getenv("CLOUDFLARE_API_TOKEN"),
 		ListenAddr:           getEnv("LISTEN_ADDR", ":8089"),
 		SafeguardModel:       getEnv("SAFEGUARD_MODEL", "gpt-oss-safeguard-120b"),
 		EnableInjectionCheck: getEnvBool("ENABLE_INJECTION_CHECK", false),

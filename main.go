@@ -52,7 +52,7 @@ func main() {
 
 	// Wrap agent with SafeAgent to support per-request PII filtering via tools
 	agentRunner := agent.NewSafeAgent(baseAgent, safeguardClient)
-	urlFetcher := fetch.NewFetcher()
+	urlFetcher := fetch.NewFetcher(cfg.CloudflareAccountID, cfg.CloudflareAPIToken)
 
 	p := pipeline.NewPipeline([]pipeline.Stage{
 		&pipeline.ValidateStage{},
