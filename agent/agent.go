@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -249,15 +250,26 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 
 		log.Debugf("Agent requested %d tool call(s) (iteration %d)", len(parser.functionCalls), iteration+1)
 
-		// Feed back reasoning so the model has its own thought process for the next iteration
+		// Feed back all output items in order per OpenAI docs:
+		// reasoning → function_call → function_call_output
+		// This preserves the model's chain-of-thought across iterations.
 		if parser.reasoning.Len() > 0 {
 			input = append(input, responses.ResponseInputItemParamOfReasoning("", []responses.ResponseReasoningItemSummaryParam{
 				{Text: parser.reasoning.String()},
 			}))
 		}
 
-		// Parse tool calls and append them + acknowledgments to input for next iteration
-		for _, fc := range parser.functionCalls {
+		// Sort by output index to preserve the model's intended tool-call order
+		sortedIndices := make([]int, 0, len(parser.functionCalls))
+		for idx := range parser.functionCalls {
+			sortedIndices = append(sortedIndices, idx)
+		}
+		slices.Sort(sortedIndices)
+
+		// Parse and collect tool calls, then feed back function_call items
+		processedCalls := make(map[string]bool)
+		for _, idx := range sortedIndices {
+			fc := parser.functionCalls[idx]
 			switch fc.name {
 			case "search":
 				var args SearchArgs
@@ -270,10 +282,8 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 					continue
 				}
 				queries = append(queries, queryItem{id: fc.id, query: query})
-
-				// Feed back the tool call and acknowledgment
 				input = append(input, responses.ResponseInputItemParamOfFunctionCall(fc.arguments.String(), fc.id, "search"))
-				input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(fc.id, "Search queued."))
+				processedCalls[fc.id] = true
 
 			case "fetch":
 				var args FetchArgs
@@ -289,10 +299,16 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 					ID:  fc.id,
 					URL: url,
 				})
-
-				// Feed back the tool call and acknowledgment
 				input = append(input, responses.ResponseInputItemParamOfFunctionCall(fc.arguments.String(), fc.id, "fetch"))
-				input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(fc.id, "Fetch queued."))
+				processedCalls[fc.id] = true
+			}
+		}
+
+		// Feed back function_call_output items only for successfully processed calls
+		for _, idx := range sortedIndices {
+			fc := parser.functionCalls[idx]
+			if processedCalls[fc.id] {
+				input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(fc.id, "ok"))
 			}
 		}
 	}
