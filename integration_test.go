@@ -55,7 +55,14 @@ func setupIntegrationServer(t *testing.T) *api.Server {
 		t.Fatalf("Failed to create search provider: %v", err)
 	}
 
-	baseAgent := agent.New(client, cfg.AgentModel)
+	var fetcher agent.URLFetcher
+	cloudflareAccountID := os.Getenv("CLOUDFLARE_ACCOUNT_ID")
+	cloudflareAPIToken := os.Getenv("CLOUDFLARE_API_TOKEN")
+	if cloudflareAccountID != "" && cloudflareAPIToken != "" {
+		fetcher = fetch.NewFetcher(cloudflareAccountID, cloudflareAPIToken)
+	}
+
+	baseAgent := agent.New(client, cfg.AgentModel, fetcher, searcher)
 	responder := llm.NewTinfoilResponder(&client.Chat.Completions)
 	messageBuilder := llm.NewMessageBuilder()
 
@@ -63,21 +70,13 @@ func setupIntegrationServer(t *testing.T) *api.Server {
 
 	agentRunner := agent.NewSafeAgent(baseAgent, safeguardClient)
 
-	parallelStages := []pipeline.Stage{
-		&pipeline.SearchStage{Searcher: searcher},
-	}
-
-	cloudflareAccountID := os.Getenv("CLOUDFLARE_ACCOUNT_ID")
-	cloudflareAPIToken := os.Getenv("CLOUDFLARE_API_TOKEN")
-	if cloudflareAccountID != "" && cloudflareAPIToken != "" {
-		urlFetcher := fetch.NewFetcher(cloudflareAccountID, cloudflareAPIToken)
-		parallelStages = append(parallelStages, &pipeline.FetchStage{Fetcher: urlFetcher})
-	}
-
 	stages := []pipeline.Stage{
 		&pipeline.ValidateStage{},
 		&pipeline.AgentStage{Agent: agentRunner},
-		&pipeline.ParallelStages{Stages: parallelStages},
+		&pipeline.ParallelStages{Stages: []pipeline.Stage{
+			&pipeline.SearchStage{},
+			&pipeline.FetchStage{},
+		}},
 	}
 
 	stages = append(stages,
