@@ -9,7 +9,7 @@ import (
 const (
 	AgentTemperature     = 0.1
 	AgentMaxTokens     = 1024
-	AgentMaxIterations = 5 // Max tool-calling loop iterations per request
+	AgentMaxIterations = 3 // Max tool-calling loop iterations per request
 	SafeguardTemperature = 0.0
 )
 
