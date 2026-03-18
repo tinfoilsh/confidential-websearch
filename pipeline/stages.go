@@ -120,13 +120,6 @@ func (s *ResultsStage) Execute(ctx *Context) error {
 		log.Debugf("Copied %d fetched page(s) from agent", len(ctx.FetchedPages))
 	}
 
-	// Emit blocked query events
-	if ctx.Emitter != nil {
-		for _, bq := range ctx.AgentResult.BlockedQueries {
-			ctx.Emitter.EmitSearchCall(bq.ID, EmitStatusBlocked, bq.Query, bq.Reason, 0, ctx.Request.Model)
-		}
-	}
-
 	return nil
 }
 

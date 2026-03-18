@@ -176,9 +176,12 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 		fullInstructions.WriteString(fmt.Sprintf("\n\nThe user specified the following system prompt for the conversation, which you can use to draw context from in your decision:\n\"%s\"", systemPrompt))
 	}
 
+	var emitMu sync.Mutex
 	emitToolEvent := func(toolType, id, status, detail string) {
 		if onToolEvent != nil {
+			emitMu.Lock()
 			onToolEvent(toolType, id, status, detail)
+			emitMu.Unlock()
 		}
 	}
 
