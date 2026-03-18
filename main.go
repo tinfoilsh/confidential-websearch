@@ -45,24 +45,25 @@ func main() {
 		log.Fatalf("Failed to create search provider: %v", err)
 	}
 
-	baseAgent := agent.New(client, cfg.AgentModel)
+	if cfg.CloudflareAccountID == "" || cfg.CloudflareAPIToken == "" {
+		log.Fatal("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must be set")
+	}
+	urlFetcher := fetch.NewFetcher(cfg.CloudflareAccountID, cfg.CloudflareAPIToken)
+
+	baseAgent := agent.New(client, cfg.AgentModel, urlFetcher, searcher)
 	responder := llm.NewTinfoilResponder(&client.Chat.Completions)
 	messageBuilder := llm.NewMessageBuilder()
 	safeguardClient := safeguard.NewClient(client, cfg.SafeguardModel)
 
 	// Wrap agent with SafeAgent to support per-request PII filtering via tools
 	agentRunner := agent.NewSafeAgent(baseAgent, safeguardClient)
-	if cfg.CloudflareAccountID == "" || cfg.CloudflareAPIToken == "" {
-		log.Fatal("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must be set")
-	}
-	urlFetcher := fetch.NewFetcher(cfg.CloudflareAccountID, cfg.CloudflareAPIToken)
 
 	p := pipeline.NewPipeline([]pipeline.Stage{
 		&pipeline.ValidateStage{},
 		&pipeline.AgentStage{Agent: agentRunner},
 		&pipeline.ParallelStages{Stages: []pipeline.Stage{
-			&pipeline.SearchStage{Searcher: searcher},
-			&pipeline.FetchStage{Fetcher: urlFetcher},
+			&pipeline.SearchStage{},
+			&pipeline.FetchStage{},
 		}},
 		&pipeline.FilterResultsStage{
 			Checker: safeguardClient,

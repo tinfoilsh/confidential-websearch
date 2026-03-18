@@ -263,7 +263,7 @@ func TestAgentStage_Success(t *testing.T) {
 		RunWithContextFunc: func(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error) {
 			return &agent.Result{
 				SearchReasoning: "searched for info",
-				PendingSearches: []agent.PendingSearch{
+				SearchResults: []agent.ToolCall{
 					{ID: "call_1", Query: "test query"},
 				},
 			}, nil
@@ -287,8 +287,8 @@ func TestAgentStage_Success(t *testing.T) {
 		t.Fatal("expected agent result to be set")
 	}
 
-	if len(ctx.AgentResult.PendingSearches) != 1 {
-		t.Errorf("expected 1 pending search, got %d", len(ctx.AgentResult.PendingSearches))
+	if len(ctx.AgentResult.SearchResults) != 1 {
+		t.Errorf("expected 1 search result, got %d", len(ctx.AgentResult.SearchResults))
 	}
 
 	if ctx.State.Current() != StateProcessing {
@@ -300,8 +300,7 @@ func TestAgentStage_NoSearch(t *testing.T) {
 	mockAgent := &MockAgentRunner{
 		RunWithContextFunc: func(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error) {
 			return &agent.Result{
-				SearchReasoning:  "no search needed",
-				PendingSearches: []agent.PendingSearch{},
+				SearchReasoning: "no search needed",
 			}, nil
 		},
 	}

@@ -43,13 +43,15 @@ type SearchFilter func(ctx context.Context, queries []string) FilterResult
 
 // Agent handles the tool-calling loop with the LLM
 type Agent struct {
-	client *tinfoil.Client
-	model  string
+	client   *tinfoil.Client
+	model    string
+	fetcher  URLFetcher
+	searcher SearchProvider
 }
 
 // New creates a new agent
-func New(client *tinfoil.Client, model string) *Agent {
-	return &Agent{client: client, model: model}
+func New(client *tinfoil.Client, model string, fetcher URLFetcher, searcher SearchProvider) *Agent {
+	return &Agent{client: client, model: model, fetcher: fetcher, searcher: searcher}
 }
 
 // functionCall tracks a single function call being built from stream events
@@ -185,12 +187,6 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 	result := &Result{}
 	var allReasoning strings.Builder
 
-	type queryItem struct {
-		id    string
-		query string
-	}
-	var queries []queryItem
-
 	for iteration := range config.AgentMaxIterations {
 		if ctx.Err() != nil {
 			break
@@ -266,8 +262,10 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 		}
 		slices.Sort(sortedIndices)
 
-		// Parse and collect tool calls, then feed back function_call items
+		// Parse tool calls, execute them, and feed results back
 		processedCalls := make(map[string]bool)
+		toolOutputs := make(map[string]string)
+
 		for _, idx := range sortedIndices {
 			fc := parser.functionCalls[idx]
 			switch fc.name {
@@ -281,9 +279,46 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 				if query == "" {
 					continue
 				}
-				queries = append(queries, queryItem{id: fc.id, query: query})
+
 				input = append(input, responses.ResponseInputItemParamOfFunctionCall(fc.arguments.String(), fc.id, "search"))
 				processedCalls[fc.id] = true
+
+				// Apply PII filter before executing search
+				if filter != nil {
+					filterResult := filter(ctx, []string{query})
+					if len(filterResult.Blocked) > 0 {
+						result.BlockedQueries = append(result.BlockedQueries, BlockedQuery{
+							ID:     fc.id,
+							Query:  query,
+							Reason: filterResult.Blocked[0].Reason,
+						})
+						toolOutputs[fc.id] = "Search blocked: " + filterResult.Blocked[0].Reason
+						log.Debugf("Search blocked by PII filter: %s", query)
+						continue
+					}
+				}
+
+				// Execute search immediately
+				if a.searcher != nil {
+					searchResults, err := a.searcher.Search(ctx, query, config.DefaultMaxSearchResults)
+					if err != nil {
+						toolOutputs[fc.id] = "Search failed: " + err.Error()
+						log.Errorf("Search failed for %q: %v", query, err)
+					} else {
+						result.SearchResults = append(result.SearchResults, ToolCall{
+							ID:      fc.id,
+							Query:   query,
+							Results: searchResults,
+						})
+						// Format results for the model
+						var sb strings.Builder
+						for i, r := range searchResults {
+							fmt.Fprintf(&sb, "[%d] %s\n%s\n%s\n\n", i+1, r.Title, r.URL, r.Content)
+						}
+						toolOutputs[fc.id] = sb.String()
+						log.Debugf("Search %q returned %d results", query, len(searchResults))
+					}
+				}
 
 			case "fetch":
 				var args FetchArgs
@@ -291,72 +326,45 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 					log.Errorf("Failed to parse fetch arguments: %v", err)
 					continue
 				}
-				url := strings.TrimSpace(args.URL)
-				if url == "" {
+				fetchURL := strings.TrimSpace(args.URL)
+				if fetchURL == "" {
 					continue
 				}
-				result.PendingFetches = append(result.PendingFetches, PendingFetch{
-					ID:  fc.id,
-					URL: url,
-				})
+
 				input = append(input, responses.ResponseInputItemParamOfFunctionCall(fc.arguments.String(), fc.id, "fetch"))
 				processedCalls[fc.id] = true
+
+				// Execute fetch immediately
+				if a.fetcher != nil {
+					pages := a.fetcher.FetchURLs(ctx, []string{fetchURL})
+					if len(pages) > 0 {
+						result.FetchedPages = append(result.FetchedPages, pages[0])
+						toolOutputs[fc.id] = pages[0].Content
+						log.Debugf("Fetched %s (%d chars)", fetchURL, len(pages[0].Content))
+					} else {
+						toolOutputs[fc.id] = "Failed to fetch URL."
+						log.Debugf("Failed to fetch %s", fetchURL)
+					}
+				}
 			}
 		}
 
-		// Feed back function_call_output items only for successfully processed calls
+		// Feed back function_call_output items with real results
 		for _, idx := range sortedIndices {
 			fc := parser.functionCalls[idx]
-			if processedCalls[fc.id] {
-				input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(fc.id, "ok"))
+			if !processedCalls[fc.id] {
+				continue
 			}
+			output := toolOutputs[fc.id]
+			if output == "" {
+				output = "ok"
+			}
+			input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(fc.id, output))
 		}
 	}
 
 	result.SearchReasoning = allReasoning.String()
 
-	// Apply filter to search queries if set
-	if filter != nil && len(queries) > 0 {
-		queryStrings := make([]string, len(queries))
-		for i, q := range queries {
-			queryStrings[i] = q.query
-		}
-
-		filterResult := filter(ctx, queryStrings)
-
-		allowedSet := make(map[string]bool, len(filterResult.Allowed))
-		for _, q := range filterResult.Allowed {
-			allowedSet[q] = true
-		}
-
-		blockedReasons := make(map[string]string)
-		for _, b := range filterResult.Blocked {
-			blockedReasons[b.Query] = b.Reason
-		}
-
-		var filtered []queryItem
-		for _, q := range queries {
-			if allowedSet[q.query] {
-				filtered = append(filtered, q)
-			} else if reason, blocked := blockedReasons[q.query]; blocked {
-				result.BlockedQueries = append(result.BlockedQueries, BlockedQuery{
-					ID:     q.id,
-					Query:  q.query,
-					Reason: reason,
-				})
-			}
-		}
-		queries = filtered
-	}
-
-	// Return pending searches for the pipeline to execute
-	for _, q := range queries {
-		result.PendingSearches = append(result.PendingSearches, PendingSearch{
-			ID:    q.id,
-			Query: q.query,
-		})
-	}
-
-	log.Debugf("Agent returning %d pending search(es), %d pending fetch(es)", len(result.PendingSearches), len(result.PendingFetches))
+	log.Debugf("Agent returning %d search result(s), %d fetched page(s)", len(result.SearchResults), len(result.FetchedPages))
 	return result, nil
 }

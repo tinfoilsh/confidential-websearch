@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 
 	"github.com/openai/openai-go/v3"
@@ -10,7 +11,6 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/tinfoilsh/confidential-websearch/agent"
-	"github.com/tinfoilsh/confidential-websearch/config"
 	"github.com/tinfoilsh/confidential-websearch/fetch"
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
 	"github.com/tinfoilsh/confidential-websearch/search"
@@ -129,52 +129,26 @@ func (s *ValidateStage) Execute(ctx *Context) error {
 	return nil
 }
 
-// URLFetcher defines the interface for fetching URL contents
-type URLFetcher interface {
-	FetchURLs(ctx context.Context, urls []string) []fetch.FetchedPage
-}
-
-// FetchStage executes pending URL fetches from the agent
-type FetchStage struct {
-	Fetcher URLFetcher
-}
+// FetchStage copies pre-fetched pages from the agent result into the pipeline context.
+// Fetches are executed immediately during the agent's tool-calling loop so the agent
+// can see page contents and make better decisions.
+type FetchStage struct{}
 
 func (s *FetchStage) Name() string { return "fetch" }
 
 func (s *FetchStage) Execute(ctx *Context) error {
-	if ctx.AgentResult == nil || len(ctx.AgentResult.PendingFetches) == 0 {
+	if ctx.AgentResult == nil || len(ctx.AgentResult.FetchedPages) == 0 {
 		return nil
 	}
 
-	pending := ctx.AgentResult.PendingFetches
-	urls := make([]string, len(pending))
-	for i, pf := range pending {
-		urls[i] = pf.URL
-	}
+	ctx.FetchedPages = ctx.AgentResult.FetchedPages
+	log.Debugf("Copied %d pre-fetched page(s) from agent", len(ctx.FetchedPages))
 
-	// Emit in_progress events
+	// Emit completed events for each fetched page
 	if ctx.Emitter != nil {
-		for _, pf := range pending {
-			ctx.Emitter.EmitFetchCall(pf.ID, EmitStatusInProgress, pf.URL, 0, ctx.Request.Model)
-		}
-	}
-
-	log.Debugf("Fetching %d URL(s)", len(urls))
-	ctx.FetchedPages = s.Fetcher.FetchURLs(ctx.Context, urls)
-	log.Debugf("Successfully fetched %d/%d page(s)", len(ctx.FetchedPages), len(urls))
-
-	// Emit completed/failed events
-	if ctx.Emitter != nil {
-		fetched := make(map[string]bool, len(ctx.FetchedPages))
-		for _, p := range ctx.FetchedPages {
-			fetched[p.URL] = true
-		}
-		for _, pf := range pending {
-			if fetched[pf.URL] {
-				ctx.Emitter.EmitFetchCall(pf.ID, EmitStatusCompleted, pf.URL, 0, ctx.Request.Model)
-			} else {
-				ctx.Emitter.EmitFetchCall(pf.ID, EmitStatusFailed, pf.URL, 0, ctx.Request.Model)
-			}
+		for i, fp := range ctx.FetchedPages {
+			id := fmt.Sprintf("%s%d", FetchIDPrefix, i)
+			ctx.Emitter.EmitFetchCall(id, EmitStatusCompleted, fp.URL, 0, ctx.Request.Model)
 		}
 	}
 
@@ -214,69 +188,35 @@ func (s *AgentStage) Execute(ctx *Context) error {
 	return nil
 }
 
-// SearchStage executes pending searches from the agent
-type SearchStage struct {
-	Searcher search.Provider
-}
+// SearchStage copies pre-executed search results from the agent into the pipeline context.
+// Searches are executed during the agent's tool-calling loop so the agent can see results
+// and make better decisions about follow-up queries.
+type SearchStage struct{}
 
 func (s *SearchStage) Name() string { return "search" }
 
 func (s *SearchStage) Execute(ctx *Context) error {
-	// Emit blocked query events first (before early return check)
+	// Emit blocked query events
 	if ctx.AgentResult != nil && ctx.Emitter != nil {
 		for _, bq := range ctx.AgentResult.BlockedQueries {
 			ctx.Emitter.EmitSearchCall(bq.ID, EmitStatusBlocked, bq.Query, bq.Reason, 0, ctx.Request.Model)
 		}
 	}
 
-	if ctx.AgentResult == nil || len(ctx.AgentResult.PendingSearches) == 0 {
+	if ctx.AgentResult == nil || len(ctx.AgentResult.SearchResults) == 0 {
 		return nil
 	}
 
-	// Emit in_progress events for all pending searches
+	ctx.SearchResults = ctx.AgentResult.SearchResults
+	log.Debugf("Copied %d pre-executed search result(s) from agent", len(ctx.SearchResults))
+
+	// Emit completed events
 	if ctx.Emitter != nil {
-		for _, ps := range ctx.AgentResult.PendingSearches {
-			ctx.Emitter.EmitSearchCall(ps.ID, EmitStatusInProgress, ps.Query, "", 0, ctx.Request.Model)
+		for _, tc := range ctx.SearchResults {
+			ctx.Emitter.EmitSearchCall(tc.ID, EmitStatusCompleted, tc.Query, "", 0, ctx.Request.Model)
 		}
 	}
 
-	// Execute searches in parallel
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var results []agent.ToolCall
-
-	for _, ps := range ctx.AgentResult.PendingSearches {
-		wg.Add(1)
-		go func(pending agent.PendingSearch) {
-			defer wg.Done()
-
-			log.Debug("Executing search")
-			searchResults, err := s.Searcher.Search(ctx.Context, pending.Query, config.DefaultMaxSearchResults)
-			if err != nil {
-				log.Errorf("Search failed: %v", err)
-				if ctx.Emitter != nil {
-					ctx.Emitter.EmitSearchCall(pending.ID, EmitStatusFailed, pending.Query, err.Error(), 0, ctx.Request.Model)
-				}
-				return
-			}
-
-			mu.Lock()
-			results = append(results, agent.ToolCall{
-				ID:      pending.ID,
-				Query:   pending.Query,
-				Results: searchResults,
-			})
-			mu.Unlock()
-
-			// Emit completed event
-			if ctx.Emitter != nil {
-				ctx.Emitter.EmitSearchCall(pending.ID, EmitStatusCompleted, pending.Query, "", 0, ctx.Request.Model)
-			}
-		}(ps)
-	}
-
-	wg.Wait()
-	ctx.SearchResults = results
 	return nil
 }
 
