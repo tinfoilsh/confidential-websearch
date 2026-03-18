@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/openai/openai-go/v3"
@@ -268,9 +269,14 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 		}
 		slices.Sort(sortedIndices)
 
-		// Parse tool calls, execute them, and feed results back
+		// Phase 1: Parse tool calls and append function_call items to input
+		type parsedCall struct {
+			fc       *functionCall
+			toolType string // "search" or "fetch"
+			detail   string // query or URL
+		}
+		var parsed []parsedCall
 		processedCalls := make(map[string]bool)
-		toolOutputs := make(map[string]string)
 
 		for _, idx := range sortedIndices {
 			fc := parser.functionCalls[idx]
@@ -285,50 +291,9 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 				if query == "" {
 					continue
 				}
-
 				input = append(input, responses.ResponseInputItemParamOfFunctionCall(fc.arguments.String(), fc.id, "search"))
 				processedCalls[fc.id] = true
-
-				// Apply PII filter before executing search
-				if filter != nil {
-					filterResult := filter(ctx, []string{query})
-					if len(filterResult.Blocked) > 0 {
-						result.BlockedQueries = append(result.BlockedQueries, BlockedQuery{
-							ID:     fc.id,
-							Query:  query,
-							Reason: filterResult.Blocked[0].Reason,
-						})
-						toolOutputs[fc.id] = "Search blocked: " + filterResult.Blocked[0].Reason
-						emitToolEvent("search", fc.id, "blocked", query)
-						log.Debugf("Search blocked by PII filter: %s", query)
-						continue
-					}
-				}
-
-				// Execute search immediately
-				if a.searcher != nil {
-					emitToolEvent("search", fc.id, "in_progress", query)
-					searchResults, err := a.searcher.Search(ctx, query, config.DefaultMaxSearchResults)
-					if err != nil {
-						toolOutputs[fc.id] = "Search failed: " + err.Error()
-						emitToolEvent("search", fc.id, "failed", query)
-						log.Errorf("Search failed for %q: %v", query, err)
-					} else {
-						result.SearchResults = append(result.SearchResults, ToolCall{
-							ID:      fc.id,
-							Query:   query,
-							Results: searchResults,
-						})
-						// Format results for the model
-						var sb strings.Builder
-						for i, r := range searchResults {
-							fmt.Fprintf(&sb, "[%d] %s\n%s\n%s\n\n", i+1, r.Title, r.URL, r.Content)
-						}
-						toolOutputs[fc.id] = sb.String()
-						emitToolEvent("search", fc.id, "completed", query)
-						log.Debugf("Search %q returned %d results", query, len(searchResults))
-					}
-				}
+				parsed = append(parsed, parsedCall{fc: fc, toolType: "search", detail: query})
 
 			case "fetch":
 				var args FetchArgs
@@ -340,29 +305,94 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 				if fetchURL == "" {
 					continue
 				}
-
 				input = append(input, responses.ResponseInputItemParamOfFunctionCall(fc.arguments.String(), fc.id, "fetch"))
 				processedCalls[fc.id] = true
-
-				// Execute fetch immediately
-				if a.fetcher != nil {
-					emitToolEvent("fetch", fc.id, "in_progress", fetchURL)
-					pages := a.fetcher.FetchURLs(ctx, []string{fetchURL})
-					if len(pages) > 0 {
-						result.FetchedPages = append(result.FetchedPages, pages[0])
-						toolOutputs[fc.id] = pages[0].Content
-						emitToolEvent("fetch", fc.id, "completed", fetchURL)
-						log.Debugf("Fetched %s (%d chars)", fetchURL, len(pages[0].Content))
-					} else {
-						toolOutputs[fc.id] = "Failed to fetch URL."
-						emitToolEvent("fetch", fc.id, "failed", fetchURL)
-						log.Debugf("Failed to fetch %s", fetchURL)
-					}
-				}
+				parsed = append(parsed, parsedCall{fc: fc, toolType: "fetch", detail: fetchURL})
 			}
 		}
 
-		// Feed back function_call_output items with real results
+		// Phase 2: Execute all tool calls concurrently
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		toolOutputs := make(map[string]string)
+
+		for _, pc := range parsed {
+			wg.Add(1)
+			go func(pc parsedCall) {
+				defer wg.Done()
+
+				switch pc.toolType {
+				case "search":
+					// Apply PII filter before executing search
+					if filter != nil {
+						filterResult := filter(ctx, []string{pc.detail})
+						if len(filterResult.Blocked) > 0 {
+							mu.Lock()
+							result.BlockedQueries = append(result.BlockedQueries, BlockedQuery{
+								ID:     pc.fc.id,
+								Query:  pc.detail,
+								Reason: filterResult.Blocked[0].Reason,
+							})
+							toolOutputs[pc.fc.id] = "Search blocked: " + filterResult.Blocked[0].Reason
+							mu.Unlock()
+							emitToolEvent("search", pc.fc.id, "blocked", pc.detail)
+							log.Debugf("Search blocked by PII filter: %s", pc.detail)
+							return
+						}
+					}
+
+					if a.searcher != nil {
+						emitToolEvent("search", pc.fc.id, "in_progress", pc.detail)
+						searchResults, err := a.searcher.Search(ctx, pc.detail, config.DefaultMaxSearchResults)
+						if err != nil {
+							mu.Lock()
+							toolOutputs[pc.fc.id] = "Search failed: " + err.Error()
+							mu.Unlock()
+							emitToolEvent("search", pc.fc.id, "failed", pc.detail)
+							log.Errorf("Search failed for %q: %v", pc.detail, err)
+						} else {
+							var sb strings.Builder
+							for i, r := range searchResults {
+								fmt.Fprintf(&sb, "[%d] %s\n%s\n%s\n\n", i+1, r.Title, r.URL, r.Content)
+							}
+							mu.Lock()
+							result.SearchResults = append(result.SearchResults, ToolCall{
+								ID:      pc.fc.id,
+								Query:   pc.detail,
+								Results: searchResults,
+							})
+							toolOutputs[pc.fc.id] = sb.String()
+							mu.Unlock()
+							emitToolEvent("search", pc.fc.id, "completed", pc.detail)
+							log.Debugf("Search %q returned %d results", pc.detail, len(searchResults))
+						}
+					}
+
+				case "fetch":
+					if a.fetcher != nil {
+						emitToolEvent("fetch", pc.fc.id, "in_progress", pc.detail)
+						pages := a.fetcher.FetchURLs(ctx, []string{pc.detail})
+						if len(pages) > 0 {
+							mu.Lock()
+							result.FetchedPages = append(result.FetchedPages, pages[0])
+							toolOutputs[pc.fc.id] = pages[0].Content
+							mu.Unlock()
+							emitToolEvent("fetch", pc.fc.id, "completed", pc.detail)
+							log.Debugf("Fetched %s (%d chars)", pc.detail, len(pages[0].Content))
+						} else {
+							mu.Lock()
+							toolOutputs[pc.fc.id] = "Failed to fetch URL."
+							mu.Unlock()
+							emitToolEvent("fetch", pc.fc.id, "failed", pc.detail)
+							log.Debugf("Failed to fetch %s", pc.detail)
+						}
+					}
+				}
+			}(pc)
+		}
+		wg.Wait()
+
+		// Phase 3: Feed back function_call_output items in sorted order
 		for _, idx := range sortedIndices {
 			fc := parser.functionCalls[idx]
 			if !processedCalls[fc.id] {
