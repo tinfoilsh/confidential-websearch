@@ -51,7 +51,7 @@ func (s *SafeAgent) SetPIICheckEnabled(enabled bool) {
 
 // RunWithContext implements AgentRunner interface.
 // It forwards full conversation context to the base agent while applying PII filtering.
-func (s *SafeAgent) RunWithContext(ctx context.Context, messages []ContextMessage, systemPrompt string, onChunk ChunkCallback) (*Result, error) {
+func (s *SafeAgent) RunWithContext(ctx context.Context, messages []ContextMessage, systemPrompt string, onChunk ChunkCallback, onToolEvent ToolEventCallback) (*Result, error) {
 	var filter SearchFilter
 
 	// Check if PII check is enabled via context, fall back to default setting
@@ -67,7 +67,7 @@ func (s *SafeAgent) RunWithContext(ctx context.Context, messages []ContextMessag
 		filter = s.createPIIFilter(ctx)
 	}
 
-	return s.agent.RunWithFilter(ctx, messages, systemPrompt, onChunk, filter)
+	return s.agent.RunWithFilter(ctx, messages, systemPrompt, onChunk, filter, onToolEvent)
 }
 
 // createPIIFilter creates a PII filter that checks query content

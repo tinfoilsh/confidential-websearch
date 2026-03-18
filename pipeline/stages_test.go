@@ -16,12 +16,12 @@ import (
 
 // MockAgentRunner implements AgentRunner for testing
 type MockAgentRunner struct {
-	RunWithContextFunc func(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error)
+	RunWithContextFunc func(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback, onToolEvent agent.ToolEventCallback) (*agent.Result, error)
 }
 
-func (m *MockAgentRunner) RunWithContext(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error) {
+func (m *MockAgentRunner) RunWithContext(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback, onToolEvent agent.ToolEventCallback) (*agent.Result, error) {
 	if m.RunWithContextFunc != nil {
-		return m.RunWithContextFunc(ctx, messages, systemPrompt, onChunk)
+		return m.RunWithContextFunc(ctx, messages, systemPrompt, onChunk, onToolEvent)
 	}
 	return &agent.Result{}, nil
 }
@@ -260,7 +260,7 @@ func TestValidateStage_ResponsesAPI_MissingInput(t *testing.T) {
 
 func TestAgentStage_Success(t *testing.T) {
 	mockAgent := &MockAgentRunner{
-		RunWithContextFunc: func(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error) {
+		RunWithContextFunc: func(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback, onToolEvent agent.ToolEventCallback) (*agent.Result, error) {
 			return &agent.Result{
 				SearchReasoning: "searched for info",
 				SearchResults: []agent.ToolCall{
@@ -298,7 +298,7 @@ func TestAgentStage_Success(t *testing.T) {
 
 func TestAgentStage_NoSearch(t *testing.T) {
 	mockAgent := &MockAgentRunner{
-		RunWithContextFunc: func(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error) {
+		RunWithContextFunc: func(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback, onToolEvent agent.ToolEventCallback) (*agent.Result, error) {
 			return &agent.Result{
 				SearchReasoning: "no search needed",
 			}, nil
@@ -325,7 +325,7 @@ func TestAgentStage_NoSearch(t *testing.T) {
 
 func TestAgentStage_Error(t *testing.T) {
 	mockAgent := &MockAgentRunner{
-		RunWithContextFunc: func(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error) {
+		RunWithContextFunc: func(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback, onToolEvent agent.ToolEventCallback) (*agent.Result, error) {
 			return nil, errors.New("agent failed")
 		},
 	}

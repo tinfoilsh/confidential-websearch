@@ -129,18 +129,18 @@ func (p *streamParser) parseResponse(resp *responses.Response) {
 
 // RunWithContext executes the agent with conversation context and optional streaming.
 // This is the main entry point for agent execution and implements AgentRunner interface.
-func (a *Agent) RunWithContext(ctx context.Context, messages []ContextMessage, systemPrompt string, onChunk ChunkCallback) (*Result, error) {
-	return a.run(ctx, messages, systemPrompt, onChunk, nil)
+func (a *Agent) RunWithContext(ctx context.Context, messages []ContextMessage, systemPrompt string, onChunk ChunkCallback, onToolEvent ToolEventCallback) (*Result, error) {
+	return a.run(ctx, messages, systemPrompt, onChunk, nil, onToolEvent)
 }
 
 // RunWithFilter executes the agent with a custom search filter.
 // Used by SafeAgent to inject PII filtering.
-func (a *Agent) RunWithFilter(ctx context.Context, messages []ContextMessage, systemPrompt string, onChunk ChunkCallback, filter SearchFilter) (*Result, error) {
-	return a.run(ctx, messages, systemPrompt, onChunk, filter)
+func (a *Agent) RunWithFilter(ctx context.Context, messages []ContextMessage, systemPrompt string, onChunk ChunkCallback, filter SearchFilter, onToolEvent ToolEventCallback) (*Result, error) {
+	return a.run(ctx, messages, systemPrompt, onChunk, filter, onToolEvent)
 }
 
 // run is the internal implementation
-func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt string, onChunk ChunkCallback, filter SearchFilter) (*Result, error) {
+func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt string, onChunk ChunkCallback, filter SearchFilter, onToolEvent ToolEventCallback) (*Result, error) {
 	searchTool := responses.ToolParamOfFunction(
 		"search",
 		SearchToolParams,
@@ -182,6 +182,12 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 	fullInstructions.WriteString(fmt.Sprintf("\n\nCurrent date and time: %s", time.Now().Format("Monday, January 2, 2006 at 3:04 PM MST")))
 	if systemPrompt != "" {
 		fullInstructions.WriteString(fmt.Sprintf("\n\nThe user specified the following system prompt for the conversation, which you can use to draw context from in your decision:\n\"%s\"", systemPrompt))
+	}
+
+	emitToolEvent := func(toolType, id, status, detail string) {
+		if onToolEvent != nil {
+			onToolEvent(toolType, id, status, detail)
+		}
 	}
 
 	result := &Result{}
@@ -293,6 +299,7 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 							Reason: filterResult.Blocked[0].Reason,
 						})
 						toolOutputs[fc.id] = "Search blocked: " + filterResult.Blocked[0].Reason
+						emitToolEvent("search", fc.id, "blocked", query)
 						log.Debugf("Search blocked by PII filter: %s", query)
 						continue
 					}
@@ -300,9 +307,11 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 
 				// Execute search immediately
 				if a.searcher != nil {
+					emitToolEvent("search", fc.id, "in_progress", query)
 					searchResults, err := a.searcher.Search(ctx, query, config.DefaultMaxSearchResults)
 					if err != nil {
 						toolOutputs[fc.id] = "Search failed: " + err.Error()
+						emitToolEvent("search", fc.id, "failed", query)
 						log.Errorf("Search failed for %q: %v", query, err)
 					} else {
 						result.SearchResults = append(result.SearchResults, ToolCall{
@@ -316,6 +325,7 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 							fmt.Fprintf(&sb, "[%d] %s\n%s\n%s\n\n", i+1, r.Title, r.URL, r.Content)
 						}
 						toolOutputs[fc.id] = sb.String()
+						emitToolEvent("search", fc.id, "completed", query)
 						log.Debugf("Search %q returned %d results", query, len(searchResults))
 					}
 				}
@@ -336,13 +346,16 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 
 				// Execute fetch immediately
 				if a.fetcher != nil {
+					emitToolEvent("fetch", fc.id, "in_progress", fetchURL)
 					pages := a.fetcher.FetchURLs(ctx, []string{fetchURL})
 					if len(pages) > 0 {
 						result.FetchedPages = append(result.FetchedPages, pages[0])
 						toolOutputs[fc.id] = pages[0].Content
+						emitToolEvent("fetch", fc.id, "completed", fetchURL)
 						log.Debugf("Fetched %s (%d chars)", fetchURL, len(pages[0].Content))
 					} else {
 						toolOutputs[fc.id] = "Failed to fetch URL."
+						emitToolEvent("fetch", fc.id, "failed", fetchURL)
 						log.Debugf("Failed to fetch %s", fetchURL)
 					}
 				}

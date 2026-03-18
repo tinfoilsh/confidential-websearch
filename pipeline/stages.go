@@ -3,7 +3,6 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"sync"
 
 	"github.com/openai/openai-go/v3"
@@ -54,7 +53,7 @@ func (p *ParallelStages) Execute(ctx *Context) error {
 
 // AgentRunner defines the interface for running the agent with full context
 type AgentRunner interface {
-	RunWithContext(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback) (*agent.Result, error)
+	RunWithContext(ctx context.Context, messages []agent.ContextMessage, systemPrompt string, onChunk agent.ChunkCallback, onToolEvent agent.ToolEventCallback) (*agent.Result, error)
 }
 
 // SafeguardChecker defines the interface for safety checks
@@ -143,15 +142,6 @@ func (s *FetchStage) Execute(ctx *Context) error {
 
 	ctx.FetchedPages = ctx.AgentResult.FetchedPages
 	log.Debugf("Copied %d pre-fetched page(s) from agent", len(ctx.FetchedPages))
-
-	// Emit completed events for each fetched page
-	if ctx.Emitter != nil {
-		for i, fp := range ctx.FetchedPages {
-			id := fmt.Sprintf("%s%d", FetchIDPrefix, i)
-			ctx.Emitter.EmitFetchCall(id, EmitStatusCompleted, fp.URL, 0, ctx.Request.Model)
-		}
-	}
-
 	return nil
 }
 
@@ -179,7 +169,20 @@ func (s *AgentStage) Execute(ctx *Context) error {
 	// Pass PII check setting to agent via context
 	agentCtx := agent.WithPIICheckEnabled(ctx.Context, ctx.Request.PIICheckEnabled)
 
-	result, err := s.Agent.RunWithContext(agentCtx, messages, systemPrompt, nil)
+	// Bridge agent tool events to the pipeline's event emitter
+	var onToolEvent agent.ToolEventCallback
+	if ctx.Emitter != nil {
+		onToolEvent = func(toolType, id, status, detail string) {
+			switch toolType {
+			case "search":
+				ctx.Emitter.EmitSearchCall(id, status, detail, "", 0, ctx.Request.Model)
+			case "fetch":
+				ctx.Emitter.EmitFetchCall(id, status, detail, 0, ctx.Request.Model)
+			}
+		}
+	}
+
+	result, err := s.Agent.RunWithContext(agentCtx, messages, systemPrompt, nil, onToolEvent)
 	if err != nil {
 		return &AgentError{Err: err}
 	}
@@ -209,14 +212,6 @@ func (s *SearchStage) Execute(ctx *Context) error {
 
 	ctx.SearchResults = ctx.AgentResult.SearchResults
 	log.Debugf("Copied %d pre-executed search result(s) from agent", len(ctx.SearchResults))
-
-	// Emit completed events
-	if ctx.Emitter != nil {
-		for _, tc := range ctx.SearchResults {
-			ctx.Emitter.EmitSearchCall(tc.ID, EmitStatusCompleted, tc.Query, "", 0, ctx.Request.Model)
-		}
-	}
-
 	return nil
 }
 

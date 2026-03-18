@@ -60,6 +60,11 @@ type Result struct {
 // ChunkCallback is called for each streaming event from the agent LLM
 type ChunkCallback func(event responses.ResponseStreamEventUnion)
 
+// ToolEventCallback is called when a tool execution starts or completes.
+// toolType is "search" or "fetch", id is the tool call ID, status is
+// "in_progress"/"completed"/"failed"/"blocked", detail is the query or URL.
+type ToolEventCallback func(toolType, id, status, detail string)
+
 // SearchToolParams is the JSON schema for the search tool
 var SearchToolParams = map[string]any{
 	"type": "object",
