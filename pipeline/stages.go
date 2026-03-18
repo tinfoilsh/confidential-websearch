@@ -3,7 +3,6 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
-	"sync"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -21,35 +20,6 @@ type Stage interface {
 	Execute(ctx *Context) error
 }
 
-// ParallelStages runs multiple stages concurrently, returning the first error encountered.
-type ParallelStages struct {
-	Stages []Stage
-}
-
-func (p *ParallelStages) Name() string { return "parallel" }
-
-func (p *ParallelStages) Execute(ctx *Context) error {
-	var wg sync.WaitGroup
-	errs := make(chan error, len(p.Stages))
-
-	for _, stage := range p.Stages {
-		wg.Add(1)
-		go func(s Stage) {
-			defer wg.Done()
-			if err := s.Execute(ctx); err != nil {
-				errs <- err
-			}
-		}(stage)
-	}
-
-	wg.Wait()
-	close(errs)
-
-	for err := range errs {
-		return err
-	}
-	return nil
-}
 
 // AgentRunner defines the interface for running the agent with full context
 type AgentRunner interface {
@@ -128,20 +98,35 @@ func (s *ValidateStage) Execute(ctx *Context) error {
 	return nil
 }
 
-// FetchStage copies pre-fetched pages from the agent result into the pipeline context.
-// Fetches are executed immediately during the agent's tool-calling loop so the agent
-// can see page contents and make better decisions.
-type FetchStage struct{}
+// ResultsStage copies pre-executed search results and fetched pages from the agent
+// into the pipeline context. Tool execution happens during the agent's loop so the
+// agent can see results and make follow-up decisions.
+type ResultsStage struct{}
 
-func (s *FetchStage) Name() string { return "fetch" }
+func (s *ResultsStage) Name() string { return "results" }
 
-func (s *FetchStage) Execute(ctx *Context) error {
-	if ctx.AgentResult == nil || len(ctx.AgentResult.FetchedPages) == 0 {
+func (s *ResultsStage) Execute(ctx *Context) error {
+	if ctx.AgentResult == nil {
 		return nil
 	}
 
-	ctx.FetchedPages = ctx.AgentResult.FetchedPages
-	log.Debugf("Copied %d pre-fetched page(s) from agent", len(ctx.FetchedPages))
+	if len(ctx.AgentResult.SearchResults) > 0 {
+		ctx.SearchResults = ctx.AgentResult.SearchResults
+		log.Debugf("Copied %d search result(s) from agent", len(ctx.SearchResults))
+	}
+
+	if len(ctx.AgentResult.FetchedPages) > 0 {
+		ctx.FetchedPages = ctx.AgentResult.FetchedPages
+		log.Debugf("Copied %d fetched page(s) from agent", len(ctx.FetchedPages))
+	}
+
+	// Emit blocked query events
+	if ctx.Emitter != nil {
+		for _, bq := range ctx.AgentResult.BlockedQueries {
+			ctx.Emitter.EmitSearchCall(bq.ID, EmitStatusBlocked, bq.Query, bq.Reason, 0, ctx.Request.Model)
+		}
+	}
+
 	return nil
 }
 
@@ -191,29 +176,6 @@ func (s *AgentStage) Execute(ctx *Context) error {
 	return nil
 }
 
-// SearchStage copies pre-executed search results from the agent into the pipeline context.
-// Searches are executed during the agent's tool-calling loop so the agent can see results
-// and make better decisions about follow-up queries.
-type SearchStage struct{}
-
-func (s *SearchStage) Name() string { return "search" }
-
-func (s *SearchStage) Execute(ctx *Context) error {
-	// Emit blocked query events
-	if ctx.AgentResult != nil && ctx.Emitter != nil {
-		for _, bq := range ctx.AgentResult.BlockedQueries {
-			ctx.Emitter.EmitSearchCall(bq.ID, EmitStatusBlocked, bq.Query, bq.Reason, 0, ctx.Request.Model)
-		}
-	}
-
-	if ctx.AgentResult == nil || len(ctx.AgentResult.SearchResults) == 0 {
-		return nil
-	}
-
-	ctx.SearchResults = ctx.AgentResult.SearchResults
-	log.Debugf("Copied %d pre-executed search result(s) from agent", len(ctx.SearchResults))
-	return nil
-}
 
 // FilterResultsStage checks search results for prompt injection
 type FilterResultsStage struct {

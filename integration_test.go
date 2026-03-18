@@ -73,10 +73,7 @@ func setupIntegrationServer(t *testing.T) *api.Server {
 	stages := []pipeline.Stage{
 		&pipeline.ValidateStage{},
 		&pipeline.AgentStage{Agent: agentRunner},
-		&pipeline.ParallelStages{Stages: []pipeline.Stage{
-			&pipeline.SearchStage{},
-			&pipeline.FetchStage{},
-		}},
+		&pipeline.ResultsStage{},
 	}
 
 	stages = append(stages,
