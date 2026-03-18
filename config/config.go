@@ -8,9 +8,8 @@ import (
 // LLM parameter constants
 const (
 	AgentTemperature     = 0.1
-	AgentMaxTokens       = 1024
-	AgentMaxTurns        = 3 // Max conversation turns to send to agent
-	AgentMaxIterations   = 5 // Max tool-calling loop iterations per request
+	AgentMaxTokens     = 1024
+	AgentMaxIterations = 5 // Max tool-calling loop iterations per request
 	SafeguardTemperature = 0.0
 )
 
