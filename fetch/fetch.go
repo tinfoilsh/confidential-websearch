@@ -179,7 +179,7 @@ func (f *Fetcher) fetchURL(ctx context.Context, rawURL string) (string, error) {
 	reqBody := cloudflareRequest{
 		URL:                 rawURL,
 		RejectResourceTypes: []string{"image", "media", "font", "stylesheet"},
-		GotoOptions:         &cloudflareGoto{WaitUntil: "networkidle0"},
+		GotoOptions:         &cloudflareGoto{WaitUntil: "networkidle2"},
 	}
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
