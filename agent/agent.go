@@ -200,6 +200,7 @@ func (a *Agent) run(ctx context.Context, messages []ContextMessage, systemPrompt
 			Temperature:     openai.Float(config.AgentTemperature),
 			MaxOutputTokens: openai.Int(config.AgentMaxTokens),
 			Instructions:    openai.String(fullInstructions.String()),
+			Reasoning:       shared.ReasoningParam{Effort: shared.ReasoningEffortLow},
 		}
 
 		var parser *streamParser
