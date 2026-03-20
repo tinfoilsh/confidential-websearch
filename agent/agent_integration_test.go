@@ -81,7 +81,7 @@ func TestAgent_FetchQuery(t *testing.T) {
 	if agent.fetcher == nil {
 		t.Skip("CLOUDFLARE credentials not set, skipping fetch test")
 	}
-	result := runAgent(t, agent, "Fetch https://nytimes.com and summarize what you see")
+	result := runAgent(t, agent, "Fetch https://htmlonly.com and tell me about it")
 
 	totalTools := len(result.FetchedPages) + len(result.SearchResults)
 	if totalTools == 0 {
@@ -98,7 +98,7 @@ func TestAgent_MultipleTools(t *testing.T) {
 	if agent.fetcher == nil || agent.searcher == nil {
 		t.Skip("CLOUDFLARE or EXA credentials not set, skipping multi-tool test")
 	}
-	result := runAgent(t, agent, "Fetch https://nytimes.com and search for their main competitors")
+	result := runAgent(t, agent, "Fetch https://htmlonly.com and tell me about secure enclaves")
 
 	totalTools := len(result.FetchedPages) + len(result.SearchResults)
 	if totalTools == 0 {
