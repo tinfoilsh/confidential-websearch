@@ -5,7 +5,7 @@ memory: 16384
 
 containers:
   - name: "websearch-proxy"
-    image: "ghcr.io/tinfoilsh/confidential-websearch:0.2.12"
+    image: "ghcr.io/tinfoilsh/confidential-websearch@sha256:5b5d388f2a962c46bb5abe175f8ba27e11408861178f1d069bb33499623406b0" # v0.2.13
     env:
       - AGENT_MODEL: "gpt-oss-120b"
       - SAFEGUARD_MODEL: "gpt-oss-safeguard-120b"
