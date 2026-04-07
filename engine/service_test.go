@@ -255,6 +255,41 @@ func TestStream_UsesPreviousResponseIDAndEmitsMatchingAnnotations(t *testing.T) 
 	}
 }
 
+func TestRun_CompactsFetchedToolOutputWithSummaryModel(t *testing.T) {
+	longPage := strings.Repeat("Long fetched content. ", 400)
+	client := &fakeResponsesClient{
+		responses: []*responses.Response{
+			mustResponse(t, `{"id":"resp_fetch_1","created_at":1,"model":"gpt-oss-120b","output":[{"id":"fc_1","type":"function_call","call_id":"call_fetch","name":"fetch","arguments":"{\"url\":\"https://go.dev/doc\"}"}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`),
+			mustResponse(t, `{"id":"resp_summary_1","created_at":2,"model":"gpt-oss-120b","output":[{"id":"msg_summary","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"【1】Fetched page\nURL: https://go.dev/doc\nKey facts only.","annotations":[]}]}],"usage":{"input_tokens":2,"output_tokens":2,"total_tokens":4}}`),
+			mustResponse(t, `{"id":"resp_fetch_2","created_at":3,"model":"gpt-oss-120b","output":[{"id":"msg_final","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Docs say key facts【1】","annotations":[]}]}],"usage":{"input_tokens":2,"output_tokens":2,"total_tokens":4}}`),
+		},
+	}
+	service := NewService(
+		client,
+		nil,
+		&fakeFetcher{pages: map[string]fetch.FetchedPage{
+			"https://go.dev/doc": {URL: "https://go.dev/doc", Content: longPage},
+		}},
+		nil,
+		WithToolSummaryModel("gpt-oss-120b"),
+	)
+
+	result, err := service.Run(context.Background(), chatRequest())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(client.params) != 3 {
+		t.Fatalf("expected 3 model calls, got %d", len(client.params))
+	}
+	assertContainsJSON(t, client.params[1], "You compress web tool output")
+	assertContainsJSON(t, client.params[2], "Key facts only.")
+	assertNotContainsJSON(t, client.params[2], longPage)
+	if result.Content != "Docs say key facts【1】" {
+		t.Fatalf("unexpected final content: %q", result.Content)
+	}
+}
+
 func chatRequest() *pipeline.Request {
 	return &pipeline.Request{
 		Model:            "gpt-oss-120b",
@@ -303,5 +338,16 @@ func assertContainsJSON(t *testing.T, params responses.ResponseNewParams, needle
 	}
 	if !strings.Contains(string(data), needle) {
 		t.Fatalf("expected marshaled params to contain %q, got %s", needle, string(data))
+	}
+}
+
+func assertNotContainsJSON(t *testing.T, params responses.ResponseNewParams, needle string) {
+	t.Helper()
+	data, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("failed to marshal params: %v", err)
+	}
+	if strings.Contains(string(data), needle) {
+		t.Fatalf("expected marshaled params not to contain %q, got %s", needle, string(data))
 	}
 }
