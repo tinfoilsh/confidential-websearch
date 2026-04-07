@@ -12,14 +12,14 @@ const (
 	MaxSearchContentLength  = 2000
 )
 
-// Config holds the MCP tool server configuration
+// Config holds the server configuration
 type Config struct {
-	TinfoilAPIKey       string
-	ExaAPIKey           string
-	CloudflareAccountID string
-	CloudflareAPIToken  string
-	ListenAddr          string
-	SafeguardModel      string
+	TinfoilAPIKey        string
+	ExaAPIKey            string
+	CloudflareAccountID  string
+	CloudflareAPIToken   string
+	ListenAddr           string
+	SafeguardModel       string
 	EnablePIICheck       bool
 	EnableInjectionCheck bool
 }
