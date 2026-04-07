@@ -178,7 +178,7 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 	for _, fp := range result.FetchCalls {
 		fetchCalls = append(fetchCalls, FetchCall{
 			ID:     fp.ID,
-			Status: StatusCompleted,
+			Status: fp.Status,
 			Action: &WebSearchAction{
 				Type: ActionTypeOpenPage,
 				URL:  fp.URL,
@@ -345,7 +345,7 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		output = append(output, ResponsesOutput{
 			Type:   ItemTypeWebSearchCall,
 			ID:     IDPrefixWebSearch + fp.ID,
-			Status: StatusCompleted,
+			Status: fp.Status,
 			Action: &WebSearchAction{
 				Type: ActionTypeOpenPage,
 				URL:  fp.URL,

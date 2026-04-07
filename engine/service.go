@@ -80,6 +80,7 @@ type SearchOutcome struct {
 
 type FetchCall struct {
 	ID            string
+	Status        string
 	URL           string
 	Page          *fetch.FetchedPage
 	CitationIndex int
@@ -542,12 +543,21 @@ func (s *executionState) applyToolExecutions(sortedCalls []*functionCall, execut
 
 		case "fetch":
 			if exec.err != nil {
+				s.fetchCalls = append(s.fetchCalls, FetchCall{
+					ID:     call.id,
+					Status: pipeline.EmitStatusFailed,
+					URL:    exec.url,
+				})
 				input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(call.id, "Fetch failed: "+exec.err.Error()))
 				continue
 			}
 
 			if len(exec.pages) == 0 {
-				s.fetchCalls = append(s.fetchCalls, FetchCall{ID: call.id, URL: exec.url})
+				s.fetchCalls = append(s.fetchCalls, FetchCall{
+					ID:     call.id,
+					Status: pipeline.EmitStatusFailed,
+					URL:    exec.url,
+				})
 				input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(call.id, "No page content could be fetched."))
 				continue
 			}
@@ -555,7 +565,13 @@ func (s *executionState) applyToolExecutions(sortedCalls []*functionCall, execut
 			page := exec.pages[0]
 			citationIndex := s.nextCitation
 			s.fetchedPages = append(s.fetchedPages, page)
-			s.fetchCalls = append(s.fetchCalls, FetchCall{ID: call.id, URL: exec.url, Page: &page, CitationIndex: citationIndex})
+			s.fetchCalls = append(s.fetchCalls, FetchCall{
+				ID:            call.id,
+				Status:        pipeline.EmitStatusCompleted,
+				URL:           exec.url,
+				Page:          &page,
+				CitationIndex: citationIndex,
+			})
 			s.sources = append(s.sources, CitationSource{
 				Title: page.URL,
 				URL:   page.URL,
