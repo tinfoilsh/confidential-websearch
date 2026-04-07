@@ -72,7 +72,7 @@ func TestExaProvider_Search_Success(t *testing.T) {
 	defer server.Close()
 
 	provider := newTestProvider(server.URL)
-	results, err := provider.Search(context.Background(), "test query", 3)
+	results, err := provider.Search(context.Background(), "test query", Options{MaxResults: 3})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestExaProvider_Search_EmptyResults(t *testing.T) {
 	defer server.Close()
 
 	provider := newTestProvider(server.URL)
-	results, err := provider.Search(context.Background(), "no results query", 5)
+	results, err := provider.Search(context.Background(), "no results query", Options{MaxResults: 5})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestExaProvider_Search_APIError(t *testing.T) {
 	defer server.Close()
 
 	provider := newTestProvider(server.URL)
-	_, err := provider.Search(context.Background(), "test query", 3)
+	_, err := provider.Search(context.Background(), "test query", Options{MaxResults: 3})
 	if err == nil {
 		t.Fatal("expected error for 500 response")
 	}
@@ -151,7 +151,7 @@ func TestExaProvider_Search_BadRequest(t *testing.T) {
 	defer server.Close()
 
 	provider := newTestProvider(server.URL)
-	_, err := provider.Search(context.Background(), "test query", 3)
+	_, err := provider.Search(context.Background(), "test query", Options{MaxResults: 3})
 	if err == nil {
 		t.Fatal("expected error for 400 response")
 	}
@@ -169,7 +169,7 @@ func TestExaProvider_Search_MalformedJSON(t *testing.T) {
 	defer server.Close()
 
 	provider := newTestProvider(server.URL)
-	_, err := provider.Search(context.Background(), "test query", 3)
+	_, err := provider.Search(context.Background(), "test query", Options{MaxResults: 3})
 	if err == nil {
 		t.Fatal("expected error for malformed JSON")
 	}
@@ -190,7 +190,7 @@ func TestExaProvider_Search_ExaErrorField(t *testing.T) {
 	defer server.Close()
 
 	provider := newTestProvider(server.URL)
-	_, err := provider.Search(context.Background(), "test query", 3)
+	_, err := provider.Search(context.Background(), "test query", Options{MaxResults: 3})
 	if err == nil {
 		t.Fatal("expected error when API returns error field")
 	}
@@ -213,7 +213,7 @@ func TestExaProvider_Search_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := provider.Search(ctx, "test query", 3)
+	_, err := provider.Search(ctx, "test query", Options{MaxResults: 3})
 	if err == nil {
 		t.Fatal("expected error when context is cancelled")
 	}
@@ -233,7 +233,7 @@ func TestExaProvider_Search_Timeout(t *testing.T) {
 		baseURL:    server.URL,
 	}
 
-	_, err := provider.Search(context.Background(), "test query", 3)
+	_, err := provider.Search(context.Background(), "test query", Options{MaxResults: 3})
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
@@ -249,7 +249,11 @@ func TestExaProvider_Search_RequestBody(t *testing.T) {
 	defer server.Close()
 
 	provider := newTestProvider(server.URL)
-	provider.Search(context.Background(), "my search query", 10)
+	provider.Search(context.Background(), "my search query", Options{
+		MaxResults:           10,
+		MaxContentCharacters: 1234,
+		UserLocationCountry:  "us",
+	})
 
 	if receivedReq.Query != "my search query" {
 		t.Errorf("expected query 'my search query', got '%s'", receivedReq.Query)
@@ -260,7 +264,13 @@ func TestExaProvider_Search_RequestBody(t *testing.T) {
 	if receivedReq.NumResults != 10 {
 		t.Errorf("expected numResults 10, got %d", receivedReq.NumResults)
 	}
+	if receivedReq.UserLocation != "us" {
+		t.Errorf("expected userLocation 'us', got %q", receivedReq.UserLocation)
+	}
 	if receivedReq.Contents == nil || receivedReq.Contents.Text == nil {
 		t.Error("expected contents.text to be set")
+	}
+	if receivedReq.Contents != nil && receivedReq.Contents.Text != nil && receivedReq.Contents.Text.MaxCharacters != 1234 {
+		t.Errorf("expected maxCharacters 1234, got %d", receivedReq.Contents.Text.MaxCharacters)
 	}
 }

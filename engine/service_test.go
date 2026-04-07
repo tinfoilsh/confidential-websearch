@@ -58,7 +58,7 @@ type fakeSearcher struct {
 	results map[string][]search.Result
 }
 
-func (s *fakeSearcher) Search(ctx context.Context, query string, maxResults int) ([]search.Result, error) {
+func (s *fakeSearcher) Search(ctx context.Context, query string, opts search.Options) ([]search.Result, error) {
 	return s.results[query], nil
 }
 

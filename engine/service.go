@@ -26,9 +26,13 @@ import (
 )
 
 const (
-	chatCompletionObject      = "chat.completion"
-	chatCompletionChunkObject = "chat.completion.chunk"
-	toolLoopMaxIterations     = 3
+	chatCompletionObject        = "chat.completion"
+	chatCompletionChunkObject   = "chat.completion.chunk"
+	toolLoopMaxIterations       = 3
+	searchContextMaxResultsLow  = 5
+	searchContextMaxResultsHigh = 12
+	searchContextCharsLow       = 800
+	searchContextCharsHigh      = 4000
 )
 
 var citationMarkerPattern = regexp.MustCompile(`【(\d+)】`)
@@ -71,6 +75,8 @@ type ToolOptions struct {
 	MaxResults            int
 	PIICheckEnabled       bool
 	InjectionCheckEnabled bool
+	SearchContextSize     pipeline.SearchContextSize
+	UserLocation          *pipeline.UserLocation
 }
 
 type SearchOutcome struct {
@@ -178,7 +184,10 @@ func (s *Service) Search(ctx context.Context, query string, opts ToolOptions) (S
 		maxResults = 20
 	}
 
-	results, err := s.searcher.Search(ctx, query, maxResults)
+	searchOpts := searchOptionsForTool(opts)
+	searchOpts.MaxResults = maxResults
+
+	results, err := s.searcher.Search(ctx, query, searchOpts)
 	if err != nil {
 		return SearchOutcome{}, err
 	}
@@ -204,6 +213,30 @@ func (s *Service) Fetch(ctx context.Context, urls []string, opts ToolOptions) []
 	}
 
 	return pages
+}
+
+func searchOptionsForTool(opts ToolOptions) search.Options {
+	maxCharacters := config.MaxSearchContentLength
+	maxResults := opts.MaxResults
+
+	switch normalizeSearchContextSize(opts.SearchContextSize) {
+	case pipeline.SearchContextSizeLow:
+		maxCharacters = searchContextCharsLow
+		if maxResults <= 0 || maxResults > searchContextMaxResultsLow {
+			maxResults = searchContextMaxResultsLow
+		}
+	case pipeline.SearchContextSizeHigh:
+		maxCharacters = searchContextCharsHigh
+		if maxResults <= 0 || maxResults < searchContextMaxResultsHigh {
+			maxResults = searchContextMaxResultsHigh
+		}
+	}
+
+	return search.Options{
+		MaxResults:           maxResults,
+		MaxContentCharacters: maxCharacters,
+		UserLocationCountry:  normalizeUserLocationCountry(opts.UserLocation),
+	}
 }
 
 func (s *Service) Run(ctx context.Context, req *pipeline.Request) (*Result, error) {
@@ -428,6 +461,8 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 		MaxResults:            config.DefaultMaxSearchResults,
 		PIICheckEnabled:       req.PIICheckEnabled,
 		InjectionCheckEnabled: req.InjectionCheckEnabled,
+		SearchContextSize:     req.SearchContextSize,
+		UserLocation:          req.UserLocation,
 	}
 
 	for _, call := range sortedCalls {
@@ -606,7 +641,7 @@ func (s *Service) buildParams(req *pipeline.Request, input []responses.ResponseI
 	params := responses.ResponseNewParams{
 		Model:        shared.ResponsesModel(req.Model),
 		Input:        responses.ResponseNewParamsInputUnion{OfInputItemList: input},
-		Instructions: openai.String(buildInstructions()),
+		Instructions: openai.String(buildInstructions(req)),
 	}
 	if previousResponseID != "" {
 		params.PreviousResponseID = openai.String(previousResponseID)
@@ -661,6 +696,13 @@ func (s *Service) buildParams(req *pipeline.Request, input []responses.ResponseI
 func validateRequest(req *pipeline.Request) error {
 	if req == nil {
 		return &pipeline.ValidationError{Message: "request is nil"}
+	}
+	if req.SearchContextSize != "" {
+		normalized := normalizeSearchContextSize(req.SearchContextSize)
+		if normalized == "" {
+			return &pipeline.ValidationError{Field: "search_context_size", Message: "search_context_size must be low, medium, or high"}
+		}
+		req.SearchContextSize = normalized
 	}
 	if req.Model == "" {
 		return &pipeline.ValidationError{Field: "model", Message: "model parameter is required"}
@@ -949,8 +991,74 @@ func formatHistoricalAnnotations(annotations []pipeline.Annotation) string {
 	return strings.TrimSpace(out.String())
 }
 
-func buildInstructions() string {
-	return orchestrationInstructions + "\n\nCurrent date and time: " + time.Now().Format("Monday, January 2, 2006 at 3:04 PM MST")
+func normalizeSearchContextSize(size pipeline.SearchContextSize) pipeline.SearchContextSize {
+	switch pipeline.SearchContextSize(strings.ToLower(strings.TrimSpace(string(size)))) {
+	case "", pipeline.SearchContextSizeMedium:
+		return pipeline.SearchContextSizeMedium
+	case pipeline.SearchContextSizeLow:
+		return pipeline.SearchContextSizeLow
+	case pipeline.SearchContextSizeHigh:
+		return pipeline.SearchContextSizeHigh
+	default:
+		return ""
+	}
+}
+
+func normalizeUserLocationCountry(location *pipeline.UserLocation) string {
+	if location == nil {
+		return ""
+	}
+
+	country := strings.ToLower(strings.TrimSpace(location.Country))
+	if len(country) != 2 {
+		return ""
+	}
+	for _, r := range country {
+		if r < 'a' || r > 'z' {
+			return ""
+		}
+	}
+
+	return country
+}
+
+func formatUserLocationHint(location *pipeline.UserLocation) string {
+	if location == nil {
+		return ""
+	}
+
+	parts := make([]string, 0, 3)
+	if city := strings.TrimSpace(location.City); city != "" {
+		parts = append(parts, city)
+	}
+	if region := strings.TrimSpace(location.Region); region != "" {
+		parts = append(parts, region)
+	}
+	if country := strings.TrimSpace(location.Country); country != "" {
+		parts = append(parts, country)
+	}
+
+	return strings.Join(parts, ", ")
+}
+
+func buildInstructions(req *pipeline.Request) string {
+	var out strings.Builder
+	out.WriteString(orchestrationInstructions)
+
+	if req != nil && req.WebSearchEnabled {
+		if req.SearchContextSize != "" {
+			if size := normalizeSearchContextSize(req.SearchContextSize); size != "" {
+				fmt.Fprintf(&out, "\n\nRequested web search context size: %s. Match the breadth of your search and fetch usage to that context budget.", size)
+			}
+		}
+		if locationHint := formatUserLocationHint(req.UserLocation); locationHint != "" {
+			fmt.Fprintf(&out, "\nApproximate user location for search relevance: %s.", locationHint)
+		}
+	}
+
+	out.WriteString("\n\nCurrent date and time: ")
+	out.WriteString(time.Now().Format("Monday, January 2, 2006 at 3:04 PM MST"))
+	return out.String()
 }
 
 func emitBufferedMessage(emitter pipeline.EventEmitter, streamID string, created int64, model, messageID, text string, deltas []string, annotations []pipeline.Annotation, reasoning string) error {

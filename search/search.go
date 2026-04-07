@@ -23,9 +23,15 @@ type Result struct {
 	PublishedDate string `json:"published_date,omitempty"`
 }
 
+type Options struct {
+	MaxResults           int
+	MaxContentCharacters int
+	UserLocationCountry  string
+}
+
 // Provider defines the interface for search providers
 type Provider interface {
-	Search(ctx context.Context, query string, maxResults int) ([]Result, error)
+	Search(ctx context.Context, query string, opts Options) ([]Result, error)
 	Name() string
 }
 
