@@ -176,6 +176,50 @@ func TestHandleChatCompletions_NonStreaming_Success(t *testing.T) {
 	}
 }
 
+func TestHandleChatCompletions_NonStreaming_PreservesFetchStatuses(t *testing.T) {
+	mockRunner := &MockRunner{
+		RunFunc: func(ctx context.Context, req *pipeline.Request) (*engine.Result, error) {
+			return &engine.Result{
+				ID:      "resp_123",
+				Model:   "gpt-4",
+				Object:  "chat.completion",
+				Created: 1234567890,
+				Content: "Here is the response",
+				FetchCalls: []engine.FetchCall{
+					{ID: "fetch_ok", Status: pipeline.EmitStatusCompleted, URL: "https://example.com"},
+					{ID: "fetch_failed", Status: pipeline.EmitStatusFailed, URL: "https://blocked.example"},
+				},
+			}, nil
+		},
+	}
+
+	srv := &Server{Runner: mockRunner}
+	body := `{"model":"gpt-4","messages":[{"role":"user","content":"Hello"}],"stream":false}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	srv.HandleChatCompletions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	var resp ChatCompletionResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if len(resp.Choices) != 1 {
+		t.Fatalf("expected 1 choice, got %d", len(resp.Choices))
+	}
+	if len(resp.Choices[0].Message.FetchCalls) != 2 {
+		t.Fatalf("expected 2 fetch calls, got %d", len(resp.Choices[0].Message.FetchCalls))
+	}
+	if resp.Choices[0].Message.FetchCalls[1].Status != StatusFailed {
+		t.Fatalf("expected failed fetch status, got %q", resp.Choices[0].Message.FetchCalls[1].Status)
+	}
+}
+
 func TestHandleResponses_MethodNotAllowed(t *testing.T) {
 	srv := &Server{}
 	methods := []string{"GET", "PUT", "DELETE", "PATCH"}
@@ -201,6 +245,52 @@ func TestHandleResponses_InvalidJSON(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandleResponses_PreservesFetchStatuses(t *testing.T) {
+	mockRunner := &MockRunner{
+		RunFunc: func(ctx context.Context, req *pipeline.Request) (*engine.Result, error) {
+			return &engine.Result{
+				ID:      "resp_123",
+				Model:   "gpt-4",
+				Object:  "response",
+				Created: 1234567890,
+				Content: "Here is the response",
+				FetchCalls: []engine.FetchCall{
+					{ID: "fetch_ok", Status: pipeline.EmitStatusCompleted, URL: "https://example.com"},
+					{ID: "fetch_failed", Status: pipeline.EmitStatusFailed, URL: "https://blocked.example"},
+				},
+			}, nil
+		},
+	}
+
+	srv := &Server{Runner: mockRunner}
+	body := `{"model":"gpt-4","input":"Hello","tools":[{"type":"web_search"}]}`
+	req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	srv.HandleResponses(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	var resp struct {
+		Output []ResponsesOutput `json:"output"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if len(resp.Output) < 2 {
+		t.Fatalf("expected fetch calls in output, got %+v", resp.Output)
+	}
+	if resp.Output[0].Status != StatusCompleted {
+		t.Fatalf("expected first fetch status completed, got %q", resp.Output[0].Status)
+	}
+	if resp.Output[1].Status != StatusFailed {
+		t.Fatalf("expected second fetch status failed, got %q", resp.Output[1].Status)
 	}
 }
 
