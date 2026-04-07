@@ -73,7 +73,30 @@ func convertMessages(msgs []Message) []pipeline.Message {
 }
 
 // buildFlatAnnotations creates URL citations (Responses API format)
-func buildFlatAnnotations(toolCalls []agent.ToolCall) []FlatAnnotation {
+func buildFlatAnnotations(annotations []pipeline.Annotation) []FlatAnnotation {
+	if len(annotations) == 0 {
+		return nil
+	}
+
+	var flat []FlatAnnotation
+	for _, annotation := range annotations {
+		if annotation.Type != pipeline.AnnotationTypeURLCitation {
+			continue
+		}
+		flat = append(flat, FlatAnnotation{
+			Type:       ContentTypeURLCitation,
+			URL:        annotation.URLCitation.URL,
+			Title:      annotation.URLCitation.Title,
+			StartIndex: annotation.URLCitation.StartIndex,
+			EndIndex:   annotation.URLCitation.EndIndex,
+		})
+	}
+	return flat
+}
+
+// buildLegacyFlatAnnotations creates URL citations from search results when
+// exact marker locations are unavailable.
+func buildLegacyFlatAnnotations(toolCalls []agent.ToolCall) []FlatAnnotation {
 	var annotations []FlatAnnotation
 	for _, tc := range toolCalls {
 		for _, r := range tc.Results {
@@ -139,7 +162,7 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 
 	log.Infof("Web search completed: %d searches", len(result.SearchResults))
 
-	annotations := pipeline.BuildAnnotations(result.SearchResults)
+	annotations := result.Annotations
 
 	// Convert agent reasoning and blocked queries to API format
 	var blockedSearches []BlockedSearch
@@ -297,7 +320,10 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	flatAnnotations := buildFlatAnnotations(result.SearchResults)
+	flatAnnotations := buildFlatAnnotations(result.Annotations)
+	if len(flatAnnotations) == 0 {
+		flatAnnotations = buildLegacyFlatAnnotations(result.SearchResults)
+	}
 
 	var output []ResponsesOutput
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/responses"
 	log "github.com/sirupsen/logrus"
 	"github.com/tinfoilsh/tinfoil-go"
 
@@ -54,7 +55,7 @@ func main() {
 	fetcher := fetch.NewFetcher(cfg.CloudflareAccountID, cfg.CloudflareAPIToken)
 
 	safeguardClient := safeguard.NewClient(client, cfg.SafeguardModel)
-	service := engine.NewService(&client.Responses, searcher, fetcher, safeguardClient)
+	service := engine.NewService(responsesClient{inner: &client.Responses}, searcher, fetcher, safeguardClient)
 
 	apiServer := &api.Server{
 		Runner: service,
@@ -113,6 +114,18 @@ func main() {
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"status":"ok"}`))
+}
+
+type responsesClient struct {
+	inner *responses.ResponseService
+}
+
+func (c responsesClient) New(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) (*responses.Response, error) {
+	return c.inner.New(ctx, body, opts...)
+}
+
+func (c responsesClient) NewStreaming(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) engine.ResponseStream {
+	return c.inner.NewStreaming(ctx, body, opts...)
 }
 
 func handleRoot(w http.ResponseWriter, r *http.Request) {

@@ -309,25 +309,37 @@ func TestConvertMessages(t *testing.T) {
 }
 
 func TestBuildFlatAnnotations(t *testing.T) {
-	toolCalls := []agent.ToolCall{
+	annotationsInput := []pipeline.Annotation{
 		{
-			ID:    "call_1",
-			Query: "query 1",
-			Results: []search.Result{
-				{Title: "Title 1", URL: "https://example.com/1", Content: "Content 1"},
-				{Title: "Title 2", URL: "https://example.com/2", Content: "Content 2"},
+			Type: pipeline.AnnotationTypeURLCitation,
+			URLCitation: pipeline.URLCitation{
+				Title:      "Title 1",
+				URL:        "https://example.com/1",
+				StartIndex: 10,
+				EndIndex:   14,
 			},
 		},
 		{
-			ID:    "call_2",
-			Query: "query 2",
-			Results: []search.Result{
-				{Title: "Title 3", URL: "https://example.com/3", Content: "Content 3"},
+			Type: pipeline.AnnotationTypeURLCitation,
+			URLCitation: pipeline.URLCitation{
+				Title:      "Title 2",
+				URL:        "https://example.com/2",
+				StartIndex: 20,
+				EndIndex:   24,
+			},
+		},
+		{
+			Type: pipeline.AnnotationTypeURLCitation,
+			URLCitation: pipeline.URLCitation{
+				Title:      "Title 3",
+				URL:        "https://example.com/3",
+				StartIndex: 30,
+				EndIndex:   34,
 			},
 		},
 	}
 
-	annotations := buildFlatAnnotations(toolCalls)
+	annotations := buildFlatAnnotations(annotationsInput)
 
 	if len(annotations) != 3 {
 		t.Fatalf("expected 3 annotations, got %d", len(annotations))
@@ -342,6 +354,9 @@ func TestBuildFlatAnnotations(t *testing.T) {
 	if annotations[0].URL != "https://example.com/1" {
 		t.Errorf("expected URL 'https://example.com/1', got '%s'", annotations[0].URL)
 	}
+	if annotations[0].StartIndex != 10 || annotations[0].EndIndex != 14 {
+		t.Errorf("expected start/end indexes 10/14, got %d/%d", annotations[0].StartIndex, annotations[0].EndIndex)
+	}
 }
 
 func TestBuildFlatAnnotations_Empty(t *testing.T) {
@@ -350,9 +365,9 @@ func TestBuildFlatAnnotations_Empty(t *testing.T) {
 		t.Errorf("expected nil for empty tool calls, got %v", annotations)
 	}
 
-	annotations = buildFlatAnnotations([]agent.ToolCall{})
+	annotations = buildFlatAnnotations([]pipeline.Annotation{})
 	if annotations != nil {
-		t.Errorf("expected nil for empty tool calls slice, got %v", annotations)
+		t.Errorf("expected nil for empty annotations slice, got %v", annotations)
 	}
 }
 
