@@ -481,6 +481,7 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 
 	executions := make(map[string]*toolExecution, len(sortedCalls))
 	var mu sync.Mutex
+	var emitterMu sync.Mutex
 	var wg sync.WaitGroup
 
 	toolOpts := ToolOptions{
@@ -504,18 +505,23 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 				if query == "" {
 					exec.err = fmt.Errorf("query is required")
 					if emitter != nil {
+						emitterMu.Lock()
 						_ = emitter.EmitSearchCall(call.id, "failed", "", "", 0, req.Model)
+						emitterMu.Unlock()
 					}
 					break
 				}
 
 				if emitter != nil {
+					emitterMu.Lock()
 					_ = emitter.EmitSearchCall(call.id, "in_progress", query, "", 0, req.Model)
+					emitterMu.Unlock()
 				}
 				outcome, err := s.Search(ctx, query, toolOpts)
 				exec.searchOutcome = outcome
 				exec.err = err
 				if emitter != nil {
+					emitterMu.Lock()
 					switch {
 					case outcome.BlockedReason != "":
 						_ = emitter.EmitSearchCall(call.id, "blocked", query, outcome.BlockedReason, 0, req.Model)
@@ -524,6 +530,7 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 					default:
 						_ = emitter.EmitSearchCall(call.id, "completed", query, "", 0, req.Model)
 					}
+					emitterMu.Unlock()
 				}
 
 			case "fetch":
@@ -532,13 +539,17 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 				if url == "" {
 					exec.err = fmt.Errorf("url is required")
 					if emitter != nil {
+						emitterMu.Lock()
 						_ = emitter.EmitFetchCall(call.id, "failed", "", 0, req.Model)
+						emitterMu.Unlock()
 					}
 					break
 				}
 
 				if emitter != nil {
+					emitterMu.Lock()
 					_ = emitter.EmitFetchCall(call.id, "in_progress", url, 0, req.Model)
+					emitterMu.Unlock()
 				}
 				exec.pages = s.Fetch(ctx, []string{url}, toolOpts)
 				if emitter != nil {
@@ -546,7 +557,9 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 					if len(exec.pages) == 0 {
 						status = "failed"
 					}
+					emitterMu.Lock()
 					_ = emitter.EmitFetchCall(call.id, status, url, 0, req.Model)
+					emitterMu.Unlock()
 				}
 
 			default:
@@ -835,7 +848,7 @@ func decodeContentParts(content json.RawMessage) (responses.ResponseInputMessage
 					Detail string `json:"detail"`
 				} `json:"image_url"`
 			}
-			if err := json.Unmarshal(contentFromField(rawPart, "image_url"), &part.ImageURL); err != nil {
+			if err := json.Unmarshal(mustRawField(rawPart, "image_url"), &part.ImageURL); err != nil {
 				continue
 			}
 			if part.ImageURL.URL == "" {
@@ -1385,13 +1398,6 @@ func sortFunctionCalls(calls []*functionCall) {
 }
 
 func mustRawField(m map[string]json.RawMessage, key string) json.RawMessage {
-	if raw, ok := m[key]; ok {
-		return raw
-	}
-	return nil
-}
-
-func contentFromField(m map[string]json.RawMessage, key string) json.RawMessage {
 	if raw, ok := m[key]; ok {
 		return raw
 	}

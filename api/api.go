@@ -194,6 +194,9 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 	log.Infof("Web search completed: %d searches", len(result.SearchResults))
 
 	annotations := result.Annotations
+	if len(annotations) == 0 {
+		annotations = pipeline.BuildAnnotations(result.SearchResults)
+	}
 
 	// Convert agent reasoning and blocked queries to API format
 	var blockedSearches []BlockedSearch
