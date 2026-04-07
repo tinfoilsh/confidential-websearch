@@ -55,7 +55,13 @@ func main() {
 	fetcher := fetch.NewFetcher(cfg.CloudflareAccountID, cfg.CloudflareAPIToken)
 
 	safeguardClient := safeguard.NewClient(client, cfg.SafeguardModel)
-	service := engine.NewService(responsesClient{inner: &client.Responses}, searcher, fetcher, safeguardClient)
+	service := engine.NewService(
+		responsesClient{inner: &client.Responses},
+		searcher,
+		fetcher,
+		safeguardClient,
+		engine.WithToolSummaryModel(cfg.ToolSummaryModel),
+	)
 
 	apiServer := &api.Server{
 		Runner: service,
