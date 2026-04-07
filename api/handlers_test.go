@@ -192,6 +192,55 @@ func TestHandleChatCompletions_NonStreaming_Success(t *testing.T) {
 	}
 }
 
+func TestHandleChatCompletions_FallsBackToLegacyAnnotations(t *testing.T) {
+	mockRunner := &MockRunner{
+		RunFunc: func(ctx context.Context, req *pipeline.Request) (*engine.Result, error) {
+			return &engine.Result{
+				ID:      "resp_123",
+				Model:   "gpt-4",
+				Object:  "chat.completion",
+				Created: 1234567890,
+				Content: "Here is the response",
+				SearchResults: []agent.ToolCall{
+					{
+						ID:    "call_123",
+						Query: "test query",
+						Results: []search.Result{
+							{Title: "Result 1", URL: "https://example.com"},
+						},
+					},
+				},
+			}, nil
+		},
+	}
+
+	srv := &Server{Runner: mockRunner}
+	body := `{"model":"gpt-4","messages":[{"role":"user","content":"Hello"}],"stream":false}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	srv.HandleChatCompletions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp ChatCompletionResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if len(resp.Choices) != 1 {
+		t.Fatalf("expected 1 choice, got %d", len(resp.Choices))
+	}
+	if len(resp.Choices[0].Message.Annotations) != 1 {
+		t.Fatalf("expected 1 fallback annotation, got %d", len(resp.Choices[0].Message.Annotations))
+	}
+	if resp.Choices[0].Message.Annotations[0].URLCitation.URL != "https://example.com" {
+		t.Fatalf("expected fallback annotation URL https://example.com, got %q", resp.Choices[0].Message.Annotations[0].URLCitation.URL)
+	}
+}
+
 func TestHandleChatCompletions_NonStreaming_PreservesFetchStatuses(t *testing.T) {
 	mockRunner := &MockRunner{
 		RunFunc: func(ctx context.Context, req *pipeline.Request) (*engine.Result, error) {

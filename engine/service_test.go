@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/responses"
@@ -117,6 +119,45 @@ func (e *captureEmitter) EmitMessageStart(itemID string) error {
 	return nil
 }
 func (e *captureEmitter) EmitMessageEnd(text string, annotations []pipeline.Annotation) error {
+	return nil
+}
+
+type serializingEmitter struct {
+	active        atomic.Int32
+	maxConcurrent atomic.Int32
+}
+
+func (e *serializingEmitter) enter() {
+	current := e.active.Add(1)
+	for {
+		max := e.maxConcurrent.Load()
+		if current <= max || e.maxConcurrent.CompareAndSwap(max, current) {
+			break
+		}
+	}
+	time.Sleep(10 * time.Millisecond)
+	e.active.Add(-1)
+}
+
+func (e *serializingEmitter) EmitSearchCall(id, status, query, reason string, created int64, model string) error {
+	e.enter()
+	return nil
+}
+
+func (e *serializingEmitter) EmitFetchCall(id, status, url string, created int64, model string) error {
+	e.enter()
+	return nil
+}
+
+func (e *serializingEmitter) EmitMetadata(id string, created int64, model string, annotations []pipeline.Annotation, reasoning string) error {
+	return nil
+}
+func (e *serializingEmitter) EmitChunk(data []byte) error          { return nil }
+func (e *serializingEmitter) EmitError(err error) error            { return nil }
+func (e *serializingEmitter) EmitDone() error                      { return nil }
+func (e *serializingEmitter) EmitResponseStart() error             { return nil }
+func (e *serializingEmitter) EmitMessageStart(itemID string) error { return nil }
+func (e *serializingEmitter) EmitMessageEnd(text string, annotations []pipeline.Annotation) error {
 	return nil
 }
 
@@ -287,6 +328,34 @@ func TestRun_CompactsFetchedToolOutputWithSummaryModel(t *testing.T) {
 	assertNotContainsJSON(t, client.params[2], longPage)
 	if result.Content != "Docs say key facts【1】" {
 		t.Fatalf("unexpected final content: %q", result.Content)
+	}
+}
+
+func TestExecuteToolCalls_SerializesEmitterWrites(t *testing.T) {
+	service := NewService(
+		nil,
+		&fakeSearcher{results: map[string][]search.Result{
+			"golang": {{Title: "Go", URL: "https://go.dev", Content: "Go info"}},
+		}},
+		&fakeFetcher{pages: map[string]fetch.FetchedPage{
+			"https://go.dev/doc": {URL: "https://go.dev/doc", Content: "Official docs"},
+		}},
+		nil,
+	)
+	emitter := &serializingEmitter{}
+	req := chatRequest()
+
+	calls := map[int]*functionCall{
+		0: {index: 0, id: "call_search", name: "search", arguments: strings.Builder{}},
+		1: {index: 1, id: "call_fetch", name: "fetch", arguments: strings.Builder{}},
+	}
+	calls[0].arguments.WriteString(`{"query":"golang"}`)
+	calls[1].arguments.WriteString(`{"url":"https://go.dev/doc"}`)
+
+	_, _ = service.executeToolCalls(context.Background(), req, calls, emitter)
+
+	if emitter.maxConcurrent.Load() > 1 {
+		t.Fatalf("expected emitter writes to be serialized, saw concurrency=%d", emitter.maxConcurrent.Load())
 	}
 }
 
