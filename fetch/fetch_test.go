@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"sync/atomic"
 	"testing"
 )
 
@@ -219,7 +221,11 @@ func TestFetchURLs_ParallelMultipleURLs(t *testing.T) {
 	defer server.Close()
 
 	fetcher := newTestFetcher(server.URL)
-	urls := []string{"https://a.com", "https://b.com", "https://c.com"}
+	urls := []string{
+		"https://example.com/a",
+		"https://example.com/b",
+		"https://example.com/c",
+	}
 	pages := fetcher.FetchURLs(context.Background(), urls)
 
 	if len(pages) != 3 {
@@ -255,6 +261,61 @@ func TestFetchURLs_EmptyResult(t *testing.T) {
 
 	if len(pages) != 0 {
 		t.Fatalf("expected 0 pages for empty content, got %d", len(pages))
+	}
+}
+
+func TestValidateTargetURL_RejectsUnsafeTargets(t *testing.T) {
+	credentialURL := (&url.URL{
+		Scheme: "https",
+		Host:   "example.com",
+		User:   url.UserPassword("username", "placeholder"),
+	}).String()
+
+	tests := []string{
+		"http://127.0.0.1",
+		"http://[::1]",
+		"http://localhost",
+		"http://service.internal",
+		"file:///etc/passwd",
+		credentialURL,
+		"https://192.168.1.10",
+	}
+
+	for _, rawURL := range tests {
+		t.Run(rawURL, func(t *testing.T) {
+			if err := validateTargetURL(context.Background(), rawURL); err == nil {
+				t.Fatalf("expected %q to be rejected", rawURL)
+			}
+		})
+	}
+}
+
+func TestValidateTargetURL_AllowsPublicHTTPSTarget(t *testing.T) {
+	if err := validateTargetURL(context.Background(), "https://93.184.216.34"); err != nil {
+		t.Fatalf("expected public IP target to be allowed, got %v", err)
+	}
+}
+
+func TestFetchURLs_SkipsUnsafeTargetsBeforeCallingAPI(t *testing.T) {
+	var calls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		writeCFResponse(w, true, "content", nil)
+	}))
+	defer server.Close()
+
+	fetcher := newTestFetcher(server.URL)
+	pages := fetcher.FetchURLs(context.Background(), []string{
+		"http://127.0.0.1",
+		"http://localhost",
+		"https://192.168.1.10",
+	})
+
+	if len(pages) != 0 {
+		t.Fatalf("expected 0 pages for unsafe targets, got %d", len(pages))
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("expected Cloudflare API not to be called, got %d calls", calls.Load())
 	}
 }
 
