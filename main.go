@@ -15,7 +15,9 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/tinfoilsh/tinfoil-go"
 
+	"github.com/tinfoilsh/confidential-websearch/api"
 	"github.com/tinfoilsh/confidential-websearch/config"
+	"github.com/tinfoilsh/confidential-websearch/engine"
 	"github.com/tinfoilsh/confidential-websearch/fetch"
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
 	"github.com/tinfoilsh/confidential-websearch/search"
@@ -52,6 +54,11 @@ func main() {
 	fetcher := fetch.NewFetcher(cfg.CloudflareAccountID, cfg.CloudflareAPIToken)
 
 	safeguardClient := safeguard.NewClient(client, cfg.SafeguardModel)
+	service := engine.NewService(&client.Responses, searcher, fetcher, safeguardClient)
+
+	apiServer := &api.Server{
+		Runner: service,
+	}
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "confidential-websearch",
@@ -61,12 +68,12 @@ func main() {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "search",
 		Description: "Search the web using Exa AI. Returns titles, URLs, content snippets, and publication dates.",
-	}, newSearchHandler(searcher, safeguardClient, cfg))
+	}, newSearchHandler(service, cfg))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "fetch",
 		Description: "Fetch web pages as markdown content via Cloudflare Browser Rendering.",
-	}, newFetchHandler(fetcher, safeguardClient, cfg))
+	}, newFetchHandler(service, cfg))
 
 	handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		return server
@@ -74,6 +81,8 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", handler)
+	mux.HandleFunc("/v1/chat/completions", api.RecoveryMiddleware(apiServer.HandleChatCompletions))
+	mux.HandleFunc("/v1/responses", api.RecoveryMiddleware(apiServer.HandleResponses))
 	mux.HandleFunc("/health", handleHealth)
 	mux.HandleFunc("/", handleRoot)
 
@@ -88,7 +97,7 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Infof("Starting MCP tool server on %s (search: %s)", cfg.ListenAddr, searcher.Name())
+		log.Infof("Starting websearch server on %s (search: %s)", cfg.ListenAddr, searcher.Name())
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
@@ -114,5 +123,5 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"service": "confidential-websearch-mcp", "status": "ok"})
+	json.NewEncoder(w).Encode(map[string]string{"service": "confidential-websearch", "status": "ok"})
 }

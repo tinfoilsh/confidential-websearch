@@ -7,8 +7,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/tinfoilsh/confidential-websearch/config"
+	"github.com/tinfoilsh/confidential-websearch/engine"
 	"github.com/tinfoilsh/confidential-websearch/fetch"
-	"github.com/tinfoilsh/confidential-websearch/safeguard"
 	"github.com/tinfoilsh/confidential-websearch/search"
 )
 
@@ -29,76 +29,38 @@ type FetchResult struct {
 	Pages []fetch.FetchedPage `json:"pages"`
 }
 
-func newSearchHandler(searcher search.Provider, sg *safeguard.Client, cfg *config.Config) mcp.ToolHandlerFor[SearchArgs, SearchResult] {
+func newSearchHandler(service *engine.Service, cfg *config.Config) mcp.ToolHandlerFor[SearchArgs, SearchResult] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, args SearchArgs) (*mcp.CallToolResult, SearchResult, error) {
 		if args.Query == "" {
 			return nil, SearchResult{}, fmt.Errorf("query is required")
 		}
 
-		if cfg.EnablePIICheck {
-			check, err := sg.Check(ctx, safeguard.PIILeakagePolicy, args.Query)
-			if err == nil && check.Violation {
-				return nil, SearchResult{}, fmt.Errorf("query blocked: %s", check.Rationale)
-			}
-		}
-
-		maxResults := args.MaxResults
-		if maxResults <= 0 {
-			maxResults = config.DefaultMaxSearchResults
-		}
-		if maxResults > 20 {
-			maxResults = 20
-		}
-
-		results, err := searcher.Search(ctx, args.Query, maxResults)
+		outcome, err := service.Search(ctx, args.Query, engine.ToolOptions{
+			MaxResults:            args.MaxResults,
+			PIICheckEnabled:       cfg.EnablePIICheck,
+			InjectionCheckEnabled: cfg.EnableInjectionCheck,
+		})
 		if err != nil {
 			return nil, SearchResult{}, fmt.Errorf("search failed: %w", err)
 		}
-
-		if cfg.EnableInjectionCheck && len(results) > 0 {
-			contents := make([]string, len(results))
-			for i, r := range results {
-				contents[i] = r.Content
-			}
-			checks := safeguard.CheckItems(ctx, sg, safeguard.PromptInjectionPolicy, contents)
-			var filtered []search.Result
-			for _, c := range checks {
-				if c.Err != nil || !c.Violation {
-					filtered = append(filtered, results[c.Index])
-				}
-			}
-			results = filtered
+		if outcome.BlockedReason != "" {
+			return nil, SearchResult{}, fmt.Errorf("query blocked: %s", outcome.BlockedReason)
 		}
 
-		return nil, SearchResult{Results: results}, nil
+		return nil, SearchResult{Results: outcome.Results}, nil
 	}
 }
 
-func newFetchHandler(fetcher *fetch.Fetcher, sg *safeguard.Client, cfg *config.Config) mcp.ToolHandlerFor[FetchArgs, FetchResult] {
+func newFetchHandler(service *engine.Service, cfg *config.Config) mcp.ToolHandlerFor[FetchArgs, FetchResult] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, args FetchArgs) (*mcp.CallToolResult, FetchResult, error) {
 		if len(args.URLs) == 0 {
 			return nil, FetchResult{}, fmt.Errorf("at least one URL is required")
 		}
-		if len(args.URLs) > 5 {
-			args.URLs = args.URLs[:5]
-		}
 
-		pages := fetcher.FetchURLs(ctx, args.URLs)
-
-		if cfg.EnableInjectionCheck && len(pages) > 0 {
-			contents := make([]string, len(pages))
-			for i, p := range pages {
-				contents[i] = p.Content
-			}
-			checks := safeguard.CheckItems(ctx, sg, safeguard.PromptInjectionPolicy, contents)
-			var filtered []fetch.FetchedPage
-			for _, c := range checks {
-				if c.Err != nil || !c.Violation {
-					filtered = append(filtered, pages[c.Index])
-				}
-			}
-			pages = filtered
-		}
+		pages := service.Fetch(ctx, args.URLs, engine.ToolOptions{
+			PIICheckEnabled:       false,
+			InjectionCheckEnabled: cfg.EnableInjectionCheck,
+		})
 
 		return nil, FetchResult{Pages: pages}, nil
 	}

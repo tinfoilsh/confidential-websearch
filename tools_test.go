@@ -8,8 +8,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/tinfoilsh/confidential-websearch/config"
+	"github.com/tinfoilsh/confidential-websearch/engine"
 	"github.com/tinfoilsh/confidential-websearch/fetch"
-	"github.com/tinfoilsh/confidential-websearch/safeguard"
 	"github.com/tinfoilsh/confidential-websearch/search"
 )
 
@@ -45,19 +45,6 @@ func (m *mockFetcher) FetchURLs(ctx context.Context, urls []string) []fetch.Fetc
 	return result
 }
 
-type mockSafeguardClient struct {
-	violation bool
-	rationale string
-	err       error
-}
-
-func (m *mockSafeguardClient) Check(ctx context.Context, policy, content string) (*safeguard.CheckResult, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	return &safeguard.CheckResult{Violation: m.violation, Rationale: m.rationale}, nil
-}
-
 func TestSearchHandler_Success(t *testing.T) {
 	searcher := &mockSearchProvider{
 		results: []search.Result{
@@ -66,7 +53,8 @@ func TestSearchHandler_Success(t *testing.T) {
 		},
 	}
 	cfg := &config.Config{}
-	handler := newSearchHandler(searcher, nil, cfg)
+	service := engine.NewService(nil, searcher, nil, nil)
+	handler := newSearchHandler(service, cfg)
 
 	_, result, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "test query"})
 	if err != nil {
@@ -81,7 +69,8 @@ func TestSearchHandler_Success(t *testing.T) {
 }
 
 func TestSearchHandler_EmptyQuery(t *testing.T) {
-	handler := newSearchHandler(&mockSearchProvider{}, nil, &config.Config{})
+	service := engine.NewService(nil, &mockSearchProvider{}, nil, nil)
+	handler := newSearchHandler(service, &config.Config{})
 
 	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: ""})
 	if err == nil {
@@ -91,7 +80,8 @@ func TestSearchHandler_EmptyQuery(t *testing.T) {
 
 func TestSearchHandler_SearchError(t *testing.T) {
 	searcher := &mockSearchProvider{err: fmt.Errorf("search failed")}
-	handler := newSearchHandler(searcher, nil, &config.Config{})
+	service := engine.NewService(nil, searcher, nil, nil)
+	handler := newSearchHandler(service, &config.Config{})
 
 	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "test"})
 	if err == nil {
@@ -105,7 +95,8 @@ func TestSearchHandler_MaxResultsCapped(t *testing.T) {
 		results = append(results, search.Result{Title: fmt.Sprintf("Result %d", i)})
 	}
 	searcher := &mockSearchProvider{results: results}
-	handler := newSearchHandler(searcher, nil, &config.Config{})
+	service := engine.NewService(nil, searcher, nil, nil)
+	handler := newSearchHandler(service, &config.Config{})
 
 	_, result, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "test", MaxResults: 30})
 	if err != nil {
@@ -122,7 +113,8 @@ func TestSearchHandler_DefaultMaxResults(t *testing.T) {
 		results = append(results, search.Result{Title: fmt.Sprintf("Result %d", i)})
 	}
 	searcher := &mockSearchProvider{results: results}
-	handler := newSearchHandler(searcher, nil, &config.Config{})
+	service := engine.NewService(nil, searcher, nil, nil)
+	handler := newSearchHandler(service, &config.Config{})
 
 	_, result, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "test"})
 	if err != nil {
@@ -136,7 +128,8 @@ func TestSearchHandler_DefaultMaxResults(t *testing.T) {
 func TestSearchHandler_PIICheckDisabled(t *testing.T) {
 	searcher := &mockSearchProvider{results: []search.Result{{Title: "Result"}}}
 
-	handler := newSearchHandler(searcher, nil, &config.Config{EnablePIICheck: false})
+	service := engine.NewService(nil, searcher, nil, nil)
+	handler := newSearchHandler(service, &config.Config{EnablePIICheck: false})
 	_, result, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "test"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -147,11 +140,9 @@ func TestSearchHandler_PIICheckDisabled(t *testing.T) {
 }
 
 func TestFetchHandler_Success(t *testing.T) {
-	fetcher := &fetch.Fetcher{} // Will be overridden by mock pattern
-	_ = fetcher
-
 	realFetcher := fetch.NewFetcher("test-account", "test-token")
-	handler := newFetchHandler(realFetcher, nil, &config.Config{})
+	service := engine.NewService(nil, nil, realFetcher, nil)
+	handler := newFetchHandler(service, &config.Config{})
 
 	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, FetchArgs{URLs: []string{}})
 	if err == nil {
@@ -162,7 +153,8 @@ func TestFetchHandler_Success(t *testing.T) {
 func TestFetchHandler_URLsCapped(t *testing.T) {
 	cfg := &config.Config{}
 	realFetcher := fetch.NewFetcher("test-account", "test-token")
-	handler := newFetchHandler(realFetcher, nil, cfg)
+	service := engine.NewService(nil, nil, realFetcher, nil)
+	handler := newFetchHandler(service, cfg)
 
 	urls := make([]string, 10)
 	for i := range urls {
@@ -184,17 +176,17 @@ func TestMCPServer_ToolDiscovery(t *testing.T) {
 
 	searcher := &mockSearchProvider{results: []search.Result{{Title: "Test"}}}
 	cfg := &config.Config{}
+	service := engine.NewService(nil, searcher, fetch.NewFetcher("test", "test"), nil)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "search",
 		Description: "Search the web",
-	}, newSearchHandler(searcher, nil, cfg))
+	}, newSearchHandler(service, cfg))
 
-	realFetcher := fetch.NewFetcher("test", "test")
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "fetch",
 		Description: "Fetch web pages",
-	}, newFetchHandler(realFetcher, nil, cfg))
+	}, newFetchHandler(service, cfg))
 
 	// Connect in-memory client to verify tool discovery
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "v1"}, nil)
@@ -241,11 +233,12 @@ func TestMCPServer_SearchToolCall(t *testing.T) {
 		},
 	}
 	cfg := &config.Config{}
+	service := engine.NewService(nil, searcher, nil, nil)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "search",
 		Description: "Search the web",
-	}, newSearchHandler(searcher, nil, cfg))
+	}, newSearchHandler(service, cfg))
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "v1"}, nil)
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
