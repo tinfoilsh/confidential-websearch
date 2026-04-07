@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -17,12 +20,43 @@ import (
 )
 
 const (
-	maxContentLength  = 50000      // 50K chars max output per page
-	maxResponseBytes  = 512 * 1024 // 512KB max API response body
-	fetchTimeout      = 30 * time.Second
-	maxConcurrentURLs = 5
-	maxURLsPerMessage = 10
+	maxContentLength   = 50000      // 50K chars max output per page
+	maxResponseBytes   = 512 * 1024 // 512KB max API response body
+	fetchTimeout       = 30 * time.Second
+	maxConcurrentURLs  = 5
+	maxURLsPerMessage  = 10
+	allowedSchemeHTTP  = "http"
+	allowedSchemeHTTPS = "https"
 )
+
+var blockedHostSuffixes = []string{
+	".internal",
+	".local",
+	".localhost",
+}
+
+var blockedIPPrefixes = mustParseBlockedIPPrefixes([]string{
+	"0.0.0.0/8",
+	"10.0.0.0/8",
+	"100.64.0.0/10",
+	"127.0.0.0/8",
+	"169.254.0.0/16",
+	"172.16.0.0/12",
+	"192.0.0.0/24",
+	"192.0.2.0/24",
+	"192.168.0.0/16",
+	"198.18.0.0/15",
+	"198.51.100.0/24",
+	"203.0.113.0/24",
+	"224.0.0.0/4",
+	"240.0.0.0/4",
+	"::/128",
+	"::1/128",
+	"2001:db8::/32",
+	"fc00::/7",
+	"fe80::/10",
+	"ff00::/8",
+})
 
 // cloudflareAPIURLFormat is the URL template for the Cloudflare Browser Rendering markdown endpoint.
 const cloudflareAPIURLFormat = "https://api.cloudflare.com/client/v4/accounts/%s/browser-rendering/markdown"
@@ -35,9 +69,9 @@ type FetchedPage struct {
 
 // Fetcher fetches URL contents via Cloudflare Browser Rendering API
 type Fetcher struct {
-	client    *http.Client
-	apiURL    string
-	apiToken  string
+	client   *http.Client
+	apiURL   string
+	apiToken string
 }
 
 // NewFetcher creates a new URL fetcher using Cloudflare Browser Rendering
@@ -108,11 +142,104 @@ func hasValidTLD(bare string) bool {
 	return tld.IsValid(domain[lastDot+1:])
 }
 
+func validateTargetURL(ctx context.Context, rawURL string) error {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return fmt.Errorf("url is required")
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("parse url: %w", err)
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("embedded credentials are not allowed")
+	}
+	if parsed.Scheme != allowedSchemeHTTP && parsed.Scheme != allowedSchemeHTTPS {
+		return fmt.Errorf("unsupported scheme %q", parsed.Scheme)
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" {
+		return fmt.Errorf("url host is required")
+	}
+	if isBlockedHostname(host) {
+		return fmt.Errorf("host %q is not allowed", host)
+	}
+
+	if addr, err := netip.ParseAddr(host); err == nil {
+		if isBlockedAddr(addr) {
+			return fmt.Errorf("ip address %q is not allowed", host)
+		}
+		return nil
+	}
+
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return fmt.Errorf("resolve host %q: %w", host, err)
+	}
+	if len(addrs) == 0 {
+		return fmt.Errorf("host %q resolved to no addresses", host)
+	}
+
+	for _, addr := range addrs {
+		if ip, ok := netip.AddrFromSlice(addr.IP); ok && isBlockedAddr(ip) {
+			return fmt.Errorf("resolved address %q is not allowed", addr.IP.String())
+		}
+	}
+
+	return nil
+}
+
+func isBlockedHostname(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	for _, suffix := range blockedHostSuffixes {
+		if strings.HasSuffix(host, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func isBlockedAddr(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	if addr.IsPrivate() ||
+		addr.IsLoopback() ||
+		addr.IsMulticast() ||
+		addr.IsLinkLocalMulticast() ||
+		addr.IsLinkLocalUnicast() ||
+		addr.IsInterfaceLocalMulticast() ||
+		addr.IsUnspecified() {
+		return true
+	}
+
+	for _, prefix := range blockedIPPrefixes {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func mustParseBlockedIPPrefixes(prefixes []string) []netip.Prefix {
+	parsed := make([]netip.Prefix, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		parsedPrefix, err := netip.ParsePrefix(prefix)
+		if err != nil {
+			panic(fmt.Sprintf("invalid blocked IP prefix %q: %v", prefix, err))
+		}
+		parsed = append(parsed, parsedPrefix)
+	}
+	return parsed
+}
+
 // cloudflareRequest is the JSON body sent to the Cloudflare Browser Rendering API
 type cloudflareRequest struct {
-	URL                 string            `json:"url"`
-	RejectResourceTypes []string          `json:"rejectResourceTypes"`
-	GotoOptions         *cloudflareGoto   `json:"gotoOptions,omitempty"`
+	URL                 string          `json:"url"`
+	RejectResourceTypes []string        `json:"rejectResourceTypes"`
+	GotoOptions         *cloudflareGoto `json:"gotoOptions,omitempty"`
 }
 
 type cloudflareGoto struct {
@@ -121,8 +248,8 @@ type cloudflareGoto struct {
 
 // cloudflareResponse is the JSON response from the Cloudflare Browser Rendering API
 type cloudflareResponse struct {
-	Success bool     `json:"success"`
-	Result  string   `json:"result"`
+	Success bool      `json:"success"`
+	Result  string    `json:"result"`
 	Errors  []cfError `json:"errors"`
 }
 
@@ -151,6 +278,11 @@ func (f *Fetcher) FetchURLs(ctx context.Context, urls []string) []FetchedPage {
 		go func(rawURL string) {
 			defer wg.Done()
 			defer func() { <-sem }()
+
+			if err := validateTargetURL(ctx, rawURL); err != nil {
+				log.Debugf("Rejected fetch URL %s: %v", rawURL, err)
+				return
+			}
 
 			content, err := f.fetchURL(ctx, rawURL)
 			if err != nil {
