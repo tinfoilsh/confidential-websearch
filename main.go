@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"net/http"
 	"os"
@@ -9,21 +10,21 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/openai/openai-go/v3/option"
 	log "github.com/sirupsen/logrus"
 	"github.com/tinfoilsh/tinfoil-go"
 
-	"github.com/tinfoilsh/confidential-websearch/agent"
-	"github.com/tinfoilsh/confidential-websearch/api"
 	"github.com/tinfoilsh/confidential-websearch/config"
 	"github.com/tinfoilsh/confidential-websearch/fetch"
-	"github.com/tinfoilsh/confidential-websearch/llm"
-	"github.com/tinfoilsh/confidential-websearch/pipeline"
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
 	"github.com/tinfoilsh/confidential-websearch/search"
 )
 
-var verbose = flag.Bool("v", false, "enable verbose logging")
+var (
+	verbose = flag.Bool("v", false, "enable verbose logging")
+	version = "dev"
+)
 
 func main() {
 	flag.Parse()
@@ -48,53 +49,47 @@ func main() {
 	if cfg.CloudflareAccountID == "" || cfg.CloudflareAPIToken == "" {
 		log.Fatal("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must be set")
 	}
-	urlFetcher := fetch.NewFetcher(cfg.CloudflareAccountID, cfg.CloudflareAPIToken)
+	fetcher := fetch.NewFetcher(cfg.CloudflareAccountID, cfg.CloudflareAPIToken)
 
-	baseAgent := agent.New(client, cfg.AgentModel, urlFetcher, searcher)
-	responder := llm.NewTinfoilResponder(&client.Chat.Completions)
-	messageBuilder := llm.NewMessageBuilder()
 	safeguardClient := safeguard.NewClient(client, cfg.SafeguardModel)
 
-	// Wrap agent with SafeAgent to support per-request PII filtering via tools
-	agentRunner := agent.NewSafeAgent(baseAgent, safeguardClient)
+	server := mcp.NewServer(&mcp.Implementation{
+		Name:    "confidential-websearch",
+		Version: version,
+	}, nil)
 
-	p := pipeline.NewPipeline([]pipeline.Stage{
-		&pipeline.ValidateStage{},
-		&pipeline.AgentStage{Agent: agentRunner},
-		&pipeline.ResultsStage{},
-		&pipeline.FilterResultsStage{
-			Checker: safeguardClient,
-			Policy:  safeguard.PromptInjectionPolicy,
-			Enabled: cfg.EnableInjectionCheck,
-		},
-		&pipeline.BuildMessagesStage{Builder: messageBuilder},
-		&pipeline.ResponderStage{Responder: responder},
-	})
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "search",
+		Description: "Search the web using Exa AI. Returns titles, URLs, content snippets, and publication dates.",
+	}, newSearchHandler(searcher, safeguardClient, cfg))
 
-	srv := &api.Server{
-		Cfg:      cfg,
-		Client:   client,
-		Pipeline: p,
-	}
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "fetch",
+		Description: "Fetch web pages as markdown content via Cloudflare Browser Rendering.",
+	}, newFetchHandler(fetcher, safeguardClient, cfg))
 
-	http.HandleFunc("/v1/chat/completions", api.RecoveryMiddleware(srv.HandleChatCompletions))
-	http.HandleFunc("/v1/responses", api.RecoveryMiddleware(srv.HandleResponses))
-	http.HandleFunc("/health", srv.HandleHealth)
-	http.HandleFunc("/", srv.HandleRoot)
+	handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+		return server
+	}, nil)
 
-	server := &http.Server{
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", handler)
+	mux.HandleFunc("/health", handleHealth)
+	mux.HandleFunc("/", handleRoot)
+
+	httpServer := &http.Server{
 		Addr:         cfg.ListenAddr,
+		Handler:      mux,
 		ReadTimeout:  5 * time.Minute,
-		WriteTimeout: 0, // Disabled for streaming
+		WriteTimeout: 0,
 	}
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Infof("Starting on %s (agent: %s, search: %s, enclave: %s)",
-			cfg.ListenAddr, cfg.AgentModel, searcher.Name(), client.Enclave())
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Infof("Starting MCP tool server on %s (search: %s)", cfg.ListenAddr, searcher.Name())
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
 	}()
@@ -103,5 +98,21 @@ func main() {
 	log.Info("Shutting down...")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	server.Shutdown(ctx)
+	httpServer.Shutdown(ctx)
+}
+
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"ok"}`))
+}
+
+func handleRoot(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"service": "confidential-websearch-mcp", "status": "ok"})
 }
