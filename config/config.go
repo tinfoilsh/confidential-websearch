@@ -5,51 +5,35 @@ import (
 	"strconv"
 )
 
-// LLM parameter constants
 const (
-	AgentTemperature     = 0.1
-	AgentMaxTokens     = 1024
-	AgentMaxIterations = 3 // Max tool-calling loop iterations per request
 	SafeguardTemperature = 0.0
-)
 
-// Search constants
-const (
 	DefaultMaxSearchResults = 10
 	MaxSearchContentLength  = 2000
 )
 
-// Config holds the proxy configuration
+// Config holds the MCP tool server configuration
 type Config struct {
-	// Agent model (small model for tool use decisions)
-	AgentModel string
-
-	// API keys
-	TinfoilAPIKey string
-	ExaAPIKey     string
-
-	// Cloudflare Browser Rendering
+	TinfoilAPIKey       string
+	ExaAPIKey           string
 	CloudflareAccountID string
 	CloudflareAPIToken  string
-
-	// Server settings
-	ListenAddr string
-
-	// Safeguard settings
-	SafeguardModel       string
+	ListenAddr          string
+	SafeguardModel      string
+	EnablePIICheck       bool
 	EnableInjectionCheck bool
 }
 
 // Load creates a new config from environment variables
 func Load() *Config {
 	return &Config{
-		AgentModel:           getEnv("AGENT_MODEL", "gpt-oss-120b"),
 		TinfoilAPIKey:        os.Getenv("TINFOIL_API_KEY"),
 		ExaAPIKey:            os.Getenv("EXA_API_KEY"),
-		CloudflareAccountID: os.Getenv("CLOUDFLARE_ACCOUNT_ID"),
-		CloudflareAPIToken:  os.Getenv("CLOUDFLARE_API_TOKEN"),
+		CloudflareAccountID:  os.Getenv("CLOUDFLARE_ACCOUNT_ID"),
+		CloudflareAPIToken:   os.Getenv("CLOUDFLARE_API_TOKEN"),
 		ListenAddr:           getEnv("LISTEN_ADDR", ":8089"),
 		SafeguardModel:       getEnv("SAFEGUARD_MODEL", "gpt-oss-safeguard-120b"),
+		EnablePIICheck:       getEnvBool("ENABLE_PII_CHECK", true),
 		EnableInjectionCheck: getEnvBool("ENABLE_INJECTION_CHECK", false),
 	}
 }

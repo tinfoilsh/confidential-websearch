@@ -6,8 +6,7 @@ import (
 )
 
 func TestLoad_Defaults(t *testing.T) {
-	// Clear relevant env vars
-	envVars := []string{"AGENT_MODEL", "EXA_API_KEY", "LISTEN_ADDR", "SAFEGUARD_MODEL", "ENABLE_INJECTION_CHECK"}
+	envVars := []string{"EXA_API_KEY", "LISTEN_ADDR", "SAFEGUARD_MODEL", "ENABLE_PII_CHECK", "ENABLE_INJECTION_CHECK"}
 	originalValues := make(map[string]string)
 	for _, key := range envVars {
 		originalValues[key] = os.Getenv(key)
@@ -23,14 +22,14 @@ func TestLoad_Defaults(t *testing.T) {
 
 	cfg := Load()
 
-	if cfg.AgentModel != "gpt-oss-120b" {
-		t.Errorf("AgentModel: expected 'gpt-oss-120b', got '%s'", cfg.AgentModel)
-	}
 	if cfg.ListenAddr != ":8089" {
 		t.Errorf("ListenAddr: expected ':8089', got '%s'", cfg.ListenAddr)
 	}
 	if cfg.SafeguardModel != "gpt-oss-safeguard-120b" {
 		t.Errorf("SafeguardModel: expected 'gpt-oss-safeguard-120b', got '%s'", cfg.SafeguardModel)
+	}
+	if !cfg.EnablePIICheck {
+		t.Error("EnablePIICheck: expected true by default")
 	}
 	if cfg.EnableInjectionCheck {
 		t.Error("EnableInjectionCheck: expected false by default")
@@ -41,25 +40,21 @@ func TestLoad_Defaults(t *testing.T) {
 }
 
 func TestLoad_CustomValues(t *testing.T) {
-	// Set custom env vars
-	os.Setenv("AGENT_MODEL", "custom-model")
 	os.Setenv("EXA_API_KEY", "test-api-key")
 	os.Setenv("LISTEN_ADDR", ":9000")
 	os.Setenv("SAFEGUARD_MODEL", "custom-safeguard")
-	os.Setenv("ENABLE_INJECTION_CHECK", "false")
+	os.Setenv("ENABLE_PII_CHECK", "false")
+	os.Setenv("ENABLE_INJECTION_CHECK", "true")
 	defer func() {
-		os.Unsetenv("AGENT_MODEL")
 		os.Unsetenv("EXA_API_KEY")
 		os.Unsetenv("LISTEN_ADDR")
 		os.Unsetenv("SAFEGUARD_MODEL")
+		os.Unsetenv("ENABLE_PII_CHECK")
 		os.Unsetenv("ENABLE_INJECTION_CHECK")
 	}()
 
 	cfg := Load()
 
-	if cfg.AgentModel != "custom-model" {
-		t.Errorf("AgentModel: expected 'custom-model', got '%s'", cfg.AgentModel)
-	}
 	if cfg.ExaAPIKey != "test-api-key" {
 		t.Errorf("ExaAPIKey: expected 'test-api-key', got '%s'", cfg.ExaAPIKey)
 	}
@@ -69,8 +64,11 @@ func TestLoad_CustomValues(t *testing.T) {
 	if cfg.SafeguardModel != "custom-safeguard" {
 		t.Errorf("SafeguardModel: expected 'custom-safeguard', got '%s'", cfg.SafeguardModel)
 	}
-	if cfg.EnableInjectionCheck {
-		t.Error("EnableInjectionCheck: expected false")
+	if cfg.EnablePIICheck {
+		t.Error("EnablePIICheck: expected false")
+	}
+	if !cfg.EnableInjectionCheck {
+		t.Error("EnableInjectionCheck: expected true")
 	}
 }
 
@@ -121,7 +119,6 @@ func TestGetEnvBool_Invalid(t *testing.T) {
 	os.Setenv("TEST_BOOL", "invalid")
 	defer os.Unsetenv("TEST_BOOL")
 
-	// Should return fallback when value is invalid
 	resultTrue := getEnvBool("TEST_BOOL", true)
 	if !resultTrue {
 		t.Error("expected true fallback for invalid value")
@@ -148,12 +145,6 @@ func TestGetEnvBool_Unset(t *testing.T) {
 }
 
 func TestConstants(t *testing.T) {
-	if AgentTemperature != 0.1 {
-		t.Errorf("AgentTemperature: expected 0.1, got %f", AgentTemperature)
-	}
-	if AgentMaxTokens != 1024 {
-		t.Errorf("AgentMaxTokens: expected 1024, got %d", AgentMaxTokens)
-	}
 	if SafeguardTemperature != 0.0 {
 		t.Errorf("SafeguardTemperature: expected 0.0, got %f", SafeguardTemperature)
 	}
