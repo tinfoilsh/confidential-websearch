@@ -19,4 +19,6 @@ shim:
   upstream-port: 8089
   paths:
     - /mcp
+    - /v1/chat/completions
+    - /v1/responses
     - /health
