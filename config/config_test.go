@@ -28,8 +28,8 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.SafeguardModel != "gpt-oss-safeguard-120b" {
 		t.Errorf("SafeguardModel: expected 'gpt-oss-safeguard-120b', got '%s'", cfg.SafeguardModel)
 	}
-	if cfg.ToolSummaryModel != "gpt-oss-120b" {
-		t.Errorf("ToolSummaryModel: expected 'gpt-oss-120b', got '%s'", cfg.ToolSummaryModel)
+	if cfg.ToolSummaryModel != "llama3-3-70b" {
+		t.Errorf("ToolSummaryModel: expected 'llama3-3-70b', got '%s'", cfg.ToolSummaryModel)
 	}
 	if !cfg.EnablePIICheck {
 		t.Error("EnablePIICheck: expected true by default")

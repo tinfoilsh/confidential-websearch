@@ -34,7 +34,7 @@ func Load() *Config {
 		CloudflareAPIToken:   os.Getenv("CLOUDFLARE_API_TOKEN"),
 		ListenAddr:           getEnv("LISTEN_ADDR", ":8089"),
 		SafeguardModel:       getEnv("SAFEGUARD_MODEL", "gpt-oss-safeguard-120b"),
-		ToolSummaryModel:     getEnv("TOOL_SUMMARY_MODEL", "gpt-oss-120b"),
+		ToolSummaryModel:     getEnv("TOOL_SUMMARY_MODEL", "llama3-3-70b"),
 		EnablePIICheck:       getEnvBool("ENABLE_PII_CHECK", true),
 		EnableInjectionCheck: getEnvBool("ENABLE_INJECTION_CHECK", false),
 	}
