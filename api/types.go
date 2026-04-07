@@ -169,7 +169,9 @@ type ResponsesContent struct {
 
 // ResponsesTool represents a tool in the Responses API request
 type ResponsesTool struct {
-	Type string `json:"type"` // "web_search"
+	Type              string        `json:"type"` // "web_search"
+	SearchContextSize string        `json:"search_context_size,omitempty"`
+	UserLocation      *UserLocation `json:"user_location,omitempty"`
 }
 
 // ResponsesUsage represents token usage in the Responses API

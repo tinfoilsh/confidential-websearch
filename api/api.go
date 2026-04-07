@@ -72,6 +72,29 @@ func convertMessages(msgs []Message) []pipeline.Message {
 	return result
 }
 
+func convertUserLocation(location *UserLocation) *pipeline.UserLocation {
+	if location == nil || location.Approximate == nil {
+		return nil
+	}
+
+	return &pipeline.UserLocation{
+		Country: location.Approximate.Country,
+		City:    location.Approximate.City,
+		Region:  location.Approximate.Region,
+	}
+}
+
+func extractResponsesWebSearchOptions(tools []ResponsesTool) (bool, pipeline.SearchContextSize, *pipeline.UserLocation) {
+	for _, tool := range tools {
+		if tool.Type != "web_search" {
+			continue
+		}
+		return true, pipeline.SearchContextSize(tool.SearchContextSize), convertUserLocation(tool.UserLocation)
+	}
+
+	return false, "", nil
+}
+
 // buildFlatAnnotations creates URL citations (Responses API format)
 func buildFlatAnnotations(annotations []pipeline.Annotation) []FlatAnnotation {
 	if len(annotations) == 0 {
@@ -128,6 +151,12 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	webSearchEnabled := req.WebSearchOptions != nil
 	piiCheckEnabled := req.PIICheckOptions != nil
 	injectionCheckEnabled := req.InjectionCheckOptions != nil
+	var searchContextSize pipeline.SearchContextSize
+	var userLocation *pipeline.UserLocation
+	if req.WebSearchOptions != nil {
+		searchContextSize = pipeline.SearchContextSize(req.WebSearchOptions.SearchContextSize)
+		userLocation = convertUserLocation(req.WebSearchOptions.UserLocation)
+	}
 	log.Debugf("Request features: web_search=%v, pii_check=%v, injection_check=%v",
 		webSearchEnabled, piiCheckEnabled, injectionCheckEnabled)
 
@@ -141,6 +170,8 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		WebSearchEnabled:      webSearchEnabled,
 		PIICheckEnabled:       piiCheckEnabled,
 		InjectionCheckEnabled: injectionCheckEnabled,
+		SearchContextSize:     searchContextSize,
+		UserLocation:          userLocation,
 	}
 
 	if req.Stream {
@@ -284,13 +315,7 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Derive feature flags from tools array and options
-	webSearchEnabled := false
-	for _, t := range req.Tools {
-		if t.Type == "web_search" {
-			webSearchEnabled = true
-			break
-		}
-	}
+	webSearchEnabled, searchContextSize, userLocation := extractResponsesWebSearchOptions(req.Tools)
 	piiCheckEnabled := req.PIICheckOptions != nil
 	injectionCheckEnabled := req.InjectionCheckOptions != nil
 	log.Debugf("Responses request features: web_search=%v, pii_check=%v, injection_check=%v",
@@ -304,6 +329,8 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		WebSearchEnabled:      webSearchEnabled,
 		PIICheckEnabled:       piiCheckEnabled,
 		InjectionCheckEnabled: injectionCheckEnabled,
+		SearchContextSize:     searchContextSize,
+		UserLocation:          userLocation,
 	}
 
 	if req.Stream {

@@ -27,10 +27,11 @@ func (p *ExaProvider) Name() string {
 // exaRequest represents the Exa API request body
 // See: https://docs.exa.ai/reference/search
 type exaRequest struct {
-	Query      string            `json:"query"`
-	Type       string            `json:"type,omitempty"`
-	NumResults int               `json:"numResults,omitempty"`
-	Contents   *exaContentsParam `json:"contents,omitempty"`
+	Query        string            `json:"query"`
+	Type         string            `json:"type,omitempty"`
+	NumResults   int               `json:"numResults,omitempty"`
+	UserLocation string            `json:"userLocation,omitempty"`
+	Contents     *exaContentsParam `json:"contents,omitempty"`
 }
 
 type exaContentsParam struct {
@@ -54,16 +55,29 @@ type exaResponse struct {
 }
 
 // Search performs an Exa web search
-func (p *ExaProvider) Search(ctx context.Context, query string, maxResults int) ([]Result, error) {
+func (p *ExaProvider) Search(ctx context.Context, query string, opts Options) ([]Result, error) {
+	maxResults := opts.MaxResults
+	if maxResults <= 0 {
+		maxResults = config.DefaultMaxSearchResults
+	}
+
+	maxCharacters := opts.MaxContentCharacters
+	if maxCharacters <= 0 {
+		maxCharacters = config.MaxSearchContentLength
+	}
+
 	reqBody := exaRequest{
 		Query:      query,
 		Type:       "fast", // Use fast type to guarantee ZDR (Exa maintains the index)
 		NumResults: maxResults,
 		Contents: &exaContentsParam{
 			Text: &exaTextParam{
-				MaxCharacters: config.MaxSearchContentLength,
+				MaxCharacters: maxCharacters,
 			},
 		},
+	}
+	if opts.UserLocationCountry != "" {
+		reqBody.UserLocation = opts.UserLocationCountry
 	}
 
 	jsonBody, err := json.Marshal(reqBody)

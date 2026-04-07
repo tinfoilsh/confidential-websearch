@@ -14,6 +14,14 @@ const (
 	FormatResponses
 )
 
+type SearchContextSize string
+
+const (
+	SearchContextSizeLow    SearchContextSize = "low"
+	SearchContextSizeMedium SearchContextSize = "medium"
+	SearchContextSizeHigh   SearchContextSize = "high"
+)
+
 // Emitter status values
 const (
 	EmitStatusInProgress = "in_progress"
@@ -74,6 +82,12 @@ type URLCitation struct {
 	Title      string `json:"title"`
 }
 
+type UserLocation struct {
+	Country string
+	City    string
+	Region  string
+}
+
 // Request is the unified internal request representation
 type Request struct {
 	Model       string
@@ -89,6 +103,8 @@ type Request struct {
 	WebSearchEnabled      bool
 	PIICheckEnabled       bool
 	InjectionCheckEnabled bool
+	SearchContextSize     SearchContextSize
+	UserLocation          *UserLocation
 }
 
 // EventEmitter handles streaming output events

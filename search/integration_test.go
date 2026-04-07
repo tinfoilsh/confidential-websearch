@@ -23,7 +23,7 @@ func TestExaProvider_Integration_RealSearch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	results, err := provider.Search(ctx, "golang testing best practices", 3)
+	results, err := provider.Search(ctx, "golang testing best practices", Options{MaxResults: 3})
 	if err != nil {
 		t.Fatalf("search failed: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestExaProvider_Integration_MaxResults(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	results, err := provider.Search(ctx, "weather forecast", 2)
+	results, err := provider.Search(ctx, "weather forecast", Options{MaxResults: 2})
 	if err != nil {
 		t.Fatalf("search failed: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestExaProvider_Integration_SpecialCharacters(t *testing.T) {
 	defer cancel()
 
 	// Test query with special characters
-	_, err = provider.Search(ctx, "what is 2+2?", 1)
+	_, err = provider.Search(ctx, "what is 2+2?", Options{MaxResults: 1})
 	if err != nil {
 		t.Fatalf("search with special characters failed: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestExaProvider_Integration_LongQuery(t *testing.T) {
 	defer cancel()
 
 	longQuery := "What are the best practices for writing unit tests in Go programming language with proper mocking and table-driven tests?"
-	_, err = provider.Search(ctx, longQuery, 3)
+	_, err = provider.Search(ctx, longQuery, Options{MaxResults: 3})
 	if err != nil {
 		t.Fatalf("search with long query failed: %v", err)
 	}

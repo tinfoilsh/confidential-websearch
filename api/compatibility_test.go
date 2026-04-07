@@ -44,6 +44,12 @@ func TestHandleChatCompletions_MapsFeatureFlagsToPipelineRequest(t *testing.T) {
 				if !req.WebSearchEnabled {
 					t.Fatal("expected web search to be enabled")
 				}
+				if req.SearchContextSize != pipeline.SearchContextSizeLow {
+					t.Fatalf("expected search context size low, got %q", req.SearchContextSize)
+				}
+				if req.UserLocation == nil || req.UserLocation.Country != "US" || req.UserLocation.City != "San Francisco" || req.UserLocation.Region != "CA" {
+					t.Fatalf("expected user location to be mapped, got %+v", req.UserLocation)
+				}
 				if !req.PIICheckEnabled {
 					t.Fatal("expected pii check to be enabled")
 				}
@@ -60,7 +66,17 @@ func TestHandleChatCompletions_MapsFeatureFlagsToPipelineRequest(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{
 		"model":"gpt-oss-120b",
 		"messages":[{"role":"user","content":"hello"}],
-		"web_search_options":{},
+		"web_search_options":{
+			"search_context_size":"low",
+			"user_location":{
+				"type":"approximate",
+				"approximate":{
+					"country":"US",
+					"city":"San Francisco",
+					"region":"CA"
+				}
+			}
+		},
 		"pii_check_options":{},
 		"injection_check_options":{}
 	}`))
@@ -81,6 +97,12 @@ func TestHandleResponses_MapsFeatureFlagsToPipelineRequest(t *testing.T) {
 				if !req.WebSearchEnabled {
 					t.Fatal("expected web search to be enabled")
 				}
+				if req.SearchContextSize != pipeline.SearchContextSizeHigh {
+					t.Fatalf("expected search context size high, got %q", req.SearchContextSize)
+				}
+				if req.UserLocation == nil || req.UserLocation.Country != "FR" {
+					t.Fatalf("expected user location country FR, got %+v", req.UserLocation)
+				}
 				if !req.PIICheckEnabled {
 					t.Fatal("expected pii check to be enabled")
 				}
@@ -100,7 +122,16 @@ func TestHandleResponses_MapsFeatureFlagsToPipelineRequest(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{
 		"model":"gpt-oss-120b",
 		"input":"hello",
-		"tools":[{"type":"web_search"}],
+		"tools":[{
+			"type":"web_search",
+			"search_context_size":"high",
+			"user_location":{
+				"type":"approximate",
+				"approximate":{
+					"country":"FR"
+				}
+			}
+		}],
 		"pii_check_options":{},
 		"injection_check_options":{}
 	}`))

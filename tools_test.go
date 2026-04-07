@@ -18,12 +18,12 @@ type mockSearchProvider struct {
 	err     error
 }
 
-func (m *mockSearchProvider) Search(ctx context.Context, query string, maxResults int) ([]search.Result, error) {
+func (m *mockSearchProvider) Search(ctx context.Context, query string, opts search.Options) ([]search.Result, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
-	if maxResults < len(m.results) {
-		return m.results[:maxResults], nil
+	if opts.MaxResults < len(m.results) {
+		return m.results[:opts.MaxResults], nil
 	}
 	return m.results, nil
 }

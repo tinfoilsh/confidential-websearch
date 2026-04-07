@@ -16,7 +16,7 @@ type URLFetcher interface {
 
 // SearchProvider executes web searches
 type SearchProvider interface {
-	Search(ctx context.Context, query string, maxResults int) ([]search.Result, error)
+	Search(ctx context.Context, query string, opts search.Options) ([]search.Result, error)
 }
 
 // SearchArgs represents the arguments for a web search

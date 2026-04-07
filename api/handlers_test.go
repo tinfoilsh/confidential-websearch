@@ -120,6 +120,22 @@ func TestHandleChatCompletions_EmptyBody(t *testing.T) {
 	}
 }
 
+func TestHandleChatCompletions_InvalidSearchContextSize(t *testing.T) {
+	srv := &Server{Runner: engine.NewService(nil, nil, nil, nil)}
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{
+		"model":"gpt-4",
+		"messages":[{"role":"user","content":"Hello"}],
+		"web_search_options":{"search_context_size":"maximum"}
+	}`))
+	w := httptest.NewRecorder()
+
+	srv.HandleChatCompletions(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
 func TestHandleChatCompletions_NonStreaming_Success(t *testing.T) {
 	mockRunner := &MockRunner{
 		RunFunc: func(ctx context.Context, req *pipeline.Request) (*engine.Result, error) {
@@ -245,6 +261,22 @@ func TestHandleResponses_InvalidJSON(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandleResponses_InvalidSearchContextSize(t *testing.T) {
+	srv := &Server{Runner: engine.NewService(nil, nil, nil, nil)}
+	req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{
+		"model":"gpt-4",
+		"input":"Hello",
+		"tools":[{"type":"web_search","search_context_size":"maximum"}]
+	}`))
+	w := httptest.NewRecorder()
+
+	srv.HandleResponses(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
 	}
 }
 
