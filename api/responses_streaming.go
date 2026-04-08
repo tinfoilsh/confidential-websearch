@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -21,8 +22,11 @@ type ResponsesEmitter struct {
 	model         string
 	createdAt     int64
 	seqNum        atomic.Int64
-	outputIdx     int
+	mu            sync.Mutex
+	nextOutputIdx int
+	itemIndexes   map[string]int
 	messageItemID string
+	messageIdx    int
 	reasoning     string
 }
 
@@ -38,12 +42,12 @@ func NewResponsesEmitter(w http.ResponseWriter, responseID, model string) (*Resp
 	w.Header().Set("Connection", "keep-alive")
 
 	return &ResponsesEmitter{
-		w:          w,
-		flusher:    flusher,
-		responseID: responseID,
-		model:      model,
-		createdAt:  time.Now().Unix(),
-		outputIdx:  0,
+		w:           w,
+		flusher:     flusher,
+		responseID:  responseID,
+		model:       model,
+		createdAt:   time.Now().Unix(),
+		itemIndexes: make(map[string]int),
 	}, nil
 }
 
@@ -62,6 +66,40 @@ func (e *ResponsesEmitter) emit(eventType string, data any) error {
 
 func (e *ResponsesEmitter) nextSeq() int64 {
 	return e.seqNum.Add(1)
+}
+
+func (e *ResponsesEmitter) reserveOutputIndex(itemID string) int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if index, ok := e.itemIndexes[itemID]; ok {
+		return index
+	}
+
+	index := e.nextOutputIdx
+	e.itemIndexes[itemID] = index
+	e.nextOutputIdx++
+	return index
+}
+
+func (e *ResponsesEmitter) outputIndexFor(itemID string) int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if index, ok := e.itemIndexes[itemID]; ok {
+		return index
+	}
+
+	index := e.nextOutputIdx
+	e.itemIndexes[itemID] = index
+	e.nextOutputIdx++
+	return index
+}
+
+func (e *ResponsesEmitter) currentMessageIndex() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.messageIdx
 }
 
 // EmitResponseStart emits response.created and response.in_progress events
@@ -100,6 +138,7 @@ func (e *ResponsesEmitter) EmitResponseStart() error {
 func (e *ResponsesEmitter) emitWebSearchCallEvents(itemID, status string, action map[string]any, reason string) error {
 	switch status {
 	case StatusInProgress:
+		outputIdx := e.reserveOutputIndex(itemID)
 		item := map[string]any{
 			"type":   ItemTypeWebSearchCall,
 			"id":     itemID,
@@ -109,7 +148,7 @@ func (e *ResponsesEmitter) emitWebSearchCallEvents(itemID, status string, action
 		if err := e.emit("response.output_item.added", map[string]any{
 			"type":            "response.output_item.added",
 			"sequence_number": e.nextSeq(),
-			"output_index":    e.outputIdx,
+			"output_index":    outputIdx,
 			"item":            item,
 		}); err != nil {
 			return err
@@ -117,15 +156,16 @@ func (e *ResponsesEmitter) emitWebSearchCallEvents(itemID, status string, action
 		return e.emit("response.web_search_call.in_progress", map[string]any{
 			"type":            "response.web_search_call.in_progress",
 			"sequence_number": e.nextSeq(),
-			"output_index":    e.outputIdx,
+			"output_index":    outputIdx,
 			"item_id":         itemID,
 		})
 
 	case StatusCompleted:
+		outputIdx := e.outputIndexFor(itemID)
 		if err := e.emit("response.web_search_call.completed", map[string]any{
 			"type":            "response.web_search_call.completed",
 			"sequence_number": e.nextSeq(),
-			"output_index":    e.outputIdx,
+			"output_index":    outputIdx,
 			"item_id":         itemID,
 		}); err != nil {
 			return err
@@ -133,7 +173,7 @@ func (e *ResponsesEmitter) emitWebSearchCallEvents(itemID, status string, action
 		if err := e.emit("response.output_item.done", map[string]any{
 			"type":            "response.output_item.done",
 			"sequence_number": e.nextSeq(),
-			"output_index":    e.outputIdx,
+			"output_index":    outputIdx,
 			"item": map[string]any{
 				"type":   ItemTypeWebSearchCall,
 				"id":     itemID,
@@ -143,10 +183,10 @@ func (e *ResponsesEmitter) emitWebSearchCallEvents(itemID, status string, action
 		}); err != nil {
 			return err
 		}
-		e.outputIdx++
 		return nil
 
 	case StatusBlocked, StatusFailed:
+		outputIdx := e.reserveOutputIndex(itemID)
 		item := map[string]any{
 			"type":   ItemTypeWebSearchCall,
 			"id":     itemID,
@@ -161,7 +201,7 @@ func (e *ResponsesEmitter) emitWebSearchCallEvents(itemID, status string, action
 		if err := e.emit("response.output_item.added", map[string]any{
 			"type":            "response.output_item.added",
 			"sequence_number": e.nextSeq(),
-			"output_index":    e.outputIdx,
+			"output_index":    outputIdx,
 			"item":            item,
 		}); err != nil {
 			return err
@@ -178,12 +218,11 @@ func (e *ResponsesEmitter) emitWebSearchCallEvents(itemID, status string, action
 		if err := e.emit("response.output_item.done", map[string]any{
 			"type":            "response.output_item.done",
 			"sequence_number": e.nextSeq(),
-			"output_index":    e.outputIdx,
+			"output_index":    outputIdx,
 			"item":            doneItem,
 		}); err != nil {
 			return err
 		}
-		e.outputIdx++
 		return nil
 	}
 
@@ -195,10 +234,11 @@ func (e *ResponsesEmitter) EmitSearchCall(id, status, query, reason string, crea
 	itemID := IDPrefixWebSearch + id
 
 	if status == "searching" {
+		outputIdx := e.outputIndexFor(itemID)
 		return e.emit("response.web_search_call.searching", map[string]any{
 			"type":            "response.web_search_call.searching",
 			"sequence_number": e.nextSeq(),
-			"output_index":    e.outputIdx,
+			"output_index":    outputIdx,
 			"item_id":         itemID,
 		})
 	}
@@ -231,12 +271,16 @@ func (e *ResponsesEmitter) EmitMetadata(id string, created int64, model string, 
 // EmitMessageStart emits the message output item start
 func (e *ResponsesEmitter) EmitMessageStart(itemID string) error {
 	e.messageItemID = itemID
+	outputIdx := e.reserveOutputIndex(itemID)
+	e.mu.Lock()
+	e.messageIdx = outputIdx
+	e.mu.Unlock()
 
 	// Emit output_item.added for message
 	if err := e.emit("response.output_item.added", map[string]any{
 		"type":            "response.output_item.added",
 		"sequence_number": e.nextSeq(),
-		"output_index":    e.outputIdx,
+		"output_index":    outputIdx,
 		"item": map[string]any{
 			"type":   ItemTypeMessage,
 			"id":     itemID,
@@ -251,7 +295,7 @@ func (e *ResponsesEmitter) EmitMessageStart(itemID string) error {
 	return e.emit("response.content_part.added", map[string]any{
 		"type":            "response.content_part.added",
 		"sequence_number": e.nextSeq(),
-		"output_index":    e.outputIdx,
+		"output_index":    outputIdx,
 		"content_index":   0,
 		"part": map[string]any{
 			"type": ContentTypeOutputText,
@@ -280,10 +324,11 @@ func (e *ResponsesEmitter) EmitChunk(data []byte) error {
 		return nil
 	}
 
+	outputIdx := e.currentMessageIndex()
 	return e.emit("response.output_text.delta", map[string]any{
 		"type":            "response.output_text.delta",
 		"sequence_number": e.nextSeq(),
-		"output_index":    e.outputIdx,
+		"output_index":    outputIdx,
 		"content_index":   0,
 		"delta":           chunk.Choices[0].Delta.Content,
 	})
@@ -291,12 +336,14 @@ func (e *ResponsesEmitter) EmitChunk(data []byte) error {
 
 // EmitMessageEnd emits the message output item completion
 func (e *ResponsesEmitter) EmitMessageEnd(text string, annotations []pipeline.Annotation) error {
+	outputIdx := e.currentMessageIndex()
+
 	// Emit annotations
 	for i, ann := range annotations {
 		if err := e.emit("response.output_text.annotation.added", map[string]any{
 			"type":             "response.output_text.annotation.added",
 			"sequence_number":  e.nextSeq(),
-			"output_index":     e.outputIdx,
+			"output_index":     outputIdx,
 			"content_index":    0,
 			"annotation_index": i,
 			"annotation": map[string]any{
@@ -315,7 +362,7 @@ func (e *ResponsesEmitter) EmitMessageEnd(text string, annotations []pipeline.An
 	if err := e.emit("response.output_text.done", map[string]any{
 		"type":            "response.output_text.done",
 		"sequence_number": e.nextSeq(),
-		"output_index":    e.outputIdx,
+		"output_index":    outputIdx,
 		"content_index":   0,
 		"text":            text,
 	}); err != nil {
@@ -334,7 +381,7 @@ func (e *ResponsesEmitter) EmitMessageEnd(text string, annotations []pipeline.An
 	if err := e.emit("response.content_part.done", map[string]any{
 		"type":            "response.content_part.done",
 		"sequence_number": e.nextSeq(),
-		"output_index":    e.outputIdx,
+		"output_index":    outputIdx,
 		"content_index":   0,
 		"part":            part,
 	}); err != nil {
@@ -345,7 +392,7 @@ func (e *ResponsesEmitter) EmitMessageEnd(text string, annotations []pipeline.An
 	return e.emit("response.output_item.done", map[string]any{
 		"type":            "response.output_item.done",
 		"sequence_number": e.nextSeq(),
-		"output_index":    e.outputIdx,
+		"output_index":    outputIdx,
 		"item": map[string]any{
 			"type":   ItemTypeMessage,
 			"id":     e.messageItemID,
