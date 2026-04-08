@@ -154,7 +154,7 @@ func (e *SSEEmitter) EmitError(err error) error {
 
 	errData, marshalErr := json.Marshal(map[string]any{
 		"error": map[string]any{
-			"message": err.Error(),
+			"message": sanitizeErrorMessage(err),
 			"type":    pipeline.ErrTypeServer,
 			"param":   nil,
 			"code":    nil,

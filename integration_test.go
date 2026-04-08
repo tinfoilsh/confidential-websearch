@@ -60,7 +60,7 @@ func setupIntegrationServer(t *testing.T) *api.Server {
 		// AgentModel removed in refactor:           "gpt-oss-120b",
 		ExaAPIKey:            exaKey,
 		SafeguardModel:       "gpt-oss-safeguard-120b",
-		EnableInjectionCheck: true,
+		EnableFetchInjectionCheck: true,
 	}
 
 	searcher, err := search.NewProvider(search.Config{ExaAPIKey: cfg.ExaAPIKey})
@@ -88,15 +88,16 @@ func setupIntegrationServer(t *testing.T) *api.Server {
 	return &api.Server{
 		Runner:                       service,
 		DefaultPIICheckEnabled:       cfg.EnablePIICheck,
-		DefaultInjectionCheckEnabled: cfg.EnableInjectionCheck,
+		DefaultFetchInjectionCheckEnabled: cfg.EnableFetchInjectionCheck,
 	}
 }
 
 func TestIntegration_HealthEndpoint(t *testing.T) {
+	srv := &api.Server{}
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
 
-	handleHealth(w, req)
+	srv.HandleHealth(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
@@ -112,10 +113,11 @@ func TestIntegration_HealthEndpoint(t *testing.T) {
 }
 
 func TestIntegration_RootEndpoint(t *testing.T) {
+	srv := &api.Server{}
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
 
-	handleRoot(w, req)
+	srv.HandleRoot(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)

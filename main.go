@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"net/http"
 	"os"
@@ -66,8 +65,8 @@ func main() {
 
 	apiServer := &api.Server{
 		Runner:                       service,
-		DefaultPIICheckEnabled:       cfg.EnablePIICheck,
-		DefaultInjectionCheckEnabled: cfg.EnableInjectionCheck,
+		DefaultPIICheckEnabled:            cfg.EnablePIICheck,
+		DefaultFetchInjectionCheckEnabled: cfg.EnableFetchInjectionCheck,
 	}
 
 	server := mcp.NewServer(&mcp.Implementation{
@@ -93,8 +92,8 @@ func main() {
 	mux.Handle("/mcp", handler)
 	mux.HandleFunc("/v1/chat/completions", api.RecoveryMiddleware(apiServer.HandleChatCompletions))
 	mux.HandleFunc("/v1/responses", api.RecoveryMiddleware(apiServer.HandleResponses))
-	mux.HandleFunc("/health", handleHealth)
-	mux.HandleFunc("/", handleRoot)
+	mux.HandleFunc("/health", apiServer.HandleHealth)
+	mux.HandleFunc("/", apiServer.HandleRoot)
 
 	httpServer := &http.Server{
 		Addr:         cfg.ListenAddr,
@@ -120,11 +119,6 @@ func main() {
 	httpServer.Shutdown(ctx)
 }
 
-func handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status":"ok"}`))
-}
-
 type responsesClient struct {
 	inner *responses.ResponseService
 }
@@ -137,13 +131,4 @@ func (c responsesClient) NewStreaming(ctx context.Context, body responses.Respon
 	return c.inner.NewStreaming(ctx, body, opts...)
 }
 
-func handleRoot(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"service": "confidential-websearch", "status": "ok"})
-}
+

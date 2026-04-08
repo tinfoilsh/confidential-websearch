@@ -423,7 +423,7 @@ func (e *ResponsesEmitter) EmitError(err error) error {
 		"error": map[string]any{
 			"type":    pipeline.ErrTypeServer,
 			"code":    pipeline.ErrTypeServer,
-			"message": err.Error(),
+			"message": sanitizeErrorMessage(err),
 			"param":   nil,
 		},
 	})

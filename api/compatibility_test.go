@@ -53,8 +53,8 @@ func TestHandleChatCompletions_MapsFeatureFlagsToPipelineRequest(t *testing.T) {
 				if !req.PIICheckEnabled {
 					t.Fatal("expected pii check to be enabled")
 				}
-				if !req.InjectionCheckEnabled {
-					t.Fatal("expected injection check to be enabled")
+				if !req.FetchInjectionCheckEnabled {
+					t.Fatal("expected fetch injection check to be enabled")
 				}
 				if req.Format != pipeline.FormatChatCompletion {
 					t.Fatalf("expected chat completion format, got %v", req.Format)
@@ -106,8 +106,8 @@ func TestHandleResponses_MapsFeatureFlagsToPipelineRequest(t *testing.T) {
 				if !req.PIICheckEnabled {
 					t.Fatal("expected pii check to be enabled")
 				}
-				if !req.InjectionCheckEnabled {
-					t.Fatal("expected injection check to be enabled")
+				if !req.FetchInjectionCheckEnabled {
+					t.Fatal("expected fetch injection check to be enabled")
 				}
 				if req.Format != pipeline.FormatResponses {
 					t.Fatalf("expected responses format, got %v", req.Format)
