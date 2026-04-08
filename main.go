@@ -61,6 +61,7 @@ func main() {
 		fetcher,
 		safeguardClient,
 		engine.WithToolSummaryModel(cfg.ToolSummaryModel),
+		engine.WithToolLoopMaxIter(cfg.ToolLoopMaxIter),
 	)
 
 	apiServer := &api.Server{

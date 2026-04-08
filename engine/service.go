@@ -30,7 +30,6 @@ import (
 const (
 	chatCompletionObject               = "chat.completion"
 	chatCompletionChunkObject          = "chat.completion.chunk"
-	toolLoopMaxIterations              = 3
 	maxFetchURLs                       = 5
 	searchContextMaxResultsLow         = 5
 	searchContextMaxResultsHigh        = 12
@@ -140,6 +139,7 @@ type Service struct {
 	fetcher          URLFetcher
 	safeguard        SafeguardChecker
 	toolSummaryModel string
+	toolLoopMaxIter  int
 }
 
 type functionCall struct {
@@ -179,10 +179,11 @@ type executionState struct {
 
 func NewService(responsesClient ResponsesClient, searcher search.Provider, fetcher URLFetcher, safeguardChecker SafeguardChecker, options ...ServiceOption) *Service {
 	service := &Service{
-		responses: responsesClient,
-		searcher:  searcher,
-		fetcher:   fetcher,
-		safeguard: safeguardChecker,
+		responses:       responsesClient,
+		searcher:        searcher,
+		fetcher:         fetcher,
+		safeguard:       safeguardChecker,
+		toolLoopMaxIter: config.DefaultToolLoopMaxIter,
 	}
 	for _, option := range options {
 		option(service)
@@ -193,6 +194,14 @@ func NewService(responsesClient ResponsesClient, searcher search.Provider, fetch
 func WithToolSummaryModel(model string) ServiceOption {
 	return func(service *Service) {
 		service.toolSummaryModel = strings.TrimSpace(model)
+	}
+}
+
+func WithToolLoopMaxIter(n int) ServiceOption {
+	return func(service *Service) {
+		if n > 0 {
+			service.toolLoopMaxIter = n
+		}
 	}
 }
 
@@ -337,7 +346,7 @@ func (s *Service) Run(ctx context.Context, req *pipeline.Request) (*Result, erro
 	nextInput := input
 
 	allowTools := req.WebSearchEnabled
-	for iteration := 0; iteration < toolLoopMaxIterations; iteration++ {
+	for iteration := 0; iteration < s.toolLoopMaxIter; iteration++ {
 		resp, err := s.responses.New(ctx, s.buildParams(req, nextInput, allowTools, state.previousID))
 		if err != nil {
 			return nil, err
@@ -398,7 +407,7 @@ func (s *Service) Stream(ctx context.Context, req *pipeline.Request, emitter pip
 	created := time.Now().Unix()
 	allowTools := req.WebSearchEnabled
 
-	for iteration := 0; iteration < toolLoopMaxIterations; iteration++ {
+	for iteration := 0; iteration < s.toolLoopMaxIter; iteration++ {
 		result, continuationInput, err := s.streamIteration(ctx, req, state, emitter, streamID, created, allowTools, nextInput)
 		if err != nil {
 			return nil, err
