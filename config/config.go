@@ -8,8 +8,9 @@ import (
 const (
 	SafeguardTemperature = 0.0
 
-	DefaultMaxSearchResults = 10
-	MaxSearchContentLength  = 2000
+	DefaultMaxSearchResults    = 10
+	MaxSearchContentLength     = 2000
+	DefaultToolLoopMaxIter     = 3
 )
 
 // Config holds the server configuration
@@ -21,6 +22,7 @@ type Config struct {
 	ListenAddr           string
 	SafeguardModel       string
 	ToolSummaryModel     string
+	ToolLoopMaxIter      int
 	EnablePIICheck       bool
 	EnableInjectionCheck bool
 }
@@ -35,6 +37,7 @@ func Load() *Config {
 		ListenAddr:           getEnv("LISTEN_ADDR", ":8089"),
 		SafeguardModel:       getEnv("SAFEGUARD_MODEL", "gpt-oss-safeguard-120b"),
 		ToolSummaryModel:     getEnv("TOOL_SUMMARY_MODEL", "llama3-3-70b"),
+		ToolLoopMaxIter:      getEnvInt("TOOL_LOOP_MAX_ITER", DefaultToolLoopMaxIter),
 		EnablePIICheck:       getEnvBool("ENABLE_PII_CHECK", true),
 		EnableInjectionCheck: getEnvBool("ENABLE_INJECTION_CHECK", false),
 	}
@@ -45,6 +48,18 @@ func getEnv(key, fallback string) string {
 		return val
 	}
 	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	val := os.Getenv(key)
+	if val == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(val)
+	if err != nil || parsed < 1 {
+		return fallback
+	}
+	return parsed
 }
 
 func getEnvBool(key string, fallback bool) bool {
