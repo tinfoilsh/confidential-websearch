@@ -296,7 +296,9 @@ func (f *Fetcher) FetchURLResults(ctx context.Context, urls []string) []URLResul
 			URL:    u,
 			Status: FetchStatusFailed,
 		}
+	}
 
+	for i, u := range urls {
 		// Respect context cancellation while waiting for a semaphore slot
 		select {
 		case sem <- struct{}{}:

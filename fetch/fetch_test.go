@@ -250,6 +250,32 @@ func TestFetchURLs_ContextCanceled(t *testing.T) {
 	}
 }
 
+func TestFetchURLResults_ContextCanceledPreservesInputOrderMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeCFResponse(w, true, "content", nil)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	fetcher := newTestFetcher(server.URL)
+	urls := []string{"https://example.com/a", "https://example.com/b"}
+	results := fetcher.FetchURLResults(ctx, urls)
+
+	if len(results) != len(urls) {
+		t.Fatalf("expected %d results, got %d", len(urls), len(results))
+	}
+	for i, result := range results {
+		if result.URL != urls[i] {
+			t.Fatalf("expected result %d url %q, got %q", i, urls[i], result.URL)
+		}
+		if result.Status != FetchStatusFailed {
+			t.Fatalf("expected result %d status %q, got %q", i, FetchStatusFailed, result.Status)
+		}
+	}
+}
+
 func TestFetchURLs_EmptyResult(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeCFResponse(w, true, "   ", nil)
