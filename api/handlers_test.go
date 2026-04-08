@@ -785,7 +785,7 @@ func TestChatCompletions_PipelineError(t *testing.T) {
 }
 
 func TestMaxRequestBodySize_Constant(t *testing.T) {
-	expected := int64(200 << 20) // 200 MB
+	expected := int64(20 << 20) // 20 MB
 	if MaxRequestBodySize != expected {
 		t.Errorf("expected MaxRequestBodySize to be %d, got %d", expected, MaxRequestBodySize)
 	}
