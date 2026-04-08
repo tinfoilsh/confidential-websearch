@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	MaxRequestBodySize = 200 << 20 // 200 MB
+	MaxRequestBodySize = 20 << 20 // 20 MB
 
 	// Object types
 	ObjectChatCompletionChunk = "chat.completion.chunk"
