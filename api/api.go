@@ -101,9 +101,12 @@ func extractResponsesWebSearchOptions(tools []ResponsesTool) (bool, pipeline.Sea
 }
 
 func newResponseContinuationStore() *responseContinuationStore {
-	return &responseContinuationStore{
-		entries: make(map[string]responseContinuationEntry),
+	s := &responseContinuationStore{
+		entries:   make(map[string]responseContinuationEntry),
+		stopPrune: make(chan struct{}),
 	}
+	go s.backgroundPrune()
+	return s
 }
 
 func (s *Server) continuationStore() *responseContinuationStore {
@@ -137,7 +140,12 @@ func (s *responseContinuationStore) Put(publicID, upstreamID string) {
 	defer s.mu.Unlock()
 
 	now := time.Now()
-	s.pruneExpiredLocked(now)
+	if len(s.entries) >= responseContinuationMaxSize {
+		s.pruneExpiredLocked(now)
+	}
+	if len(s.entries) >= responseContinuationMaxSize {
+		s.evictOldestLocked()
+	}
 	s.entries[publicID] = responseContinuationEntry{
 		upstreamID: upstreamID,
 		expiresAt:  now.Add(responseContinuationTTL),
@@ -172,6 +180,39 @@ func (s *responseContinuationStore) pruneExpiredLocked(now time.Time) {
 			delete(s.entries, id)
 		}
 	}
+}
+
+func (s *responseContinuationStore) evictOldestLocked() {
+	var oldestID string
+	var oldestExpiry time.Time
+	for id, entry := range s.entries {
+		if oldestID == "" || entry.expiresAt.Before(oldestExpiry) {
+			oldestID = id
+			oldestExpiry = entry.expiresAt
+		}
+	}
+	if oldestID != "" {
+		delete(s.entries, oldestID)
+	}
+}
+
+func (s *responseContinuationStore) backgroundPrune() {
+	ticker := time.NewTicker(responseContinuationPruneInt)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			s.mu.Lock()
+			s.pruneExpiredLocked(time.Now())
+			s.mu.Unlock()
+		case <-s.stopPrune:
+			return
+		}
+	}
+}
+
+func (s *responseContinuationStore) stop() {
+	close(s.stopPrune)
 }
 
 func (s *Server) validateForStreaming(req *pipeline.Request) error {

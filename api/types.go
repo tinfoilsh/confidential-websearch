@@ -47,7 +47,9 @@ const (
 	IDPrefixResponse  = "resp_"
 	IDPrefixMessage   = "msg_"
 
-	responseContinuationTTL = 24 * time.Hour
+	responseContinuationTTL      = 24 * time.Hour
+	responseContinuationMaxSize  = 100_000
+	responseContinuationPruneInt = 10 * time.Minute
 )
 
 // Server holds all dependencies for the HTTP handlers
@@ -61,8 +63,9 @@ type Server struct {
 }
 
 type responseContinuationStore struct {
-	mu      sync.RWMutex
-	entries map[string]responseContinuationEntry
+	mu        sync.RWMutex
+	entries   map[string]responseContinuationEntry
+	stopPrune chan struct{}
 }
 
 type responseContinuationEntry struct {
