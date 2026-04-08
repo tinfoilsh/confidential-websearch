@@ -204,9 +204,8 @@ func (s *Service) Search(ctx context.Context, query string, opts ToolOptions) (S
 	if opts.PIICheckEnabled && s.safeguard != nil {
 		check, err := s.safeguard.Check(ctx, safeguard.PIILeakagePolicy, query)
 		if err != nil {
-			return SearchOutcome{}, fmt.Errorf("pii check failed: %w", err)
-		}
-		if check.Violation {
+			log.WithError(err).Warn("PII safeguard unavailable; allowing search to continue")
+		} else if check.Violation {
 			return SearchOutcome{BlockedReason: check.Rationale}, nil
 		}
 	}
@@ -1135,7 +1134,12 @@ func filterSearchResults(ctx context.Context, checker SafeguardChecker, results 
 	checks := safeguard.CheckItems(ctx, checker, safeguard.PromptInjectionPolicy, contents)
 	filtered := make([]search.Result, 0, len(results))
 	for i, check := range checks {
-		if check.Err == nil && !check.Violation {
+		if check.Err != nil {
+			log.WithError(check.Err).Warn("prompt injection safeguard unavailable; keeping search result")
+			filtered = append(filtered, results[i])
+			continue
+		}
+		if !check.Violation {
 			filtered = append(filtered, results[i])
 		}
 	}
@@ -1151,7 +1155,12 @@ func filterFetchedPages(ctx context.Context, checker SafeguardChecker, pages []f
 	checks := safeguard.CheckItems(ctx, checker, safeguard.PromptInjectionPolicy, contents)
 	filtered := make([]fetch.FetchedPage, 0, len(pages))
 	for i, check := range checks {
-		if check.Err == nil && !check.Violation {
+		if check.Err != nil {
+			log.WithError(check.Err).Warn("prompt injection safeguard unavailable; keeping fetched page")
+			filtered = append(filtered, pages[i])
+			continue
+		}
+		if !check.Violation {
 			filtered = append(filtered, pages[i])
 		}
 	}
@@ -1177,17 +1186,17 @@ func filterFetchResults(ctx context.Context, checker SafeguardChecker, results [
 
 	checks := safeguard.CheckItems(ctx, checker, safeguard.PromptInjectionPolicy, contents)
 	for i, check := range checks {
-		if check.Err == nil && !check.Violation {
+		if check.Err != nil {
+			log.WithError(check.Err).Warn("prompt injection safeguard unavailable; keeping fetched result")
+			continue
+		}
+		if !check.Violation {
 			continue
 		}
 
 		resultIndex := indexes[i]
 		filtered[resultIndex].Status = fetch.FetchStatusFailed
 		filtered[resultIndex].Content = ""
-		if check.Err != nil {
-			filtered[resultIndex].Error = "prompt injection check failed"
-			continue
-		}
 		filtered[resultIndex].Error = check.Rationale
 	}
 
