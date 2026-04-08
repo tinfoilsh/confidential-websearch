@@ -2,9 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -53,12 +55,32 @@ func jsonErrorResponse(w http.ResponseWriter, code int, body map[string]any) {
 	json.NewEncoder(w).Encode(body)
 }
 
-func parseRequestBody(r *http.Request, v any) error {
-	body, err := io.ReadAll(r.Body)
+func writeJSON(w http.ResponseWriter, v any) {
+	data, err := json.Marshal(v)
 	if err != nil {
-		return fmt.Errorf("failed to read request: %w", err)
+		jsonError(w, "failed to encode response", http.StatusInternalServerError)
+		return
 	}
-	if err := json.Unmarshal(body, v); err != nil {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.Write(data)
+}
+
+func sanitizeErrorMessage(err error) string {
+	var validationErr *pipeline.ValidationError
+	if errors.As(err, &validationErr) {
+		return validationErr.Error()
+	}
+	log.WithError(err).Error("streaming request failed")
+	return "internal server error"
+}
+
+func parseRequestBody(r *http.Request, v any) error {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(v); err != nil {
+		if err == io.EOF {
+			return fmt.Errorf("failed to read request: empty body")
+		}
 		return fmt.Errorf("failed to parse request: %w", err)
 	}
 	return nil
@@ -89,15 +111,19 @@ func convertUserLocation(location *UserLocation) *pipeline.UserLocation {
 	}
 }
 
-func extractResponsesWebSearchOptions(tools []ResponsesTool) (bool, pipeline.SearchContextSize, *pipeline.UserLocation) {
+func extractResponsesWebSearchOptions(tools []ResponsesTool) (bool, pipeline.SearchContextSize, *pipeline.UserLocation, []string) {
 	for _, tool := range tools {
 		if tool.Type != "web_search" {
 			continue
 		}
-		return true, pipeline.SearchContextSize(tool.SearchContextSize), convertUserLocation(tool.UserLocation)
+		var allowedDomains []string
+		if tool.Filters != nil {
+			allowedDomains = tool.Filters.AllowedDomains
+		}
+		return true, pipeline.SearchContextSize(tool.SearchContextSize), convertUserLocation(tool.UserLocation), allowedDomains
 	}
 
-	return false, "", nil
+	return false, "", nil, nil
 }
 
 func newResponseContinuationStore() *responseContinuationStore {
@@ -278,28 +304,33 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// Derive feature flags from options presence
 	webSearchEnabled := req.WebSearchOptions != nil
 	piiCheckEnabled := s.DefaultPIICheckEnabled || req.PIICheckOptions != nil
-	injectionCheckEnabled := s.DefaultInjectionCheckEnabled || req.InjectionCheckOptions != nil
+	fetchInjectionCheckEnabled := s.DefaultFetchInjectionCheckEnabled || req.InjectionCheckOptions != nil
 	var searchContextSize pipeline.SearchContextSize
 	var userLocation *pipeline.UserLocation
+	var allowedDomains []string
 	if req.WebSearchOptions != nil {
 		searchContextSize = pipeline.SearchContextSize(req.WebSearchOptions.SearchContextSize)
 		userLocation = convertUserLocation(req.WebSearchOptions.UserLocation)
+		if req.WebSearchOptions.Filters != nil {
+			allowedDomains = req.WebSearchOptions.Filters.AllowedDomains
+		}
 	}
-	log.Debugf("Request features: web_search=%v, pii_check=%v, injection_check=%v",
-		webSearchEnabled, piiCheckEnabled, injectionCheckEnabled)
+	log.Debugf("Request features: web_search=%v, pii_check=%v, fetch_injection_check=%v",
+		webSearchEnabled, piiCheckEnabled, fetchInjectionCheckEnabled)
 
 	pipelineReq := &pipeline.Request{
-		Model:                 req.Model,
-		Messages:              convertMessages(req.Messages),
-		Stream:                req.Stream,
-		Temperature:           req.Temperature,
-		MaxTokens:             req.MaxTokens,
-		Format:                pipeline.FormatChatCompletion,
-		WebSearchEnabled:      webSearchEnabled,
-		PIICheckEnabled:       piiCheckEnabled,
-		InjectionCheckEnabled: injectionCheckEnabled,
-		SearchContextSize:     searchContextSize,
-		UserLocation:          userLocation,
+		Model:                      req.Model,
+		Messages:                   convertMessages(req.Messages),
+		Stream:                     req.Stream,
+		Temperature:                req.Temperature,
+		MaxTokens:                  req.MaxTokens,
+		Format:                     pipeline.FormatChatCompletion,
+		WebSearchEnabled:           webSearchEnabled,
+		PIICheckEnabled:            piiCheckEnabled,
+		FetchInjectionCheckEnabled: fetchInjectionCheckEnabled,
+		SearchContextSize:          searchContextSize,
+		UserLocation:               userLocation,
+		AllowedDomains:             allowedDomains,
 	}
 
 	if req.Stream {
@@ -370,8 +401,7 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 		},
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	writeJSON(w, response)
 }
 
 func (s *Server) handleStreamingChatCompletion(w http.ResponseWriter, r *http.Request, req *pipeline.Request) {
@@ -459,23 +489,24 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Derive feature flags from tools array and options
-	webSearchEnabled, searchContextSize, userLocation := extractResponsesWebSearchOptions(req.Tools)
+	webSearchEnabled, searchContextSize, userLocation, allowedDomains := extractResponsesWebSearchOptions(req.Tools)
 	piiCheckEnabled := s.DefaultPIICheckEnabled || req.PIICheckOptions != nil
-	injectionCheckEnabled := s.DefaultInjectionCheckEnabled || req.InjectionCheckOptions != nil
-	log.Debugf("Responses request features: web_search=%v, pii_check=%v, injection_check=%v",
-		webSearchEnabled, piiCheckEnabled, injectionCheckEnabled)
+	fetchInjectionCheckEnabled := s.DefaultFetchInjectionCheckEnabled || req.InjectionCheckOptions != nil
+	log.Debugf("Responses request features: web_search=%v, pii_check=%v, fetch_injection_check=%v",
+		webSearchEnabled, piiCheckEnabled, fetchInjectionCheckEnabled)
 
 	pipelineReq := &pipeline.Request{
-		Model:                 req.Model,
-		Input:                 req.Input,
-		PreviousResponseID:    s.resolvePreviousResponseID(req.PreviousResponseID),
-		Stream:                req.Stream,
-		Format:                pipeline.FormatResponses,
-		WebSearchEnabled:      webSearchEnabled,
-		PIICheckEnabled:       piiCheckEnabled,
-		InjectionCheckEnabled: injectionCheckEnabled,
-		SearchContextSize:     searchContextSize,
-		UserLocation:          userLocation,
+		Model:                      req.Model,
+		Input:                      req.Input,
+		PreviousResponseID:         s.resolvePreviousResponseID(req.PreviousResponseID),
+		Stream:                     req.Stream,
+		Format:                     pipeline.FormatResponses,
+		WebSearchEnabled:           webSearchEnabled,
+		PIICheckEnabled:            piiCheckEnabled,
+		FetchInjectionCheckEnabled: fetchInjectionCheckEnabled,
+		SearchContextSize:          searchContextSize,
+		UserLocation:               userLocation,
+		AllowedDomains:             allowedDomains,
 	}
 
 	if req.Stream {
@@ -580,8 +611,7 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(responsesResp)
+	writeJSON(w, responsesResp)
 }
 
 func (s *Server) HandleHealth(w http.ResponseWriter, r *http.Request) {

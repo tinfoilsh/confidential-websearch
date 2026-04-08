@@ -56,7 +56,7 @@ const (
 type Server struct {
 	Runner                       engine.Runner
 	DefaultPIICheckEnabled       bool
-	DefaultInjectionCheckEnabled bool
+	DefaultFetchInjectionCheckEnabled bool
 
 	responseStoreOnce sync.Once
 	responseStore     *responseContinuationStore
@@ -75,8 +75,9 @@ type responseContinuationEntry struct {
 
 // WebSearchOptions enables the custom web search tool
 type WebSearchOptions struct {
-	SearchContextSize string        `json:"search_context_size,omitempty"` // "low", "medium", "high"
-	UserLocation      *UserLocation `json:"user_location,omitempty"`
+	SearchContextSize string            `json:"search_context_size,omitempty"` // "low", "medium", "high"
+	UserLocation      *UserLocation     `json:"user_location,omitempty"`
+	Filters           *WebSearchFilters `json:"filters,omitempty"`
 }
 
 // UserLocation provides location context for web search
@@ -189,11 +190,17 @@ type ResponsesContent struct {
 	SearchReasoning string           `json:"search_reasoning,omitempty"`
 }
 
+// WebSearchFilters restricts search results to specific domains (OpenAI-compatible)
+type WebSearchFilters struct {
+	AllowedDomains []string `json:"allowed_domains,omitempty"`
+}
+
 // ResponsesTool represents a tool in the Responses API request
 type ResponsesTool struct {
-	Type              string        `json:"type"` // "web_search"
-	SearchContextSize string        `json:"search_context_size,omitempty"`
-	UserLocation      *UserLocation `json:"user_location,omitempty"`
+	Type              string            `json:"type"` // "web_search"
+	SearchContextSize string            `json:"search_context_size,omitempty"`
+	UserLocation      *UserLocation     `json:"user_location,omitempty"`
+	Filters           *WebSearchFilters `json:"filters,omitempty"`
 }
 
 // ResponsesUsage represents token usage in the Responses API

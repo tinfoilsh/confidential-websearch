@@ -241,8 +241,8 @@ func TestSSEEmitter_EmitError(t *testing.T) {
 	if !strings.Contains(body, "error") {
 		t.Error("expected error key")
 	}
-	if !strings.Contains(body, "something went wrong") {
-		t.Error("expected error message")
+	if !strings.Contains(body, "internal server error") {
+		t.Error("expected sanitized error message")
 	}
 	if !strings.Contains(body, pipeline.ErrTypeServer) {
 		t.Error("expected server_error type")

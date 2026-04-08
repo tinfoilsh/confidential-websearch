@@ -163,13 +163,13 @@ func TestHandleChatCompletions_AppliesDefaultSafeguardFlags(t *testing.T) {
 				if !req.PIICheckEnabled {
 					t.Fatal("expected default pii check to be enabled")
 				}
-				if !req.InjectionCheckEnabled {
-					t.Fatal("expected default injection check to be enabled")
+				if !req.FetchInjectionCheckEnabled {
+					t.Fatal("expected default fetch injection check to be enabled")
 				}
 			},
 		},
-		DefaultPIICheckEnabled:       true,
-		DefaultInjectionCheckEnabled: true,
+		DefaultPIICheckEnabled:            true,
+		DefaultFetchInjectionCheckEnabled: true,
 	}
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{
 		"model":"gpt-oss-120b",
@@ -403,13 +403,13 @@ func TestHandleResponses_AppliesDefaultSafeguardFlags(t *testing.T) {
 				if !req.PIICheckEnabled {
 					t.Fatal("expected default pii check to be enabled")
 				}
-				if !req.InjectionCheckEnabled {
-					t.Fatal("expected default injection check to be enabled")
+				if !req.FetchInjectionCheckEnabled {
+					t.Fatal("expected default fetch injection check to be enabled")
 				}
 			},
 		},
-		DefaultPIICheckEnabled:       true,
-		DefaultInjectionCheckEnabled: true,
+		DefaultPIICheckEnabled:            true,
+		DefaultFetchInjectionCheckEnabled: true,
 	}
 	req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{
 		"model":"gpt-oss-120b",
