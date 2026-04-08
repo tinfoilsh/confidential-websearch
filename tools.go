@@ -26,7 +26,8 @@ type FetchArgs struct {
 }
 
 type FetchResult struct {
-	Pages []fetch.FetchedPage `json:"pages"`
+	Pages   []fetch.FetchedPage `json:"pages,omitempty"`
+	Results []fetch.URLResult   `json:"results"`
 }
 
 func newSearchHandler(service *engine.Service, cfg *config.Config) mcp.ToolHandlerFor[SearchArgs, SearchResult] {
@@ -57,11 +58,22 @@ func newFetchHandler(service *engine.Service, cfg *config.Config) mcp.ToolHandle
 			return nil, FetchResult{}, fmt.Errorf("at least one URL is required")
 		}
 
-		pages := service.Fetch(ctx, args.URLs, engine.ToolOptions{
+		results := service.FetchDetailed(ctx, args.URLs, engine.ToolOptions{
 			PIICheckEnabled:       false,
 			InjectionCheckEnabled: cfg.EnableInjectionCheck,
 		})
 
-		return nil, FetchResult{Pages: pages}, nil
+		pages := make([]fetch.FetchedPage, 0, len(results))
+		for _, result := range results {
+			if result.Status != fetch.FetchStatusCompleted || result.Content == "" {
+				continue
+			}
+			pages = append(pages, fetch.FetchedPage{
+				URL:     result.URL,
+				Content: result.Content,
+			})
+		}
+
+		return nil, FetchResult{Pages: pages, Results: results}, nil
 	}
 }
