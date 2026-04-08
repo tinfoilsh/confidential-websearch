@@ -476,37 +476,62 @@ func TestRun_CompactsFetchedToolOutputWithSummaryModel(t *testing.T) {
 	}
 }
 
-func TestSearch_FailsClosedWhenPIICheckErrors(t *testing.T) {
-	service := NewService(nil, nil, nil, &fakeSafeguard{
+func TestSearch_AllowsSearchWhenPIICheckErrors(t *testing.T) {
+	service := NewService(nil, &fakeSearcher{results: map[string][]search.Result{
+		"john@example.com": {{Title: "Example", URL: "https://example.com", Content: "allowed"}},
+	}}, nil, &fakeSafeguard{
 		errs: map[string]error{"john@example.com": fmt.Errorf("safeguard unavailable")},
 	})
 
-	_, err := service.Search(context.Background(), "john@example.com", ToolOptions{PIICheckEnabled: true})
-	if err == nil {
-		t.Fatal("expected PII safeguard failure to stop the search")
+	outcome, err := service.Search(context.Background(), "john@example.com", ToolOptions{PIICheckEnabled: true})
+	if err != nil {
+		t.Fatalf("expected search to remain fail-open, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "pii check failed") {
-		t.Fatalf("expected pii check failure, got %v", err)
+	if len(outcome.Results) != 1 {
+		t.Fatalf("expected search results to be preserved, got %d", len(outcome.Results))
 	}
 }
 
-func TestFilterSearchResults_DropsResultsWhenInjectionCheckErrors(t *testing.T) {
+func TestFilterSearchResults_KeepsResultsWhenInjectionCheckErrors(t *testing.T) {
 	results := filterSearchResults(context.Background(), &fakeSafeguard{
 		errs: map[string]error{"unsafe": fmt.Errorf("timeout")},
 	}, []search.Result{{Title: "Unsafe", URL: "https://example.com", Content: "unsafe"}})
 
-	if len(results) != 0 {
-		t.Fatalf("expected safeguard errors to drop the result, got %d results", len(results))
+	if len(results) != 1 {
+		t.Fatalf("expected safeguard errors to keep the result, got %d results", len(results))
 	}
 }
 
-func TestFilterFetchedPages_DropsPagesWhenInjectionCheckErrors(t *testing.T) {
+func TestFilterFetchedPages_KeepsPagesWhenInjectionCheckErrors(t *testing.T) {
 	pages := filterFetchedPages(context.Background(), &fakeSafeguard{
 		errs: map[string]error{"unsafe": fmt.Errorf("timeout")},
 	}, []fetch.FetchedPage{{URL: "https://example.com", Content: "unsafe"}})
 
-	if len(pages) != 0 {
-		t.Fatalf("expected safeguard errors to drop the page, got %d pages", len(pages))
+	if len(pages) != 1 {
+		t.Fatalf("expected safeguard errors to keep the page, got %d pages", len(pages))
+	}
+}
+
+func TestFilterFetchResults_KeepsResultsWhenInjectionCheckErrors(t *testing.T) {
+	results := filterFetchResults(context.Background(), &fakeSafeguard{
+		errs: map[string]error{"unsafe": fmt.Errorf("timeout")},
+	}, []fetch.URLResult{{
+		URL:     "https://example.com",
+		Status:  fetch.FetchStatusCompleted,
+		Content: "unsafe",
+	}})
+
+	if len(results) != 1 {
+		t.Fatalf("expected one fetch result, got %d", len(results))
+	}
+	if results[0].Status != fetch.FetchStatusCompleted {
+		t.Fatalf("expected fetch status to remain completed, got %q", results[0].Status)
+	}
+	if results[0].Content != "unsafe" {
+		t.Fatalf("expected fetch content to be preserved, got %q", results[0].Content)
+	}
+	if results[0].Error != "" {
+		t.Fatalf("expected no fetch error, got %q", results[0].Error)
 	}
 }
 
