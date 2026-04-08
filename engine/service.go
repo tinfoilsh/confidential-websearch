@@ -31,6 +31,7 @@ const (
 	chatCompletionObject               = "chat.completion"
 	chatCompletionChunkObject          = "chat.completion.chunk"
 	toolLoopMaxIterations              = 3
+	maxFetchURLs                       = 5
 	searchContextMaxResultsLow         = 5
 	searchContextMaxResultsHigh        = 12
 	searchContextCharsLow              = 800
@@ -153,7 +154,6 @@ type streamState struct {
 	responseID    string
 	messageID     string
 	text          strings.Builder
-	textDeltas    []string
 	reasoning     strings.Builder
 }
 
@@ -237,8 +237,8 @@ func (s *Service) Fetch(ctx context.Context, urls []string, opts ToolOptions) []
 	if len(urls) == 0 || s.fetcher == nil {
 		return nil
 	}
-	if len(urls) > 5 {
-		urls = urls[:5]
+	if len(urls) > maxFetchURLs {
+		urls = urls[:maxFetchURLs]
 	}
 
 	pages := s.fetcher.FetchURLs(ctx, urls)
@@ -253,8 +253,8 @@ func (s *Service) FetchDetailed(ctx context.Context, urls []string, opts ToolOpt
 	if len(urls) == 0 || s.fetcher == nil {
 		return nil
 	}
-	if len(urls) > 5 {
-		urls = urls[:5]
+	if len(urls) > maxFetchURLs {
+		urls = urls[:maxFetchURLs]
 	}
 
 	detailedFetcher, ok := s.fetcher.(DetailedURLFetcher)
@@ -1244,7 +1244,8 @@ func (s *Service) maybeCompactToolOutput(ctx context.Context, req *pipeline.Requ
 		return raw
 	}
 
-	maxChars := toolSummaryCharacterBudget(normalizeSearchContextSize(req.SearchContextSize), toolKind)
+	size := normalizeSearchContextSize(req.SearchContextSize)
+	maxChars := toolSummaryCharacterBudget(size, toolKind)
 	if len([]rune(raw)) <= maxChars {
 		return raw
 	}
@@ -1252,7 +1253,7 @@ func (s *Service) maybeCompactToolOutput(ctx context.Context, req *pipeline.Requ
 		return truncateForToolBudget(raw, maxChars)
 	}
 
-	summary, err := s.summarizeToolOutput(ctx, req, toolKind, raw, maxChars, toolSummaryTokenBudget(normalizeSearchContextSize(req.SearchContextSize)))
+	summary, err := s.summarizeToolOutput(ctx, req, toolKind, raw, maxChars, toolSummaryTokenBudget(size))
 	if err != nil {
 		return truncateForToolBudget(raw, maxChars)
 	}
@@ -1296,7 +1297,7 @@ func (s *Service) summarizeToolOutput(ctx context.Context, req *pipeline.Request
 }
 
 func toolSummaryCharacterBudget(size pipeline.SearchContextSize, toolKind string) int {
-	switch normalizeSearchContextSize(size) {
+	switch size {
 	case pipeline.SearchContextSizeLow:
 		if toolKind == "fetch" {
 			return fetchToolSummaryCharsLow
@@ -1316,7 +1317,7 @@ func toolSummaryCharacterBudget(size pipeline.SearchContextSize, toolKind string
 }
 
 func toolSummaryTokenBudget(size pipeline.SearchContextSize) int64 {
-	switch normalizeSearchContextSize(size) {
+	switch size {
 	case pipeline.SearchContextSizeLow:
 		return toolSummaryTokensLow
 	case pipeline.SearchContextSizeHigh:
@@ -1541,23 +1542,6 @@ func buildInstructions(req *pipeline.Request) string {
 	out.WriteString("\n\nCurrent date and time: ")
 	out.WriteString(time.Now().Format("Monday, January 2, 2006 at 3:04 PM MST"))
 	return out.String()
-}
-
-func emitBufferedMessage(emitter pipeline.EventEmitter, streamID string, created int64, model, messageID, text string, deltas []string, annotations []pipeline.Annotation, reasoning string) error {
-	if err := startLiveMessage(emitter, streamID, created, model, messageID, annotations, reasoning); err != nil {
-		return err
-	}
-	for _, delta := range deltas {
-		contentChunk, err := marshalChatContentChunk(streamID, created, model, delta)
-		if err != nil {
-			return err
-		}
-		if err := emitter.EmitChunk(contentChunk); err != nil {
-			return err
-		}
-	}
-
-	return finishLiveMessage(emitter, streamID, created, model, text, annotations)
 }
 
 func startLiveMessage(emitter pipeline.EventEmitter, streamID string, created int64, model, messageID string, annotations []pipeline.Annotation, reasoning string) error {
