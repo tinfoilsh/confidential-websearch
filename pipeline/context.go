@@ -90,14 +90,15 @@ type UserLocation struct {
 
 // Request is the unified internal request representation
 type Request struct {
-	Model       string
-	Messages    []Message
-	Input       string // For Responses API
-	Stream      bool
-	Temperature *float64
-	MaxTokens   *int64
-	Format      APIFormat
-	AuthHeader  string
+	Model              string
+	Messages           []Message
+	Input              json.RawMessage // For Responses API
+	PreviousResponseID string
+	Stream             bool
+	Temperature        *float64
+	MaxTokens          *int64
+	Format             APIFormat
+	AuthHeader         string
 
 	// Feature flags
 	WebSearchEnabled      bool

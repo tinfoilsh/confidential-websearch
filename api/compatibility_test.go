@@ -112,8 +112,8 @@ func TestHandleResponses_MapsFeatureFlagsToPipelineRequest(t *testing.T) {
 				if req.Format != pipeline.FormatResponses {
 					t.Fatalf("expected responses format, got %v", req.Format)
 				}
-				if req.Input != "hello" {
-					t.Fatalf("expected input to be preserved, got %q", req.Input)
+				if string(req.Input) != `"hello"` {
+					t.Fatalf("expected input to be preserved, got %s", string(req.Input))
 				}
 			},
 		},

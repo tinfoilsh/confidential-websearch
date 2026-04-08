@@ -578,6 +578,35 @@ func TestExecuteToolCalls_SerializesEmitterWrites(t *testing.T) {
 	}
 }
 
+func TestRun_ResponsesRequestSupportsStructuredInputAndClientPreviousResponseID(t *testing.T) {
+	client := &fakeResponsesClient{
+		responses: []*responses.Response{
+			mustResponse(t, `{"id":"resp_final","created_at":3,"model":"gpt-oss-120b","output":[{"id":"msg_final","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Done","annotations":[]}]}],"usage":{"input_tokens":2,"output_tokens":2,"total_tokens":4}}`),
+		},
+	}
+	service := NewService(client, nil, nil, nil)
+
+	result, err := service.Run(context.Background(), &pipeline.Request{
+		Model:              "gpt-oss-120b",
+		Format:             pipeline.FormatResponses,
+		Input:              json.RawMessage(`[{"role":"developer","content":"Be concise."},{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]`),
+		PreviousResponseID: "resp_prev_client",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.ID != "resp_final" {
+		t.Fatalf("expected final response id, got %q", result.ID)
+	}
+	if len(client.params) != 1 {
+		t.Fatalf("expected 1 model call, got %d", len(client.params))
+	}
+	assertContainsJSON(t, client.params[0], `"previous_response_id":"resp_prev_client"`)
+	assertContainsJSON(t, client.params[0], `"role":"developer"`)
+	assertContainsJSON(t, client.params[0], `"text":"hello"`)
+}
+
 func chatRequest() *pipeline.Request {
 	return &pipeline.Request{
 		Model:            "gpt-oss-120b",

@@ -64,7 +64,9 @@ func main() {
 	)
 
 	apiServer := &api.Server{
-		Runner: service,
+		Runner:                       service,
+		DefaultPIICheckEnabled:       cfg.EnablePIICheck,
+		DefaultInjectionCheckEnabled: cfg.EnableInjectionCheck,
 	}
 
 	server := mcp.NewServer(&mcp.Implementation{

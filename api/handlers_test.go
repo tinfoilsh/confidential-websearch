@@ -136,6 +136,54 @@ func TestHandleChatCompletions_InvalidSearchContextSize(t *testing.T) {
 	}
 }
 
+func TestHandleChatCompletions_StreamingValidationReturnsHTTPError(t *testing.T) {
+	srv := &Server{Runner: engine.NewService(nil, nil, nil, nil)}
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{
+		"model":"gpt-oss-120b",
+		"messages":[],
+		"stream":true
+	}`))
+	w := httptest.NewRecorder()
+
+	srv.HandleChatCompletions(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+	if contentType := w.Header().Get("Content-Type"); contentType != "application/json" {
+		t.Fatalf("expected json error response, got %q", contentType)
+	}
+}
+
+func TestHandleChatCompletions_AppliesDefaultSafeguardFlags(t *testing.T) {
+	srv := &Server{
+		Runner: &captureRunner{
+			t: t,
+			check: func(req *pipeline.Request) {
+				if !req.PIICheckEnabled {
+					t.Fatal("expected default pii check to be enabled")
+				}
+				if !req.InjectionCheckEnabled {
+					t.Fatal("expected default injection check to be enabled")
+				}
+			},
+		},
+		DefaultPIICheckEnabled:       true,
+		DefaultInjectionCheckEnabled: true,
+	}
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{
+		"model":"gpt-oss-120b",
+		"messages":[{"role":"user","content":"hello"}]
+	}`))
+	w := httptest.NewRecorder()
+
+	srv.HandleChatCompletions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
 func TestHandleChatCompletions_NonStreaming_Success(t *testing.T) {
 	mockRunner := &MockRunner{
 		RunFunc: func(ctx context.Context, req *pipeline.Request) (*engine.Result, error) {
@@ -326,6 +374,137 @@ func TestHandleResponses_InvalidSearchContextSize(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandleResponses_StreamingValidationReturnsHTTPError(t *testing.T) {
+	srv := &Server{Runner: engine.NewService(nil, nil, nil, nil)}
+	req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{
+		"model":"gpt-oss-120b",
+		"stream":true
+	}`))
+	w := httptest.NewRecorder()
+
+	srv.HandleResponses(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+	if contentType := w.Header().Get("Content-Type"); contentType != "application/json" {
+		t.Fatalf("expected json error response, got %q", contentType)
+	}
+}
+
+func TestHandleResponses_AppliesDefaultSafeguardFlags(t *testing.T) {
+	srv := &Server{
+		Runner: &captureRunner{
+			t: t,
+			check: func(req *pipeline.Request) {
+				if !req.PIICheckEnabled {
+					t.Fatal("expected default pii check to be enabled")
+				}
+				if !req.InjectionCheckEnabled {
+					t.Fatal("expected default injection check to be enabled")
+				}
+			},
+		},
+		DefaultPIICheckEnabled:       true,
+		DefaultInjectionCheckEnabled: true,
+	}
+	req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{
+		"model":"gpt-oss-120b",
+		"input":"hello"
+	}`))
+	w := httptest.NewRecorder()
+
+	srv.HandleResponses(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestHandleResponses_ResolvesPreviousResponseID(t *testing.T) {
+	store := newResponseContinuationStore()
+	store.Put("resp_public", "resp_upstream")
+
+	srv := &Server{
+		Runner: &captureRunner{
+			t: t,
+			check: func(req *pipeline.Request) {
+				if req.PreviousResponseID != "resp_upstream" {
+					t.Fatalf("expected resolved previous response id, got %q", req.PreviousResponseID)
+				}
+			},
+		},
+		responseStore: store,
+	}
+	req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{
+		"model":"gpt-oss-120b",
+		"input":"hello",
+		"previous_response_id":"resp_public"
+	}`))
+	w := httptest.NewRecorder()
+
+	srv.HandleResponses(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestHandleResponses_StreamingIDsRemainReusable(t *testing.T) {
+	streamRunner := &MockRunner{
+		StreamFunc: func(ctx context.Context, req *pipeline.Request, emitter pipeline.EventEmitter) (*engine.Result, error) {
+			return &engine.Result{ID: "resp_upstream_final"}, nil
+		},
+	}
+	srv := &Server{Runner: streamRunner}
+	streamReq := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{
+		"model":"gpt-oss-120b",
+		"input":"hello",
+		"stream":true
+	}`))
+	streamResp := httptest.NewRecorder()
+
+	srv.HandleResponses(streamResp, streamReq)
+
+	if streamResp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", streamResp.Code)
+	}
+
+	events := decodeSSEDataLines(t, streamResp.Body.String())
+	if len(events) == 0 {
+		t.Fatal("expected streaming events")
+	}
+	response, ok := events[0]["response"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected response object, got %+v", events[0])
+	}
+	publicID, ok := response["id"].(string)
+	if !ok || publicID == "" {
+		t.Fatalf("expected public response id, got %+v", response["id"])
+	}
+
+	srv.Runner = &captureRunner{
+		t: t,
+		check: func(req *pipeline.Request) {
+			if req.PreviousResponseID != "resp_upstream_final" {
+				t.Fatalf("expected mapped upstream id, got %q", req.PreviousResponseID)
+			}
+		},
+	}
+	followupReq := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{
+		"model":"gpt-oss-120b",
+		"input":"follow up",
+		"previous_response_id":"`+publicID+`"
+	}`))
+	followupResp := httptest.NewRecorder()
+
+	srv.HandleResponses(followupResp, followupReq)
+
+	if followupResp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", followupResp.Code)
 	}
 }
 
