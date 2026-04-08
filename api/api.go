@@ -155,7 +155,10 @@ func (s *responseContinuationStore) Get(publicID string) (string, bool) {
 	now := time.Now()
 	if now.After(entry.expiresAt) {
 		s.mu.Lock()
-		delete(s.entries, publicID)
+		entry, ok = s.entries[publicID]
+		if ok && now.After(entry.expiresAt) {
+			delete(s.entries, publicID)
+		}
 		s.mu.Unlock()
 		return "", false
 	}
