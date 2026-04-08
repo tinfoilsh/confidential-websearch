@@ -76,6 +76,10 @@ type URLFetcher interface {
 	FetchURLs(ctx context.Context, urls []string) []fetch.FetchedPage
 }
 
+type DetailedURLFetcher interface {
+	FetchURLResults(ctx context.Context, urls []string) []fetch.URLResult
+}
+
 type SafeguardChecker interface {
 	Check(ctx context.Context, policy, content string) (*safeguard.CheckResult, error)
 }
@@ -243,6 +247,53 @@ func (s *Service) Fetch(ctx context.Context, urls []string, opts ToolOptions) []
 	}
 
 	return pages
+}
+
+func (s *Service) FetchDetailed(ctx context.Context, urls []string, opts ToolOptions) []fetch.URLResult {
+	if len(urls) == 0 || s.fetcher == nil {
+		return nil
+	}
+	if len(urls) > 5 {
+		urls = urls[:5]
+	}
+
+	detailedFetcher, ok := s.fetcher.(DetailedURLFetcher)
+	if !ok {
+		pages := s.Fetch(ctx, urls, opts)
+		pagesByURL := make(map[string][]fetch.FetchedPage, len(pages))
+		for _, page := range pages {
+			pagesByURL[page.URL] = append(pagesByURL[page.URL], page)
+		}
+
+		results := make([]fetch.URLResult, 0, len(urls))
+		for _, rawURL := range urls {
+			queue := pagesByURL[rawURL]
+			if len(queue) == 0 {
+				results = append(results, fetch.URLResult{
+					URL:    rawURL,
+					Status: fetch.FetchStatusFailed,
+					Error:  "fetch failed",
+				})
+				continue
+			}
+
+			page := queue[0]
+			pagesByURL[rawURL] = queue[1:]
+			results = append(results, fetch.URLResult{
+				URL:     rawURL,
+				Status:  fetch.FetchStatusCompleted,
+				Content: page.Content,
+			})
+		}
+		return results
+	}
+
+	results := detailedFetcher.FetchURLResults(ctx, urls)
+	if opts.InjectionCheckEnabled && len(results) > 0 && s.safeguard != nil {
+		results = filterFetchResults(ctx, s.safeguard, results)
+	}
+
+	return results
 }
 
 func searchOptionsForTool(opts ToolOptions) search.Options {
@@ -994,6 +1045,42 @@ func filterFetchedPages(ctx context.Context, checker SafeguardChecker, pages []f
 			filtered = append(filtered, pages[i])
 		}
 	}
+	return filtered
+}
+
+func filterFetchResults(ctx context.Context, checker SafeguardChecker, results []fetch.URLResult) []fetch.URLResult {
+	indexes := make([]int, 0, len(results))
+	contents := make([]string, 0, len(results))
+	filtered := make([]fetch.URLResult, len(results))
+	copy(filtered, results)
+
+	for i, result := range results {
+		if result.Status != fetch.FetchStatusCompleted || result.Content == "" {
+			continue
+		}
+		indexes = append(indexes, i)
+		contents = append(contents, result.Content)
+	}
+	if len(contents) == 0 {
+		return filtered
+	}
+
+	checks := safeguard.CheckItems(ctx, checker, safeguard.PromptInjectionPolicy, contents)
+	for i, check := range checks {
+		if check.Err == nil && !check.Violation {
+			continue
+		}
+
+		resultIndex := indexes[i]
+		filtered[resultIndex].Status = fetch.FetchStatusFailed
+		filtered[resultIndex].Content = ""
+		if check.Err != nil {
+			filtered[resultIndex].Error = "prompt injection check failed"
+			continue
+		}
+		filtered[resultIndex].Error = check.Rationale
+	}
+
 	return filtered
 }
 

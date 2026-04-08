@@ -67,6 +67,18 @@ type FetchedPage struct {
 	Content string
 }
 
+const (
+	FetchStatusCompleted = "completed"
+	FetchStatusFailed    = "failed"
+)
+
+type URLResult struct {
+	URL     string `json:"url"`
+	Status  string `json:"status"`
+	Content string `json:"content,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
 // Fetcher fetches URL contents via Cloudflare Browser Rendering API
 type Fetcher struct {
 	client   *http.Client
@@ -260,50 +272,70 @@ type cfError struct {
 
 // FetchURLs fetches the contents of the given URLs in parallel
 func (f *Fetcher) FetchURLs(ctx context.Context, urls []string) []FetchedPage {
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var pages []FetchedPage
-	sem := make(chan struct{}, maxConcurrentURLs)
+	results := f.FetchURLResults(ctx, urls)
+	pages := make([]FetchedPage, 0, len(results))
+	for _, result := range results {
+		if result.Status != FetchStatusCompleted || result.Content == "" {
+			continue
+		}
+		pages = append(pages, FetchedPage{
+			URL:     result.URL,
+			Content: result.Content,
+		})
+	}
+	return pages
+}
 
-	for _, u := range urls {
+func (f *Fetcher) FetchURLResults(ctx context.Context, urls []string) []URLResult {
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxConcurrentURLs)
+	results := make([]URLResult, len(urls))
+
+	for i, u := range urls {
+		results[i] = URLResult{
+			URL:    u,
+			Status: FetchStatusFailed,
+		}
+
 		// Respect context cancellation while waiting for a semaphore slot
 		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():
 		}
 		if ctx.Err() != nil {
+			results[i].Error = ctx.Err().Error()
 			break
 		}
 		wg.Add(1)
-		go func(rawURL string) {
+		go func(index int, rawURL string) {
 			defer wg.Done()
 			defer func() { <-sem }()
 
 			if err := validateTargetURL(ctx, rawURL); err != nil {
 				log.Debugf("Rejected fetch URL %s: %v", rawURL, err)
+				results[index].Error = err.Error()
 				return
 			}
 
 			content, err := f.fetchURL(ctx, rawURL)
 			if err != nil {
 				log.Debugf("Failed to fetch %s: %v", rawURL, err)
+				results[index].Error = err.Error()
 				return
 			}
 			if content == "" {
+				results[index].Error = "empty content returned"
 				return
 			}
 
-			mu.Lock()
-			pages = append(pages, FetchedPage{
-				URL:     rawURL,
-				Content: content,
-			})
-			mu.Unlock()
-		}(u)
+			results[index].Status = FetchStatusCompleted
+			results[index].Content = content
+			results[index].Error = ""
+		}(i, u)
 	}
 
 	wg.Wait()
-	return pages
+	return results
 }
 
 // fetchURL fetches a single URL via Cloudflare Browser Rendering and returns markdown

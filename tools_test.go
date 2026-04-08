@@ -31,7 +31,8 @@ func (m *mockSearchProvider) Search(ctx context.Context, query string, opts sear
 func (m *mockSearchProvider) Name() string { return "mock" }
 
 type mockFetcher struct {
-	pages []fetch.FetchedPage
+	pages   []fetch.FetchedPage
+	results []fetch.URLResult
 }
 
 func (m *mockFetcher) FetchURLs(ctx context.Context, urls []string) []fetch.FetchedPage {
@@ -43,6 +44,22 @@ func (m *mockFetcher) FetchURLs(ctx context.Context, urls []string) []fetch.Fetc
 		result = append(result, fetch.FetchedPage{URL: u, Content: "# Content from " + u})
 	}
 	return result
+}
+
+func (m *mockFetcher) FetchURLResults(ctx context.Context, urls []string) []fetch.URLResult {
+	if m.results != nil {
+		return m.results
+	}
+
+	results := make([]fetch.URLResult, 0, len(urls))
+	for _, u := range urls {
+		results = append(results, fetch.URLResult{
+			URL:     u,
+			Status:  fetch.FetchStatusCompleted,
+			Content: "# Content from " + u,
+		})
+	}
+	return results
 }
 
 func TestSearchHandler_Success(t *testing.T) {
@@ -166,6 +183,36 @@ func TestFetchHandler_URLsCapped(t *testing.T) {
 	_, result, _ := handler(context.Background(), &mcp.CallToolRequest{}, FetchArgs{URLs: urls})
 	// With a real fetcher hitting test-account, we get empty results but no panic
 	_ = result
+}
+
+func TestFetchHandler_PreservesPerURLResultsInOrder(t *testing.T) {
+	service := engine.NewService(nil, nil, &mockFetcher{
+		results: []fetch.URLResult{
+			{URL: "https://example.com/a", Status: fetch.FetchStatusCompleted, Content: "# A"},
+			{URL: "https://example.com/b", Status: fetch.FetchStatusFailed, Error: "blocked"},
+			{URL: "https://example.com/c", Status: fetch.FetchStatusCompleted, Content: "# C"},
+		},
+	}, nil)
+	handler := newFetchHandler(service, &config.Config{})
+
+	_, result, err := handler(context.Background(), &mcp.CallToolRequest{}, FetchArgs{
+		URLs: []string{"https://example.com/a", "https://example.com/b", "https://example.com/c"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Results) != 3 {
+		t.Fatalf("expected 3 per-url results, got %d", len(result.Results))
+	}
+	if result.Results[1].URL != "https://example.com/b" || result.Results[1].Status != fetch.FetchStatusFailed {
+		t.Fatalf("expected second result to preserve failed URL ordering, got %+v", result.Results[1])
+	}
+	if len(result.Pages) != 2 {
+		t.Fatalf("expected successful pages to remain available, got %d", len(result.Pages))
+	}
+	if result.Pages[0].URL != "https://example.com/a" || result.Pages[1].URL != "https://example.com/c" {
+		t.Fatalf("expected successful pages to preserve order, got %+v", result.Pages)
+	}
 }
 
 func TestMCPServer_ToolDiscovery(t *testing.T) {
