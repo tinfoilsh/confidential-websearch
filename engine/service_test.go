@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -58,9 +59,13 @@ func (s *fakeStream) Err() error { return nil }
 
 type fakeSearcher struct {
 	results map[string][]search.Result
+	err     error
 }
 
 func (s *fakeSearcher) Search(ctx context.Context, query string, opts search.Options) ([]search.Result, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
 	return s.results[query], nil
 }
 
@@ -82,9 +87,13 @@ func (f *fakeFetcher) FetchURLs(ctx context.Context, urls []string) []fetch.Fetc
 
 type fakeSafeguard struct {
 	blocked map[string]string
+	errs    map[string]error
 }
 
 func (f *fakeSafeguard) Check(ctx context.Context, policy, content string) (*safeguard.CheckResult, error) {
+	if err, ok := f.errs[content]; ok {
+		return nil, err
+	}
 	if reason, ok := f.blocked[content]; ok {
 		return &safeguard.CheckResult{Violation: true, Rationale: reason}, nil
 	}
@@ -160,6 +169,107 @@ func (e *serializingEmitter) EmitMessageStart(itemID string) error { return nil 
 func (e *serializingEmitter) EmitMessageEnd(text string, annotations []pipeline.Annotation) error {
 	return nil
 }
+
+type recordingEmitter struct {
+	searchCalls []struct {
+		status string
+		reason string
+	}
+}
+
+func (e *recordingEmitter) EmitSearchCall(id, status, query, reason string, created int64, model string) error {
+	e.searchCalls = append(e.searchCalls, struct {
+		status string
+		reason string
+	}{status: status, reason: reason})
+	return nil
+}
+func (e *recordingEmitter) EmitFetchCall(id, status, url string, created int64, model string) error {
+	return nil
+}
+func (e *recordingEmitter) EmitMetadata(id string, created int64, model string, annotations []pipeline.Annotation, reasoning string) error {
+	return nil
+}
+func (e *recordingEmitter) EmitChunk(data []byte) error          { return nil }
+func (e *recordingEmitter) EmitError(err error) error            { return nil }
+func (e *recordingEmitter) EmitDone() error                      { return nil }
+func (e *recordingEmitter) EmitResponseStart() error             { return nil }
+func (e *recordingEmitter) EmitMessageStart(itemID string) error { return nil }
+func (e *recordingEmitter) EmitMessageEnd(text string, annotations []pipeline.Annotation) error {
+	return nil
+}
+
+type signalingEmitter struct {
+	contentEmitted chan struct{}
+}
+
+func (e *signalingEmitter) EmitSearchCall(id, status, query, reason string, created int64, model string) error {
+	return nil
+}
+func (e *signalingEmitter) EmitFetchCall(id, status, url string, created int64, model string) error {
+	return nil
+}
+func (e *signalingEmitter) EmitMetadata(id string, created int64, model string, annotations []pipeline.Annotation, reasoning string) error {
+	return nil
+}
+func (e *signalingEmitter) EmitChunk(data []byte) error {
+	var chunk struct {
+		Choices []struct {
+			Delta struct {
+				Content string `json:"content"`
+			} `json:"delta"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(data, &chunk); err != nil {
+		return nil
+	}
+	if len(chunk.Choices) == 0 || chunk.Choices[0].Delta.Content == "" {
+		return nil
+	}
+
+	select {
+	case e.contentEmitted <- struct{}{}:
+	default:
+	}
+	return nil
+}
+func (e *signalingEmitter) EmitError(err error) error            { return nil }
+func (e *signalingEmitter) EmitDone() error                      { return nil }
+func (e *signalingEmitter) EmitResponseStart() error             { return nil }
+func (e *signalingEmitter) EmitMessageStart(itemID string) error { return nil }
+func (e *signalingEmitter) EmitMessageEnd(text string, annotations []pipeline.Annotation) error {
+	return nil
+}
+
+type waitingStream struct {
+	events          []responses.ResponseStreamEventUnion
+	index           int
+	err             error
+	contentEmitted  <-chan struct{}
+	waitForEmitType string
+}
+
+func (s *waitingStream) Next() bool {
+	if s.index > 0 && s.events[s.index-1].Type == s.waitForEmitType {
+		select {
+		case <-s.contentEmitted:
+		case <-time.After(100 * time.Millisecond):
+			s.err = fmt.Errorf("content was not emitted before advancing the stream")
+			return false
+		}
+	}
+	if s.index >= len(s.events) {
+		return false
+	}
+	s.index++
+	return true
+}
+
+func (s *waitingStream) Current() responses.ResponseStreamEventUnion {
+	return s.events[s.index-1]
+}
+
+func (s *waitingStream) Err() error { return s.err }
 
 func TestRun_MultiStepUsesPreviousResponseIDAndTracksSources(t *testing.T) {
 	client := &fakeResponsesClient{
@@ -296,6 +406,41 @@ func TestStream_UsesPreviousResponseIDAndEmitsMatchingAnnotations(t *testing.T) 
 	}
 }
 
+func TestStream_EmitsContentBeforeAdvancingFinalAnswerStream(t *testing.T) {
+	contentEmitted := make(chan struct{}, 1)
+	client := &fakeResponsesClient{
+		streams: []ResponseStream{
+			&fakeStream{events: []responses.ResponseStreamEventUnion{
+				mustEvent(t, `{"type":"response.created","sequence_number":1,"response":{"id":"resp_stream_1","created_at":1,"model":"gpt-oss-120b","object":"response","output":[],"parallel_tool_calls":false,"temperature":0}}`),
+				mustEvent(t, `{"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_search","name":"search","arguments":""}}`),
+				mustEvent(t, `{"type":"response.function_call_arguments.done","sequence_number":3,"output_index":0,"item_id":"fc_1","name":"search","arguments":"{\"query\":\"golang\"}"}`),
+			}},
+			&waitingStream{
+				waitForEmitType: "response.output_text.delta",
+				contentEmitted:  contentEmitted,
+				events: []responses.ResponseStreamEventUnion{
+					mustEvent(t, `{"type":"response.created","sequence_number":1,"response":{"id":"resp_stream_2","created_at":2,"model":"gpt-oss-120b","object":"response","output":[],"parallel_tool_calls":false,"temperature":0}}`),
+					mustEvent(t, `{"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[]}}`),
+					mustEvent(t, `{"type":"response.output_text.delta","sequence_number":3,"output_index":0,"content_index":0,"item_id":"msg_1","delta":"Go answer","logprobs":[]}`),
+					mustEvent(t, `{"type":"response.output_text.delta","sequence_number":4,"output_index":0,"content_index":0,"item_id":"msg_1","delta":"【1】","logprobs":[]}`),
+				},
+			},
+		},
+	}
+	service := NewService(
+		client,
+		&fakeSearcher{results: map[string][]search.Result{
+			"golang": {{Title: "Go", URL: "https://go.dev", Content: "Go info"}},
+		}},
+		nil,
+		nil,
+	)
+
+	if _, err := service.Stream(context.Background(), chatRequest(), &signalingEmitter{contentEmitted: contentEmitted}); err != nil {
+		t.Fatalf("expected content to stream before the upstream stream advanced: %v", err)
+	}
+}
+
 func TestRun_CompactsFetchedToolOutputWithSummaryModel(t *testing.T) {
 	longPage := strings.Repeat("Long fetched content. ", 400)
 	client := &fakeResponsesClient{
@@ -328,6 +473,80 @@ func TestRun_CompactsFetchedToolOutputWithSummaryModel(t *testing.T) {
 	assertNotContainsJSON(t, client.params[2], longPage)
 	if result.Content != "Docs say key facts【1】" {
 		t.Fatalf("unexpected final content: %q", result.Content)
+	}
+}
+
+func TestSearch_FailsClosedWhenPIICheckErrors(t *testing.T) {
+	service := NewService(nil, nil, nil, &fakeSafeguard{
+		errs: map[string]error{"john@example.com": fmt.Errorf("safeguard unavailable")},
+	})
+
+	_, err := service.Search(context.Background(), "john@example.com", ToolOptions{PIICheckEnabled: true})
+	if err == nil {
+		t.Fatal("expected PII safeguard failure to stop the search")
+	}
+	if !strings.Contains(err.Error(), "pii check failed") {
+		t.Fatalf("expected pii check failure, got %v", err)
+	}
+}
+
+func TestFilterSearchResults_DropsResultsWhenInjectionCheckErrors(t *testing.T) {
+	results := filterSearchResults(context.Background(), &fakeSafeguard{
+		errs: map[string]error{"unsafe": fmt.Errorf("timeout")},
+	}, []search.Result{{Title: "Unsafe", URL: "https://example.com", Content: "unsafe"}})
+
+	if len(results) != 0 {
+		t.Fatalf("expected safeguard errors to drop the result, got %d results", len(results))
+	}
+}
+
+func TestFilterFetchedPages_DropsPagesWhenInjectionCheckErrors(t *testing.T) {
+	pages := filterFetchedPages(context.Background(), &fakeSafeguard{
+		errs: map[string]error{"unsafe": fmt.Errorf("timeout")},
+	}, []fetch.FetchedPage{{URL: "https://example.com", Content: "unsafe"}})
+
+	if len(pages) != 0 {
+		t.Fatalf("expected safeguard errors to drop the page, got %d pages", len(pages))
+	}
+}
+
+func TestExecuteToolCalls_ReportsSearchFailureReason(t *testing.T) {
+	service := NewService(nil, &fakeSearcher{err: fmt.Errorf("search backend unavailable")}, nil, nil)
+	emitter := &recordingEmitter{}
+	req := chatRequest()
+	calls := map[int]*functionCall{
+		0: {index: 0, id: "call_search", name: "search", arguments: strings.Builder{}},
+	}
+	calls[0].arguments.WriteString(`{"query":"golang"}`)
+
+	_, _ = service.executeToolCalls(context.Background(), req, calls, emitter)
+
+	if len(emitter.searchCalls) < 2 {
+		t.Fatalf("expected in_progress and failed events, got %d", len(emitter.searchCalls))
+	}
+	lastCall := emitter.searchCalls[len(emitter.searchCalls)-1]
+	if lastCall.status != "failed" {
+		t.Fatalf("expected final search status failed, got %q", lastCall.status)
+	}
+	if lastCall.reason != "search backend unavailable" {
+		t.Fatalf("expected failure reason to be propagated, got %q", lastCall.reason)
+	}
+}
+
+func TestBuildAnnotationsFromContent_UsesRuneIndexes(t *testing.T) {
+	annotations := buildAnnotationsFromContent("éclair【1】", []CitationSource{{
+		Title: "Example",
+		URL:   "https://example.com",
+	}})
+
+	if len(annotations) != 1 {
+		t.Fatalf("expected one annotation, got %d", len(annotations))
+	}
+	if annotations[0].URLCitation.StartIndex != 6 {
+		t.Fatalf("expected rune start index 6, got %d", annotations[0].URLCitation.StartIndex)
+	}
+	if annotations[0].URLCitation.EndIndex != 9 {
+		t.Fatalf("expected rune end index 9, got %d", annotations[0].URLCitation.EndIndex)
 	}
 }
 

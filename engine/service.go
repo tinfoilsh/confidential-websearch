@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	openai "github.com/openai/openai-go/v3"
@@ -197,7 +198,10 @@ func (s *Service) Search(ctx context.Context, query string, opts ToolOptions) (S
 
 	if opts.PIICheckEnabled && s.safeguard != nil {
 		check, err := s.safeguard.Check(ctx, safeguard.PIILeakagePolicy, query)
-		if err == nil && check.Violation {
+		if err != nil {
+			return SearchOutcome{}, fmt.Errorf("pii check failed: %w", err)
+		}
+		if check.Violation {
 			return SearchOutcome{BlockedReason: check.Rationale}, nil
 		}
 	}
@@ -359,6 +363,7 @@ func (s *Service) Stream(ctx context.Context, req *pipeline.Request, emitter pip
 func (s *Service) streamIteration(ctx context.Context, req *pipeline.Request, state *executionState, emitter pipeline.EventEmitter, streamID string, created int64, allowTools bool, input []responses.ResponseInputItemUnionParam) (*Result, []responses.ResponseInputItemUnionParam, error) {
 	stream := s.responses.NewStreaming(ctx, s.buildParams(req, input, allowTools, state.previousID))
 	parser := &streamState{functionCalls: make(map[int]*functionCall)}
+	messageStarted := false
 
 	for stream.Next() {
 		event := stream.Current()
@@ -398,8 +403,20 @@ func (s *Service) streamIteration(ctx context.Context, req *pipeline.Request, st
 		case "response.reasoning_text.delta":
 			parser.reasoning.WriteString(event.Delta)
 		case "response.output_text.delta":
+			if !messageStarted {
+				if err := startLiveMessage(emitter, streamID, created, req.Model, parser.messageID, streamingAnnotationsFromSources(state.sources), state.reasoning.String()+parser.reasoning.String()); err != nil {
+					return nil, nil, err
+				}
+				messageStarted = true
+			}
 			parser.text.WriteString(event.Delta)
-			parser.textDeltas = append(parser.textDeltas, event.Delta)
+			contentChunk, err := marshalChatContentChunk(streamID, created, req.Model, event.Delta)
+			if err != nil {
+				return nil, nil, err
+			}
+			if err := emitter.EmitChunk(contentChunk); err != nil {
+				return nil, nil, err
+			}
 		}
 	}
 
@@ -419,7 +436,12 @@ func (s *Service) streamIteration(ctx context.Context, req *pipeline.Request, st
 		}
 
 		result := state.finalResult(req, streamID, objectFor(req.Format), created, req.Model, parser.text.String(), openai.CompletionUsage{})
-		if err := emitBufferedMessage(emitter, streamID, created, req.Model, parser.messageID, parser.text.String(), parser.textDeltas, result.Annotations, state.reasoning.String()); err != nil {
+		if !messageStarted {
+			if err := startLiveMessage(emitter, streamID, created, req.Model, parser.messageID, streamingAnnotationsFromSources(state.sources), state.reasoning.String()); err != nil {
+				return nil, nil, err
+			}
+		}
+		if err := finishLiveMessage(emitter, streamID, created, req.Model, parser.text.String(), result.Annotations); err != nil {
 			return nil, nil, err
 		}
 		return result, nil, nil
@@ -435,7 +457,7 @@ func (s *Service) streamFinalAnswer(ctx context.Context, req *pipeline.Request, 
 	stream := s.responses.NewStreaming(ctx, s.buildParams(req, input, false, state.previousID))
 	messageID := "msg_" + uuid.New().String()[:8]
 	var text strings.Builder
-	var deltas []string
+	messageStarted := false
 
 	for stream.Next() {
 		event := stream.Current()
@@ -452,8 +474,20 @@ func (s *Service) streamFinalAnswer(ctx context.Context, req *pipeline.Request, 
 		case "response.reasoning_text.delta":
 			state.reasoning.WriteString(event.Delta)
 		case "response.output_text.delta":
+			if !messageStarted {
+				if err := startLiveMessage(emitter, streamID, created, req.Model, messageID, streamingAnnotationsFromSources(state.sources), state.reasoning.String()); err != nil {
+					return nil, err
+				}
+				messageStarted = true
+			}
 			text.WriteString(event.Delta)
-			deltas = append(deltas, event.Delta)
+			contentChunk, err := marshalChatContentChunk(streamID, created, req.Model, event.Delta)
+			if err != nil {
+				return nil, err
+			}
+			if err := emitter.EmitChunk(contentChunk); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -465,7 +499,12 @@ func (s *Service) streamFinalAnswer(ctx context.Context, req *pipeline.Request, 
 	}
 
 	result := state.finalResult(req, streamID, objectFor(req.Format), created, req.Model, text.String(), openai.CompletionUsage{})
-	if err := emitBufferedMessage(emitter, streamID, created, req.Model, messageID, text.String(), deltas, result.Annotations, state.reasoning.String()); err != nil {
+	if !messageStarted {
+		if err := startLiveMessage(emitter, streamID, created, req.Model, messageID, streamingAnnotationsFromSources(state.sources), state.reasoning.String()); err != nil {
+			return nil, err
+		}
+	}
+	if err := finishLiveMessage(emitter, streamID, created, req.Model, text.String(), result.Annotations); err != nil {
 		return nil, err
 	}
 
@@ -506,7 +545,7 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 					exec.err = fmt.Errorf("query is required")
 					if emitter != nil {
 						emitterMu.Lock()
-						_ = emitter.EmitSearchCall(call.id, "failed", "", "", 0, req.Model)
+						_ = emitter.EmitSearchCall(call.id, "failed", "", exec.err.Error(), 0, req.Model)
 						emitterMu.Unlock()
 					}
 					break
@@ -526,7 +565,7 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 					case outcome.BlockedReason != "":
 						_ = emitter.EmitSearchCall(call.id, "blocked", query, outcome.BlockedReason, 0, req.Model)
 					case err != nil:
-						_ = emitter.EmitSearchCall(call.id, "failed", query, "", 0, req.Model)
+						_ = emitter.EmitSearchCall(call.id, "failed", query, err.Error(), 0, req.Model)
 					default:
 						_ = emitter.EmitSearchCall(call.id, "completed", query, "", 0, req.Model)
 					}
@@ -935,7 +974,7 @@ func filterSearchResults(ctx context.Context, checker SafeguardChecker, results 
 	checks := safeguard.CheckItems(ctx, checker, safeguard.PromptInjectionPolicy, contents)
 	filtered := make([]search.Result, 0, len(results))
 	for i, check := range checks {
-		if check.Err != nil || !check.Violation {
+		if check.Err == nil && !check.Violation {
 			filtered = append(filtered, results[i])
 		}
 	}
@@ -951,7 +990,7 @@ func filterFetchedPages(ctx context.Context, checker SafeguardChecker, pages []f
 	checks := safeguard.CheckItems(ctx, checker, safeguard.PromptInjectionPolicy, contents)
 	filtered := make([]fetch.FetchedPage, 0, len(pages))
 	for i, check := range checks {
-		if check.Err != nil || !check.Violation {
+		if check.Err == nil && !check.Violation {
 			filtered = append(filtered, pages[i])
 		}
 	}
@@ -1150,8 +1189,8 @@ func buildAnnotationsFromContent(content string, sources []CitationSource) []pip
 		annotations = append(annotations, pipeline.Annotation{
 			Type: pipeline.AnnotationTypeURLCitation,
 			URLCitation: pipeline.URLCitation{
-				StartIndex: match[0],
-				EndIndex:   match[1],
+				StartIndex: utf8.RuneCountInString(content[:match[0]]),
+				EndIndex:   utf8.RuneCountInString(content[:match[1]]),
 				URL:        source.URL,
 				Title:      source.Title,
 			},
@@ -1221,6 +1260,25 @@ func formatUserLocationHint(location *pipeline.UserLocation) string {
 	return strings.Join(parts, ", ")
 }
 
+func streamingAnnotationsFromSources(sources []CitationSource) []pipeline.Annotation {
+	if len(sources) == 0 {
+		return nil
+	}
+
+	annotations := make([]pipeline.Annotation, 0, len(sources))
+	for _, source := range sources {
+		annotations = append(annotations, pipeline.Annotation{
+			Type: pipeline.AnnotationTypeURLCitation,
+			URLCitation: pipeline.URLCitation{
+				URL:   source.URL,
+				Title: source.Title,
+			},
+		})
+	}
+
+	return annotations
+}
+
 func buildInstructions(req *pipeline.Request) string {
 	var out strings.Builder
 	out.WriteString(orchestrationInstructions)
@@ -1242,6 +1300,23 @@ func buildInstructions(req *pipeline.Request) string {
 }
 
 func emitBufferedMessage(emitter pipeline.EventEmitter, streamID string, created int64, model, messageID, text string, deltas []string, annotations []pipeline.Annotation, reasoning string) error {
+	if err := startLiveMessage(emitter, streamID, created, model, messageID, annotations, reasoning); err != nil {
+		return err
+	}
+	for _, delta := range deltas {
+		contentChunk, err := marshalChatContentChunk(streamID, created, model, delta)
+		if err != nil {
+			return err
+		}
+		if err := emitter.EmitChunk(contentChunk); err != nil {
+			return err
+		}
+	}
+
+	return finishLiveMessage(emitter, streamID, created, model, text, annotations)
+}
+
+func startLiveMessage(emitter pipeline.EventEmitter, streamID string, created int64, model, messageID string, annotations []pipeline.Annotation, reasoning string) error {
 	if err := emitter.EmitMetadata(streamID, created, model, annotations, reasoning); err != nil {
 		return err
 	}
@@ -1257,19 +1332,10 @@ func emitBufferedMessage(emitter pipeline.EventEmitter, streamID string, created
 	if err != nil {
 		return err
 	}
-	if err := emitter.EmitChunk(roleChunk); err != nil {
-		return err
-	}
-	for _, delta := range deltas {
-		contentChunk, err := marshalChatContentChunk(streamID, created, model, delta)
-		if err != nil {
-			return err
-		}
-		if err := emitter.EmitChunk(contentChunk); err != nil {
-			return err
-		}
-	}
+	return emitter.EmitChunk(roleChunk)
+}
 
+func finishLiveMessage(emitter pipeline.EventEmitter, streamID string, created int64, model, text string, annotations []pipeline.Annotation) error {
 	stopChunk, err := marshalChatStopChunk(streamID, created, model)
 	if err != nil {
 		return err
