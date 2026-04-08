@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"sync"
+	"time"
 
 	"github.com/openai/openai-go/v3"
 
@@ -44,11 +46,28 @@ const (
 	IDPrefixWebSearch = "ws_"
 	IDPrefixResponse  = "resp_"
 	IDPrefixMessage   = "msg_"
+
+	responseContinuationTTL = 24 * time.Hour
 )
 
 // Server holds all dependencies for the HTTP handlers
 type Server struct {
-	Runner engine.Runner
+	Runner                       engine.Runner
+	DefaultPIICheckEnabled       bool
+	DefaultInjectionCheckEnabled bool
+
+	responseStoreOnce sync.Once
+	responseStore     *responseContinuationStore
+}
+
+type responseContinuationStore struct {
+	mu      sync.RWMutex
+	entries map[string]responseContinuationEntry
+}
+
+type responseContinuationEntry struct {
+	upstreamID string
+	expiresAt  time.Time
 }
 
 // WebSearchOptions enables the custom web search tool
@@ -184,7 +203,8 @@ type ResponsesUsage struct {
 // ResponsesRequest represents the incoming request for the Responses API
 type ResponsesRequest struct {
 	Model                 string                 `json:"model"`
-	Input                 string                 `json:"input"`
+	Input                 json.RawMessage        `json:"input"`
+	PreviousResponseID    string                 `json:"previous_response_id,omitempty"`
 	Stream                bool                   `json:"stream,omitempty"`
 	Tools                 []ResponsesTool        `json:"tools,omitempty"`
 	PIICheckOptions       *PIICheckOptions       `json:"pii_check_options,omitempty"`

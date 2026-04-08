@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
@@ -12,6 +13,10 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/agent"
 	"github.com/tinfoilsh/confidential-websearch/pipeline"
 )
+
+type requestValidator interface {
+	Validate(*pipeline.Request) error
+}
 
 // RecoveryMiddleware catches panics and returns 500 instead of crashing
 func RecoveryMiddleware(next http.HandlerFunc) http.HandlerFunc {
@@ -95,6 +100,85 @@ func extractResponsesWebSearchOptions(tools []ResponsesTool) (bool, pipeline.Sea
 	return false, "", nil
 }
 
+func newResponseContinuationStore() *responseContinuationStore {
+	return &responseContinuationStore{
+		entries: make(map[string]responseContinuationEntry),
+	}
+}
+
+func (s *Server) continuationStore() *responseContinuationStore {
+	s.responseStoreOnce.Do(func() {
+		if s.responseStore == nil {
+			s.responseStore = newResponseContinuationStore()
+		}
+	})
+	return s.responseStore
+}
+
+func (s *Server) rememberResponseID(publicID, upstreamID string) {
+	if publicID == "" || upstreamID == "" || publicID == upstreamID {
+		return
+	}
+	s.continuationStore().Put(publicID, upstreamID)
+}
+
+func (s *Server) resolvePreviousResponseID(id string) string {
+	if id == "" {
+		return ""
+	}
+	if upstreamID, ok := s.continuationStore().Get(id); ok {
+		return upstreamID
+	}
+	return id
+}
+
+func (s *responseContinuationStore) Put(publicID, upstreamID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	s.pruneExpiredLocked(now)
+	s.entries[publicID] = responseContinuationEntry{
+		upstreamID: upstreamID,
+		expiresAt:  now.Add(responseContinuationTTL),
+	}
+}
+
+func (s *responseContinuationStore) Get(publicID string) (string, bool) {
+	s.mu.RLock()
+	entry, ok := s.entries[publicID]
+	s.mu.RUnlock()
+	if !ok {
+		return "", false
+	}
+
+	now := time.Now()
+	if now.After(entry.expiresAt) {
+		s.mu.Lock()
+		delete(s.entries, publicID)
+		s.mu.Unlock()
+		return "", false
+	}
+
+	return entry.upstreamID, true
+}
+
+func (s *responseContinuationStore) pruneExpiredLocked(now time.Time) {
+	for id, entry := range s.entries {
+		if now.After(entry.expiresAt) {
+			delete(s.entries, id)
+		}
+	}
+}
+
+func (s *Server) validateForStreaming(req *pipeline.Request) error {
+	validator, ok := s.Runner.(requestValidator)
+	if !ok {
+		return nil
+	}
+	return validator.Validate(req)
+}
+
 // buildFlatAnnotations creates URL citations (Responses API format)
 func buildFlatAnnotations(annotations []pipeline.Annotation) []FlatAnnotation {
 	if len(annotations) == 0 {
@@ -149,8 +233,8 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// Derive feature flags from options presence
 	webSearchEnabled := req.WebSearchOptions != nil
-	piiCheckEnabled := req.PIICheckOptions != nil
-	injectionCheckEnabled := req.InjectionCheckOptions != nil
+	piiCheckEnabled := s.DefaultPIICheckEnabled || req.PIICheckOptions != nil
+	injectionCheckEnabled := s.DefaultInjectionCheckEnabled || req.InjectionCheckOptions != nil
 	var searchContextSize pipeline.SearchContextSize
 	var userLocation *pipeline.UserLocation
 	if req.WebSearchOptions != nil {
@@ -249,6 +333,12 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 func (s *Server) handleStreamingChatCompletion(w http.ResponseWriter, r *http.Request, req *pipeline.Request) {
 	log.Infof("Processing streaming query (model: %s)", req.Model)
 
+	if err := s.validateForStreaming(req); err != nil {
+		status, body := pipeline.ErrorResponse(err)
+		jsonErrorResponse(w, status, body)
+		return
+	}
+
 	emitter, err := NewSSEEmitter(w)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -273,6 +363,12 @@ func (s *Server) handleStreamingChatCompletion(w http.ResponseWriter, r *http.Re
 
 func (s *Server) handleStreamingResponses(w http.ResponseWriter, r *http.Request, req *pipeline.Request) {
 	log.Infof("Processing streaming responses request (model: %s)", req.Model)
+
+	if err := s.validateForStreaming(req); err != nil {
+		status, body := pipeline.ErrorResponse(err)
+		jsonErrorResponse(w, status, body)
+		return
+	}
 
 	responseID := IDPrefixResponse + uuid.New().String()[:8]
 	emitter, err := NewResponsesEmitter(w, responseID, req.Model)
@@ -299,6 +395,7 @@ func (s *Server) handleStreamingResponses(w http.ResponseWriter, r *http.Request
 		emitter.EmitError(err)
 		return
 	}
+	s.rememberResponseID(responseID, result.ID)
 
 	log.Infof("Streaming responses completed: %d searches", len(result.SearchResults))
 }
@@ -319,14 +416,15 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 
 	// Derive feature flags from tools array and options
 	webSearchEnabled, searchContextSize, userLocation := extractResponsesWebSearchOptions(req.Tools)
-	piiCheckEnabled := req.PIICheckOptions != nil
-	injectionCheckEnabled := req.InjectionCheckOptions != nil
+	piiCheckEnabled := s.DefaultPIICheckEnabled || req.PIICheckOptions != nil
+	injectionCheckEnabled := s.DefaultInjectionCheckEnabled || req.InjectionCheckOptions != nil
 	log.Debugf("Responses request features: web_search=%v, pii_check=%v, injection_check=%v",
 		webSearchEnabled, piiCheckEnabled, injectionCheckEnabled)
 
 	pipelineReq := &pipeline.Request{
 		Model:                 req.Model,
 		Input:                 req.Input,
+		PreviousResponseID:    s.resolvePreviousResponseID(req.PreviousResponseID),
 		Stream:                req.Stream,
 		Format:                pipeline.FormatResponses,
 		WebSearchEnabled:      webSearchEnabled,
@@ -354,6 +452,12 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	if len(flatAnnotations) == 0 {
 		flatAnnotations = buildLegacyFlatAnnotations(result.SearchResults)
 	}
+
+	responseID := result.ID
+	if responseID == "" {
+		responseID = IDPrefixResponse + uuid.New().String()[:8]
+	}
+	s.rememberResponseID(responseID, result.ID)
 
 	var output []ResponsesOutput
 
@@ -419,7 +523,7 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		Output    []ResponsesOutput `json:"output"`
 		Usage     ResponsesUsage    `json:"usage"`
 	}{
-		ID:        IDPrefixResponse + uuid.New().String()[:8],
+		ID:        responseID,
 		Object:    ObjectResponse,
 		CreatedAt: result.Created,
 		Status:    StatusCompleted,

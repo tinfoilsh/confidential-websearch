@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/tinfoilsh/confidential-websearch/pipeline"
 )
 
 func TestResponsesEmitter_ReusesOutputIndexPerToolItem(t *testing.T) {
@@ -40,6 +42,59 @@ func TestResponsesEmitter_ReusesOutputIndexPerToolItem(t *testing.T) {
 	if aIndexes[0] == bIndexes[0] {
 		t.Fatalf("expected distinct output indexes, got %d for both items", aIndexes[0])
 	}
+}
+
+func TestResponsesEmitter_UsesFlatAnnotationsInContentPartDone(t *testing.T) {
+	w := httptest.NewRecorder()
+	emitter, err := NewResponsesEmitter(w, "resp_test", "gpt-oss-120b")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if err := emitter.EmitMessageStart("msg_test"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := emitter.EmitMessageEnd("answer【1】", []pipeline.Annotation{
+		{
+			Type: pipeline.AnnotationTypeURLCitation,
+			URLCitation: pipeline.URLCitation{
+				URL:        "https://example.com",
+				Title:      "Example",
+				StartIndex: 6,
+				EndIndex:   10,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	events := decodeSSEDataLines(t, w.Body.String())
+	for _, event := range events {
+		if event["type"] != "response.content_part.done" {
+			continue
+		}
+		part, ok := event["part"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected part payload, got %+v", event["part"])
+		}
+		annotations, ok := part["annotations"].([]any)
+		if !ok || len(annotations) != 1 {
+			t.Fatalf("expected one flat annotation, got %+v", part["annotations"])
+		}
+		annotation, ok := annotations[0].(map[string]any)
+		if !ok {
+			t.Fatalf("expected annotation object, got %+v", annotations[0])
+		}
+		if _, nested := annotation["url_citation"]; nested {
+			t.Fatalf("expected flat annotation shape, got %+v", annotation)
+		}
+		if annotation["url"] != "https://example.com" {
+			t.Fatalf("expected annotation url, got %+v", annotation)
+		}
+		return
+	}
+
+	t.Fatal("expected response.content_part.done event")
 }
 
 func decodeSSEDataLines(t *testing.T, body string) []map[string]any {

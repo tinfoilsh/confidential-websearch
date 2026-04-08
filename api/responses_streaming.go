@@ -373,7 +373,7 @@ func (e *ResponsesEmitter) EmitMessageEnd(text string, annotations []pipeline.An
 	part := map[string]any{
 		"type":        ContentTypeOutputText,
 		"text":        text,
-		"annotations": annotations,
+		"annotations": buildFlatAnnotations(annotations),
 	}
 	if e.reasoning != "" {
 		part["search_reasoning"] = e.reasoning

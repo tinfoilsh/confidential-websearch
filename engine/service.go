@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -321,7 +322,7 @@ func searchOptionsForTool(opts ToolOptions) search.Options {
 }
 
 func (s *Service) Run(ctx context.Context, req *pipeline.Request) (*Result, error) {
-	if err := validateRequest(req); err != nil {
+	if err := s.Validate(req); err != nil {
 		return nil, err
 	}
 
@@ -332,6 +333,7 @@ func (s *Service) Run(ctx context.Context, req *pipeline.Request) (*Result, erro
 
 	state := &executionState{
 		nextCitation: 1,
+		previousID:   req.PreviousResponseID,
 	}
 	nextInput := input
 
@@ -378,7 +380,7 @@ func (s *Service) Run(ctx context.Context, req *pipeline.Request) (*Result, erro
 }
 
 func (s *Service) Stream(ctx context.Context, req *pipeline.Request, emitter pipeline.EventEmitter) (*Result, error) {
-	if err := validateRequest(req); err != nil {
+	if err := s.Validate(req); err != nil {
 		return nil, err
 	}
 
@@ -389,6 +391,7 @@ func (s *Service) Stream(ctx context.Context, req *pipeline.Request, emitter pip
 
 	state := &executionState{
 		nextCitation: 1,
+		previousID:   req.PreviousResponseID,
 	}
 	nextInput := input
 
@@ -409,6 +412,14 @@ func (s *Service) Stream(ctx context.Context, req *pipeline.Request, emitter pip
 	}
 
 	return s.streamFinalAnswer(ctx, req, state, emitter, streamID, created, nextInput)
+}
+
+func (s *Service) Validate(req *pipeline.Request) error {
+	if err := validateRequest(req); err != nil {
+		return err
+	}
+	_, err := buildInput(req)
+	return err
 }
 
 func (s *Service) streamIteration(ctx context.Context, req *pipeline.Request, state *executionState, emitter pipeline.EventEmitter, streamID string, created int64, allowTools bool, input []responses.ResponseInputItemUnionParam) (*Result, []responses.ResponseInputItemUnionParam, error) {
@@ -486,7 +497,7 @@ func (s *Service) streamIteration(ctx context.Context, req *pipeline.Request, st
 			return nil, nil, fmt.Errorf("model returned no tool calls or message content")
 		}
 
-		result := state.finalResult(req, streamID, objectFor(req.Format), created, req.Model, parser.text.String(), openai.CompletionUsage{})
+		result := state.finalResult(req, streamResultID(req, state, streamID), objectFor(req.Format), created, req.Model, parser.text.String(), openai.CompletionUsage{})
 		if !messageStarted {
 			if err := startLiveMessage(emitter, streamID, created, req.Model, parser.messageID, streamingAnnotationsFromSources(state.sources), state.reasoning.String()); err != nil {
 				return nil, nil, err
@@ -549,7 +560,7 @@ func (s *Service) streamFinalAnswer(ctx context.Context, req *pipeline.Request, 
 		return nil, fmt.Errorf("model returned no final answer")
 	}
 
-	result := state.finalResult(req, streamID, objectFor(req.Format), created, req.Model, text.String(), openai.CompletionUsage{})
+	result := state.finalResult(req, streamResultID(req, state, streamID), objectFor(req.Format), created, req.Model, text.String(), openai.CompletionUsage{})
 	if !messageStarted {
 		if err := startLiveMessage(emitter, streamID, created, req.Model, messageID, streamingAnnotationsFromSources(state.sources), state.reasoning.String()); err != nil {
 			return nil, err
@@ -770,6 +781,13 @@ func (s *executionState) finalResult(req *pipeline.Request, id, object string, c
 	}
 }
 
+func streamResultID(req *pipeline.Request, state *executionState, fallback string) string {
+	if req != nil && req.Format == pipeline.FormatResponses && state != nil && state.previousID != "" {
+		return responseIDFor(req.Format, state.previousID)
+	}
+	return fallback
+}
+
 func (s *Service) buildParams(req *pipeline.Request, input []responses.ResponseInputItemUnionParam, allowTools bool, previousResponseID string) responses.ResponseNewParams {
 	params := responses.ResponseNewParams{
 		Model:        shared.ResponsesModel(req.Model),
@@ -841,7 +859,7 @@ func validateRequest(req *pipeline.Request) error {
 		return &pipeline.ValidationError{Field: "model", Message: "model parameter is required"}
 	}
 	if req.Format == pipeline.FormatResponses {
-		if req.Input == "" {
+		if len(bytes.TrimSpace(req.Input)) == 0 {
 			return &pipeline.ValidationError{Field: "input", Message: "input parameter is required"}
 		}
 		return nil
@@ -854,9 +872,7 @@ func validateRequest(req *pipeline.Request) error {
 
 func buildInput(req *pipeline.Request) ([]responses.ResponseInputItemUnionParam, error) {
 	if req.Format == pipeline.FormatResponses {
-		return []responses.ResponseInputItemUnionParam{
-			responses.ResponseInputItemParamOfMessage(req.Input, responses.EasyInputMessageRoleUser),
-		}, nil
+		return buildResponsesInput(req.Input)
 	}
 
 	items := make([]responses.ResponseInputItemUnionParam, 0, len(req.Messages))
@@ -869,6 +885,100 @@ func buildInput(req *pipeline.Request) ([]responses.ResponseInputItemUnionParam,
 	}
 
 	return items, nil
+}
+
+func buildResponsesInput(input json.RawMessage) ([]responses.ResponseInputItemUnionParam, error) {
+	if text, ok := decodeStringContent(input); ok {
+		return []responses.ResponseInputItemUnionParam{
+			responses.ResponseInputItemParamOfMessage(text, responses.EasyInputMessageRoleUser),
+		}, nil
+	}
+
+	var rawItems []json.RawMessage
+	if err := json.Unmarshal(input, &rawItems); err == nil {
+		items := make([]responses.ResponseInputItemUnionParam, 0, len(rawItems))
+		for _, rawItem := range rawItems {
+			item, err := buildResponsesInputItem(rawItem)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, item)
+		}
+		if len(items) == 0 {
+			return nil, &pipeline.ValidationError{Field: "input", Message: "input parameter is required"}
+		}
+		return items, nil
+	}
+
+	item, err := buildResponsesInputItem(input)
+	if err != nil {
+		return nil, err
+	}
+	return []responses.ResponseInputItemUnionParam{item}, nil
+}
+
+func buildResponsesInputItem(input json.RawMessage) (responses.ResponseInputItemUnionParam, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(input, &raw); err != nil {
+		return responses.ResponseInputItemUnionParam{}, &pipeline.ValidationError{Field: "input", Message: "input must be a string or supported input item list"}
+	}
+
+	itemType := rawStringField(raw["type"])
+	role := rawStringField(raw["role"])
+
+	switch {
+	case itemType == "message" || (itemType == "" && role != ""):
+		if role == "" {
+			role = "user"
+		}
+		return buildInputMessage(pipeline.Message{
+			Role:    role,
+			Content: mustRawField(raw, "content"),
+		})
+	case itemType == "function_call_output":
+		callID := rawStringField(raw["call_id"])
+		if callID == "" {
+			return responses.ResponseInputItemUnionParam{}, &pipeline.ValidationError{Field: "input", Message: "function_call_output items require call_id"}
+		}
+		output, err := stringifyInputValue(mustRawField(raw, "output"))
+		if err != nil {
+			return responses.ResponseInputItemUnionParam{}, &pipeline.ValidationError{Field: "input", Message: "function_call_output output must be valid JSON"}
+		}
+		return responses.ResponseInputItemParamOfFunctionCallOutput(callID, output), nil
+	default:
+		return responses.ResponseInputItemUnionParam{}, &pipeline.ValidationError{Field: "input", Message: "unsupported responses input item"}
+	}
+}
+
+func rawStringField(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return ""
+	}
+	return value
+}
+
+func stringifyInputValue(raw json.RawMessage) (string, error) {
+	if text, ok := decodeStringContent(raw); ok {
+		return text, nil
+	}
+	if len(raw) == 0 {
+		return "", nil
+	}
+
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return "", err
+	}
+
+	compact, err := json.Marshal(decoded)
+	if err != nil {
+		return "", err
+	}
+	return string(compact), nil
 }
 
 func buildInputMessage(message pipeline.Message) (responses.ResponseInputItemUnionParam, error) {
@@ -1212,7 +1322,7 @@ func requestIntentText(req *pipeline.Request) string {
 		return ""
 	}
 	if req.Format == pipeline.FormatResponses {
-		return strings.TrimSpace(req.Input)
+		return extractResponsesIntentText(req.Input)
 	}
 
 	parts := make([]string, 0, len(req.Messages))
@@ -1221,6 +1331,44 @@ func requestIntentText(req *pipeline.Request) string {
 			continue
 		}
 		text := strings.TrimSpace(pipeline.ExtractTextContent(message.Content))
+		if text != "" {
+			parts = append(parts, text)
+		}
+	}
+
+	return strings.Join(parts, "\n\n")
+}
+
+func extractResponsesIntentText(input json.RawMessage) string {
+	if text, ok := decodeStringContent(input); ok {
+		return strings.TrimSpace(text)
+	}
+
+	var singleItem map[string]json.RawMessage
+	if err := json.Unmarshal(input, &singleItem); err == nil {
+		return extractResponsesIntentTextFromItems([]map[string]json.RawMessage{singleItem})
+	}
+
+	var rawItems []map[string]json.RawMessage
+	if err := json.Unmarshal(input, &rawItems); err != nil {
+		return ""
+	}
+
+	return extractResponsesIntentTextFromItems(rawItems)
+}
+
+func extractResponsesIntentTextFromItems(rawItems []map[string]json.RawMessage) string {
+	parts := make([]string, 0, len(rawItems))
+	for _, rawItem := range rawItems {
+		itemType := rawStringField(rawItem["type"])
+		role := rawStringField(rawItem["role"])
+		if itemType != "" && itemType != "message" {
+			continue
+		}
+		if role != "" && role != "user" {
+			continue
+		}
+		text := strings.TrimSpace(pipeline.ExtractTextContent(mustRawField(rawItem, "content")))
 		if text != "" {
 			parts = append(parts, text)
 		}
