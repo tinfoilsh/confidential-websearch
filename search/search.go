@@ -27,6 +27,7 @@ type Options struct {
 	MaxResults           int
 	MaxContentCharacters int
 	UserLocationCountry  string
+	AllowedDomains       []string
 }
 
 // Provider defines the interface for search providers

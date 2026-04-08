@@ -27,11 +27,12 @@ func (p *ExaProvider) Name() string {
 // exaRequest represents the Exa API request body
 // See: https://docs.exa.ai/reference/search
 type exaRequest struct {
-	Query        string            `json:"query"`
-	Type         string            `json:"type,omitempty"`
-	NumResults   int               `json:"numResults,omitempty"`
-	UserLocation string            `json:"userLocation,omitempty"`
-	Contents     *exaContentsParam `json:"contents,omitempty"`
+	Query          string            `json:"query"`
+	Type           string            `json:"type,omitempty"`
+	NumResults     int               `json:"numResults,omitempty"`
+	UserLocation   string            `json:"userLocation,omitempty"`
+	IncludeDomains []string          `json:"includeDomains,omitempty"`
+	Contents       *exaContentsParam `json:"contents,omitempty"`
 }
 
 type exaContentsParam struct {
@@ -78,6 +79,9 @@ func (p *ExaProvider) Search(ctx context.Context, query string, opts Options) ([
 	}
 	if opts.UserLocationCountry != "" {
 		reqBody.UserLocation = opts.UserLocationCountry
+	}
+	if len(opts.AllowedDomains) > 0 {
+		reqBody.IncludeDomains = opts.AllowedDomains
 	}
 
 	jsonBody, err := json.Marshal(reqBody)

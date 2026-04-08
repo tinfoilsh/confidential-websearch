@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -91,11 +92,12 @@ type Runner interface {
 }
 
 type ToolOptions struct {
-	MaxResults            int
-	PIICheckEnabled       bool
-	InjectionCheckEnabled bool
-	SearchContextSize     pipeline.SearchContextSize
-	UserLocation          *pipeline.UserLocation
+	MaxResults                 int
+	PIICheckEnabled            bool
+	FetchInjectionCheckEnabled bool
+	SearchContextSize          pipeline.SearchContextSize
+	UserLocation               *pipeline.UserLocation
+	AllowedDomains             []string
 }
 
 type SearchOutcome struct {
@@ -235,10 +237,6 @@ func (s *Service) Search(ctx context.Context, query string, opts ToolOptions) (S
 		return SearchOutcome{}, err
 	}
 
-	if opts.InjectionCheckEnabled && len(results) > 0 && s.safeguard != nil {
-		results = filterSearchResults(ctx, s.safeguard, results)
-	}
-
 	return SearchOutcome{Results: results}, nil
 }
 
@@ -251,7 +249,7 @@ func (s *Service) Fetch(ctx context.Context, urls []string, opts ToolOptions) []
 	}
 
 	pages := s.fetcher.FetchURLs(ctx, urls)
-	if opts.InjectionCheckEnabled && len(pages) > 0 && s.safeguard != nil {
+	if opts.FetchInjectionCheckEnabled && len(pages) > 0 && s.safeguard != nil {
 		pages = filterFetchedPages(ctx, s.safeguard, pages)
 	}
 
@@ -298,7 +296,7 @@ func (s *Service) FetchDetailed(ctx context.Context, urls []string, opts ToolOpt
 	}
 
 	results := detailedFetcher.FetchURLResults(ctx, urls)
-	if opts.InjectionCheckEnabled && len(results) > 0 && s.safeguard != nil {
+	if opts.FetchInjectionCheckEnabled && len(results) > 0 && s.safeguard != nil {
 		results = filterFetchResults(ctx, s.safeguard, results)
 	}
 
@@ -326,6 +324,7 @@ func searchOptionsForTool(opts ToolOptions) search.Options {
 		MaxResults:           maxResults,
 		MaxContentCharacters: maxCharacters,
 		UserLocationCountry:  normalizeUserLocationCountry(opts.UserLocation),
+		AllowedDomains:       opts.AllowedDomains,
 	}
 }
 
@@ -594,11 +593,12 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 	var wg sync.WaitGroup
 
 	toolOpts := ToolOptions{
-		MaxResults:            config.DefaultMaxSearchResults,
-		PIICheckEnabled:       req.PIICheckEnabled,
-		InjectionCheckEnabled: req.InjectionCheckEnabled,
-		SearchContextSize:     req.SearchContextSize,
-		UserLocation:          req.UserLocation,
+		MaxResults:                 config.DefaultMaxSearchResults,
+		PIICheckEnabled:            req.PIICheckEnabled,
+		FetchInjectionCheckEnabled: req.FetchInjectionCheckEnabled,
+		SearchContextSize:          req.SearchContextSize,
+		UserLocation:               req.UserLocation,
+		AllowedDomains:             req.AllowedDomains,
 	}
 
 	for _, call := range sortedCalls {
@@ -1604,7 +1604,7 @@ func toInputRole(role string) (responses.EasyInputMessageRole, error) {
 
 func responseIDFor(format pipeline.APIFormat, upstreamID string) string {
 	if format == pipeline.FormatChatCompletion {
-		return "chatcmpl_" + uuid.New().String()[:8]
+		return "chatcmpl-" + uuid.New().String()[:8]
 	}
 	if upstreamID != "" {
 		return upstreamID
@@ -1691,13 +1691,9 @@ func marshalChatChunk(id string, created int64, model string, delta map[string]a
 }
 
 func sortFunctionCalls(calls []*functionCall) {
-	for i := 0; i < len(calls); i++ {
-		for j := i + 1; j < len(calls); j++ {
-			if calls[j].index < calls[i].index {
-				calls[i], calls[j] = calls[j], calls[i]
-			}
-		}
-	}
+	sort.Slice(calls, func(i, j int) bool {
+		return calls[i].index < calls[j].index
+	})
 }
 
 func mustRawField(m map[string]json.RawMessage, key string) json.RawMessage {

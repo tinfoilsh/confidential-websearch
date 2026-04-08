@@ -23,8 +23,8 @@ type Config struct {
 	SafeguardModel       string
 	ToolSummaryModel     string
 	ToolLoopMaxIter      int
-	EnablePIICheck       bool
-	EnableInjectionCheck bool
+	EnablePIICheck            bool
+	EnableFetchInjectionCheck bool
 }
 
 // Load creates a new config from environment variables
@@ -37,9 +37,9 @@ func Load() *Config {
 		ListenAddr:           getEnv("LISTEN_ADDR", ":8089"),
 		SafeguardModel:       getEnv("SAFEGUARD_MODEL", "gpt-oss-safeguard-120b"),
 		ToolSummaryModel:     getEnv("TOOL_SUMMARY_MODEL", "llama3-3-70b"),
-		ToolLoopMaxIter:      getEnvInt("TOOL_LOOP_MAX_ITER", DefaultToolLoopMaxIter),
-		EnablePIICheck:       getEnvBool("ENABLE_PII_CHECK", true),
-		EnableInjectionCheck: getEnvBool("ENABLE_INJECTION_CHECK", false),
+		ToolLoopMaxIter:           getEnvInt("TOOL_LOOP_MAX_ITER", DefaultToolLoopMaxIter),
+		EnablePIICheck:            getEnvBool("ENABLE_PII_CHECK", true),
+		EnableFetchInjectionCheck: getEnvBool("ENABLE_FETCH_INJECTION_CHECK", true),
 	}
 }
 

@@ -6,7 +6,7 @@ import (
 )
 
 func TestLoad_Defaults(t *testing.T) {
-	envVars := []string{"EXA_API_KEY", "LISTEN_ADDR", "SAFEGUARD_MODEL", "TOOL_SUMMARY_MODEL", "ENABLE_PII_CHECK", "ENABLE_INJECTION_CHECK"}
+	envVars := []string{"EXA_API_KEY", "LISTEN_ADDR", "SAFEGUARD_MODEL", "TOOL_SUMMARY_MODEL", "ENABLE_PII_CHECK", "ENABLE_FETCH_INJECTION_CHECK"}
 	originalValues := make(map[string]string)
 	for _, key := range envVars {
 		originalValues[key] = os.Getenv(key)
@@ -34,8 +34,8 @@ func TestLoad_Defaults(t *testing.T) {
 	if !cfg.EnablePIICheck {
 		t.Error("EnablePIICheck: expected true by default")
 	}
-	if cfg.EnableInjectionCheck {
-		t.Error("EnableInjectionCheck: expected false by default")
+	if !cfg.EnableFetchInjectionCheck {
+		t.Error("EnableFetchInjectionCheck: expected true by default")
 	}
 	if cfg.ExaAPIKey != "" {
 		t.Errorf("ExaAPIKey: expected empty, got '%s'", cfg.ExaAPIKey)
@@ -48,14 +48,14 @@ func TestLoad_CustomValues(t *testing.T) {
 	os.Setenv("SAFEGUARD_MODEL", "custom-safeguard")
 	os.Setenv("TOOL_SUMMARY_MODEL", "custom-summary")
 	os.Setenv("ENABLE_PII_CHECK", "false")
-	os.Setenv("ENABLE_INJECTION_CHECK", "true")
+	os.Setenv("ENABLE_FETCH_INJECTION_CHECK", "false")
 	defer func() {
 		os.Unsetenv("EXA_API_KEY")
 		os.Unsetenv("LISTEN_ADDR")
 		os.Unsetenv("SAFEGUARD_MODEL")
 		os.Unsetenv("TOOL_SUMMARY_MODEL")
 		os.Unsetenv("ENABLE_PII_CHECK")
-		os.Unsetenv("ENABLE_INJECTION_CHECK")
+		os.Unsetenv("ENABLE_FETCH_INJECTION_CHECK")
 	}()
 
 	cfg := Load()
@@ -75,8 +75,8 @@ func TestLoad_CustomValues(t *testing.T) {
 	if cfg.EnablePIICheck {
 		t.Error("EnablePIICheck: expected false")
 	}
-	if !cfg.EnableInjectionCheck {
-		t.Error("EnableInjectionCheck: expected true")
+	if cfg.EnableFetchInjectionCheck {
+		t.Error("EnableFetchInjectionCheck: expected false")
 	}
 }
 
