@@ -348,14 +348,16 @@ func (s *Service) Run(ctx context.Context, req *pipeline.Request) (*Result, erro
 		nextCitation: 1,
 		previousID:   req.PreviousResponseID,
 	}
-	nextInput := input
+	accumulated := input
+	clientPreviousID := req.PreviousResponseID
 
 	allowTools := req.WebSearchEnabled
 	for iteration := 0; iteration < s.toolLoopMaxIter; iteration++ {
-		resp, err := s.responses.New(ctx, s.buildParams(req, nextInput, allowTools, state.previousID))
+		resp, err := s.responses.New(ctx, s.buildParams(req, accumulated, allowTools, clientPreviousID))
 		if err != nil {
 			return nil, err
 		}
+		clientPreviousID = ""
 		state.previousID = resp.ID
 		state.addUsage(toCompletionUsage(resp.Usage))
 
@@ -372,11 +374,11 @@ func (s *Service) Run(ctx context.Context, req *pipeline.Request) (*Result, erro
 		}
 
 		sortedCalls, executions := s.executeToolCalls(ctx, req, functionCalls, nil)
-		nextInput = s.applyToolExecutions(ctx, req, state, sortedCalls, executions)
+		accumulated = appendToolLoopItems(accumulated, sortedCalls, s.applyToolExecutions(ctx, req, state, sortedCalls, executions))
 		allowTools = true
 	}
 
-	resp, err := s.responses.New(ctx, s.buildParams(req, nextInput, false, state.previousID))
+	resp, err := s.responses.New(ctx, s.buildParams(req, accumulated, false, ""))
 	if err != nil {
 		return nil, err
 	}
@@ -408,25 +410,27 @@ func (s *Service) Stream(ctx context.Context, req *pipeline.Request, emitter pip
 		nextCitation: 1,
 		previousID:   req.PreviousResponseID,
 	}
-	nextInput := input
+	accumulated := input
+	clientPreviousID := req.PreviousResponseID
 
 	streamID := responseIDFor(req.Format, "")
 	created := time.Now().Unix()
 	allowTools := req.WebSearchEnabled
 
 	for iteration := 0; iteration < s.toolLoopMaxIter; iteration++ {
-		result, continuationInput, err := s.streamIteration(ctx, req, state, emitter, streamID, created, allowTools, nextInput)
+		result, continuationInput, err := s.streamIteration(ctx, req, state, emitter, streamID, created, allowTools, accumulated, clientPreviousID)
 		if err != nil {
 			return nil, err
 		}
+		clientPreviousID = ""
 		if result != nil {
 			return result, nil
 		}
-		nextInput = continuationInput
+		accumulated = continuationInput
 		allowTools = true
 	}
 
-	return s.streamFinalAnswer(ctx, req, state, emitter, streamID, created, nextInput)
+	return s.streamFinalAnswer(ctx, req, state, emitter, streamID, created, accumulated)
 }
 
 func (s *Service) Validate(req *pipeline.Request) error {
@@ -437,8 +441,8 @@ func (s *Service) Validate(req *pipeline.Request) error {
 	return err
 }
 
-func (s *Service) streamIteration(ctx context.Context, req *pipeline.Request, state *executionState, emitter pipeline.EventEmitter, streamID string, created int64, allowTools bool, input []responses.ResponseInputItemUnionParam) (*Result, []responses.ResponseInputItemUnionParam, error) {
-	stream := s.responses.NewStreaming(ctx, s.buildParams(req, input, allowTools, state.previousID))
+func (s *Service) streamIteration(ctx context.Context, req *pipeline.Request, state *executionState, emitter pipeline.EventEmitter, streamID string, created int64, allowTools bool, input []responses.ResponseInputItemUnionParam, previousResponseID string) (*Result, []responses.ResponseInputItemUnionParam, error) {
+	stream := s.responses.NewStreaming(ctx, s.buildParams(req, input, allowTools, previousResponseID))
 	parser := &streamState{functionCalls: make(map[int]*functionCall)}
 	messageStarted := false
 
@@ -528,13 +532,14 @@ func (s *Service) streamIteration(ctx context.Context, req *pipeline.Request, st
 	}
 
 	sortedCalls, executions := s.executeToolCalls(ctx, req, parser.functionCalls, emitter)
-	nextInput := s.applyToolExecutions(ctx, req, state, sortedCalls, executions)
+	toolOutputs := s.applyToolExecutions(ctx, req, state, sortedCalls, executions)
+	accumulated := appendToolLoopItems(input, sortedCalls, toolOutputs)
 
-	return nil, nextInput, nil
+	return nil, accumulated, nil
 }
 
 func (s *Service) streamFinalAnswer(ctx context.Context, req *pipeline.Request, state *executionState, emitter pipeline.EventEmitter, streamID string, created int64, input []responses.ResponseInputItemUnionParam) (*Result, error) {
-	stream := s.responses.NewStreaming(ctx, s.buildParams(req, input, false, state.previousID))
+	stream := s.responses.NewStreaming(ctx, s.buildParams(req, input, false, ""))
 	messageID := "msg_" + uuid.New().String()[:8]
 	var text strings.Builder
 	messageStarted := false
@@ -782,6 +787,17 @@ func (s *Service) applyToolExecutions(ctx context.Context, req *pipeline.Request
 	}
 
 	return input
+}
+
+// appendToolLoopItems appends the model's function calls and their outputs to
+// the accumulated input so that subsequent iterations carry the full context
+// without relying on previous_response_id.
+func appendToolLoopItems(accumulated []responses.ResponseInputItemUnionParam, sortedCalls []*functionCall, toolOutputs []responses.ResponseInputItemUnionParam) []responses.ResponseInputItemUnionParam {
+	for _, call := range sortedCalls {
+		accumulated = append(accumulated, responses.ResponseInputItemParamOfFunctionCall(call.arguments.String(), call.id, call.name))
+	}
+	accumulated = append(accumulated, toolOutputs...)
+	return accumulated
 }
 
 func (s *executionState) finalResult(req *pipeline.Request, id, object string, created int64, model, content string, usage openai.CompletionUsage) *Result {
