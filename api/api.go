@@ -344,6 +344,7 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		SearchContextSize:     searchContextSize,
 		UserLocation:          userLocation,
 		AllowedDomains:        allowedDomains,
+		StreamIncludeUsage:    req.StreamOptions != nil && req.StreamOptions.IncludeUsage,
 	}
 
 	if req.Stream {
@@ -426,7 +427,7 @@ func (s *Server) handleStreamingChatCompletion(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	emitter, err := NewSSEEmitter(w)
+	emitter, err := NewSSEEmitter(w, req.StreamIncludeUsage)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return

@@ -99,16 +99,22 @@ type PIICheckOptions struct{}
 // InjectionCheckOptions enables injection checking when present
 type InjectionCheckOptions struct{}
 
+// ChatCompletionStreamOptions controls optional streaming behavior.
+type ChatCompletionStreamOptions struct {
+	IncludeUsage bool `json:"include_usage,omitempty"`
+}
+
 // IncomingRequest represents the incoming chat request
 type IncomingRequest struct {
-	Model                 string                 `json:"model"`
-	Messages              []Message              `json:"messages"`
-	Stream                bool                   `json:"stream"`
-	Temperature           *float64               `json:"temperature,omitempty"`
-	MaxTokens             *int64                 `json:"max_tokens,omitempty"`
-	WebSearchOptions      *WebSearchOptions      `json:"web_search_options,omitempty"`
-	PIICheckOptions       *PIICheckOptions       `json:"pii_check_options,omitempty"`
-	InjectionCheckOptions *InjectionCheckOptions `json:"injection_check_options,omitempty"`
+	Model                 string                       `json:"model"`
+	Messages              []Message                    `json:"messages"`
+	Stream                bool                         `json:"stream"`
+	StreamOptions         *ChatCompletionStreamOptions `json:"stream_options,omitempty"`
+	Temperature           *float64                     `json:"temperature,omitempty"`
+	MaxTokens             *int64                       `json:"max_tokens,omitempty"`
+	WebSearchOptions      *WebSearchOptions            `json:"web_search_options,omitempty"`
+	PIICheckOptions       *PIICheckOptions             `json:"pii_check_options,omitempty"`
+	InjectionCheckOptions *InjectionCheckOptions       `json:"injection_check_options,omitempty"`
 }
 
 // Message represents a chat message in the incoming request

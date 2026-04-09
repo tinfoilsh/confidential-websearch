@@ -96,6 +96,20 @@ func (e *ResponsesEmitter) outputIndexFor(itemID string) int {
 	return index
 }
 
+func (e *ResponsesEmitter) outputIndexForWithExisting(itemID string) (int, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if index, ok := e.itemIndexes[itemID]; ok {
+		return index, true
+	}
+
+	index := e.nextOutputIdx
+	e.itemIndexes[itemID] = index
+	e.nextOutputIdx++
+	return index, false
+}
+
 func (e *ResponsesEmitter) currentMessageIndex() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -186,7 +200,7 @@ func (e *ResponsesEmitter) emitWebSearchCallEvents(itemID, status string, action
 		return nil
 
 	case StatusBlocked, StatusFailed:
-		outputIdx := e.reserveOutputIndex(itemID)
+		outputIdx, existed := e.outputIndexForWithExisting(itemID)
 		item := map[string]any{
 			"type":   ItemTypeWebSearchCall,
 			"id":     itemID,
@@ -198,13 +212,15 @@ func (e *ResponsesEmitter) emitWebSearchCallEvents(itemID, status string, action
 		if action != nil {
 			item["action"] = action
 		}
-		if err := e.emit("response.output_item.added", map[string]any{
-			"type":            "response.output_item.added",
-			"sequence_number": e.nextSeq(),
-			"output_index":    outputIdx,
-			"item":            item,
-		}); err != nil {
-			return err
+		if !existed {
+			if err := e.emit("response.output_item.added", map[string]any{
+				"type":            "response.output_item.added",
+				"sequence_number": e.nextSeq(),
+				"output_index":    outputIdx,
+				"item":            item,
+			}); err != nil {
+				return err
+			}
 		}
 		// Done item omits action
 		doneItem := map[string]any{
@@ -430,17 +446,25 @@ func (e *ResponsesEmitter) EmitError(err error) error {
 }
 
 // EmitDone emits the response.completed event
-func (e *ResponsesEmitter) EmitDone() error {
+func (e *ResponsesEmitter) EmitDone(id string, created int64, model string, usage openai.CompletionUsage) error {
+	response := map[string]any{
+		"id":         e.responseID,
+		"object":     ObjectResponse,
+		"created_at": e.createdAt,
+		"status":     StatusCompleted,
+		"model":      e.model,
+	}
+	if usage.PromptTokens > 0 || usage.CompletionTokens > 0 || usage.TotalTokens > 0 {
+		response["usage"] = map[string]any{
+			"input_tokens":  usage.PromptTokens,
+			"output_tokens": usage.CompletionTokens,
+			"total_tokens":  usage.TotalTokens,
+		}
+	}
 	return e.emit("response.completed", map[string]any{
 		"type":            "response.completed",
 		"sequence_number": e.nextSeq(),
-		"response": map[string]any{
-			"id":         e.responseID,
-			"object":     ObjectResponse,
-			"created_at": e.createdAt,
-			"status":     StatusCompleted,
-			"model":      e.model,
-		},
+		"response":        response,
 	})
 }
 

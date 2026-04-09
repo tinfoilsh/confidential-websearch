@@ -6,13 +6,14 @@ import (
 	"strings"
 	"testing"
 
+	openai "github.com/openai/openai-go/v3"
 	"github.com/tinfoilsh/confidential-websearch/pipeline"
 )
 
 func TestNewSSEEmitter_Success(t *testing.T) {
 	w := httptest.NewRecorder()
 
-	emitter, err := NewSSEEmitter(w)
+	emitter, err := NewSSEEmitter(w, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -55,7 +56,7 @@ func (w *nonFlushingWriter) WriteHeader(statusCode int) {}
 func TestNewSSEEmitter_NoFlusher(t *testing.T) {
 	w := &nonFlushingWriter{}
 
-	_, err := NewSSEEmitter(w)
+	_, err := NewSSEEmitter(w, false)
 	if err == nil {
 		t.Fatal("expected error for non-flushing writer")
 	}
@@ -67,7 +68,7 @@ func TestNewSSEEmitter_NoFlusher(t *testing.T) {
 
 func TestSSEEmitter_EmitSearchCall(t *testing.T) {
 	w := httptest.NewRecorder()
-	emitter, _ := NewSSEEmitter(w)
+	emitter, _ := NewSSEEmitter(w, false)
 
 	err := emitter.EmitSearchCall("call_123", "in_progress", "test query", "", 1234567890, "gpt-oss-120b")
 	if err != nil {
@@ -107,7 +108,7 @@ func TestSSEEmitter_EmitSearchCall(t *testing.T) {
 
 func TestSSEEmitter_EmitSearchCall_NoQuery(t *testing.T) {
 	w := httptest.NewRecorder()
-	emitter, _ := NewSSEEmitter(w)
+	emitter, _ := NewSSEEmitter(w, false)
 
 	err := emitter.EmitSearchCall("call_123", "completed", "", "", 1234567890, "gpt-oss-120b")
 	if err != nil {
@@ -122,7 +123,7 @@ func TestSSEEmitter_EmitSearchCall_NoQuery(t *testing.T) {
 
 func TestSSEEmitter_EmitSearchCall_Blocked(t *testing.T) {
 	w := httptest.NewRecorder()
-	emitter, _ := NewSSEEmitter(w)
+	emitter, _ := NewSSEEmitter(w, false)
 
 	err := emitter.EmitSearchCall("call_123", "blocked", "john.smith@gmail.com", "email identifies individual", 1234567890, "gpt-oss-120b")
 	if err != nil {
@@ -143,7 +144,7 @@ func TestSSEEmitter_EmitSearchCall_Blocked(t *testing.T) {
 
 func TestSSEEmitter_EmitMetadata(t *testing.T) {
 	w := httptest.NewRecorder()
-	emitter, _ := NewSSEEmitter(w)
+	emitter, _ := NewSSEEmitter(w, false)
 
 	annotations := []pipeline.Annotation{
 		{
@@ -189,7 +190,7 @@ func TestSSEEmitter_EmitMetadata(t *testing.T) {
 
 func TestSSEEmitter_EmitMetadata_Empty(t *testing.T) {
 	w := httptest.NewRecorder()
-	emitter, _ := NewSSEEmitter(w)
+	emitter, _ := NewSSEEmitter(w, false)
 
 	err := emitter.EmitMetadata("", 0, "", nil, "")
 	if err != nil {
@@ -204,7 +205,7 @@ func TestSSEEmitter_EmitMetadata_Empty(t *testing.T) {
 
 func TestSSEEmitter_EmitChunk(t *testing.T) {
 	w := httptest.NewRecorder()
-	emitter, _ := NewSSEEmitter(w)
+	emitter, _ := NewSSEEmitter(w, false)
 
 	chunk := []byte(`{"id":"chunk_1","choices":[{"delta":{"content":"Hello"}}]}`)
 	err := emitter.EmitChunk(chunk)
@@ -226,7 +227,7 @@ func TestSSEEmitter_EmitChunk(t *testing.T) {
 
 func TestSSEEmitter_EmitError(t *testing.T) {
 	w := httptest.NewRecorder()
-	emitter, _ := NewSSEEmitter(w)
+	emitter, _ := NewSSEEmitter(w, false)
 
 	testErr := &testError{msg: "something went wrong"}
 	err := emitter.EmitError(testErr)
@@ -259,9 +260,9 @@ func (e *testError) Error() string {
 
 func TestSSEEmitter_EmitDone(t *testing.T) {
 	w := httptest.NewRecorder()
-	emitter, _ := NewSSEEmitter(w)
+	emitter, _ := NewSSEEmitter(w, false)
 
-	err := emitter.EmitDone()
+	err := emitter.EmitDone("chatcmpl-test", 1234567890, "gpt-oss-120b", openai.CompletionUsage{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -274,7 +275,7 @@ func TestSSEEmitter_EmitDone(t *testing.T) {
 
 func TestSSEEmitter_ImplementsEventEmitter(t *testing.T) {
 	w := httptest.NewRecorder()
-	emitter, _ := NewSSEEmitter(w)
+	emitter, _ := NewSSEEmitter(w, false)
 
 	// Verify the interface is implemented by using it as EventEmitter
 	var _ pipeline.EventEmitter = emitter
@@ -282,13 +283,13 @@ func TestSSEEmitter_ImplementsEventEmitter(t *testing.T) {
 
 func TestSSEEmitter_MultipleEvents(t *testing.T) {
 	w := httptest.NewRecorder()
-	emitter, _ := NewSSEEmitter(w)
+	emitter, _ := NewSSEEmitter(w, false)
 
 	// Emit multiple events in sequence
 	emitter.EmitSearchCall("call_1", "in_progress", "query 1", "", 1234567890, "gpt-oss-120b")
 	emitter.EmitSearchCall("call_1", "completed", "", "", 1234567890, "gpt-oss-120b")
 	emitter.EmitChunk([]byte(`{"content":"hello"}`))
-	emitter.EmitDone()
+	emitter.EmitDone("chatcmpl-test", 1234567890, "gpt-oss-120b", openai.CompletionUsage{})
 
 	body := w.Body.String()
 
@@ -307,5 +308,27 @@ func TestSSEEmitter_MultipleEvents(t *testing.T) {
 	}
 	if !strings.Contains(body, "[DONE]") {
 		t.Error("expected [DONE]")
+	}
+}
+
+func TestSSEEmitter_EmitDoneWithUsage(t *testing.T) {
+	w := httptest.NewRecorder()
+	emitter, _ := NewSSEEmitter(w, true)
+
+	err := emitter.EmitDone("chatcmpl-test", 1234567890, "gpt-oss-120b", openai.CompletionUsage{
+		PromptTokens:     5,
+		CompletionTokens: 3,
+		TotalTokens:      8,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, `"usage":{"completion_tokens":3,"prompt_tokens":5,"total_tokens":8}`) {
+		t.Fatalf("expected usage chunk, got %s", body)
+	}
+	if !strings.Contains(body, "data: [DONE]") {
+		t.Fatalf("expected done marker, got %s", body)
 	}
 }

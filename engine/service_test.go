@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/responses"
 
@@ -122,8 +123,10 @@ func (e *captureEmitter) EmitChunk(data []byte) error {
 	return nil
 }
 func (e *captureEmitter) EmitError(err error) error { return nil }
-func (e *captureEmitter) EmitDone() error           { return nil }
-func (e *captureEmitter) EmitResponseStart() error  { return nil }
+func (e *captureEmitter) EmitDone(id string, created int64, model string, usage openai.CompletionUsage) error {
+	return nil
+}
+func (e *captureEmitter) EmitResponseStart() error { return nil }
 func (e *captureEmitter) EmitMessageStart(itemID string) error {
 	return nil
 }
@@ -161,9 +164,11 @@ func (e *serializingEmitter) EmitFetchCall(id, status, url string, created int64
 func (e *serializingEmitter) EmitMetadata(id string, created int64, model string, annotations []pipeline.Annotation, reasoning string) error {
 	return nil
 }
-func (e *serializingEmitter) EmitChunk(data []byte) error          { return nil }
-func (e *serializingEmitter) EmitError(err error) error            { return nil }
-func (e *serializingEmitter) EmitDone() error                      { return nil }
+func (e *serializingEmitter) EmitChunk(data []byte) error { return nil }
+func (e *serializingEmitter) EmitError(err error) error   { return nil }
+func (e *serializingEmitter) EmitDone(id string, created int64, model string, usage openai.CompletionUsage) error {
+	return nil
+}
 func (e *serializingEmitter) EmitResponseStart() error             { return nil }
 func (e *serializingEmitter) EmitMessageStart(itemID string) error { return nil }
 func (e *serializingEmitter) EmitMessageEnd(text string, annotations []pipeline.Annotation) error {
@@ -190,9 +195,11 @@ func (e *recordingEmitter) EmitFetchCall(id, status, url string, created int64, 
 func (e *recordingEmitter) EmitMetadata(id string, created int64, model string, annotations []pipeline.Annotation, reasoning string) error {
 	return nil
 }
-func (e *recordingEmitter) EmitChunk(data []byte) error          { return nil }
-func (e *recordingEmitter) EmitError(err error) error            { return nil }
-func (e *recordingEmitter) EmitDone() error                      { return nil }
+func (e *recordingEmitter) EmitChunk(data []byte) error { return nil }
+func (e *recordingEmitter) EmitError(err error) error   { return nil }
+func (e *recordingEmitter) EmitDone(id string, created int64, model string, usage openai.CompletionUsage) error {
+	return nil
+}
 func (e *recordingEmitter) EmitResponseStart() error             { return nil }
 func (e *recordingEmitter) EmitMessageStart(itemID string) error { return nil }
 func (e *recordingEmitter) EmitMessageEnd(text string, annotations []pipeline.Annotation) error {
@@ -233,8 +240,10 @@ func (e *signalingEmitter) EmitChunk(data []byte) error {
 	}
 	return nil
 }
-func (e *signalingEmitter) EmitError(err error) error            { return nil }
-func (e *signalingEmitter) EmitDone() error                      { return nil }
+func (e *signalingEmitter) EmitError(err error) error { return nil }
+func (e *signalingEmitter) EmitDone(id string, created int64, model string, usage openai.CompletionUsage) error {
+	return nil
+}
 func (e *signalingEmitter) EmitResponseStart() error             { return nil }
 func (e *signalingEmitter) EmitMessageStart(itemID string) error { return nil }
 func (e *signalingEmitter) EmitMessageEnd(text string, annotations []pipeline.Annotation) error {
@@ -438,6 +447,42 @@ func TestStream_EmitsContentBeforeAdvancingFinalAnswerStream(t *testing.T) {
 
 	if _, err := service.Stream(context.Background(), chatRequest(), &signalingEmitter{contentEmitted: contentEmitted}); err != nil {
 		t.Fatalf("expected content to stream before the upstream stream advanced: %v", err)
+	}
+}
+
+func TestStream_AggregatesUsageAcrossStreamingResponses(t *testing.T) {
+	client := &fakeResponsesClient{
+		streams: []ResponseStream{
+			&fakeStream{events: []responses.ResponseStreamEventUnion{
+				mustEvent(t, `{"type":"response.created","sequence_number":1,"response":{"id":"resp_stream_1","created_at":1,"model":"gpt-oss-120b","object":"response","output":[],"parallel_tool_calls":false,"temperature":0}}`),
+				mustEvent(t, `{"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_search","name":"search","arguments":""}}`),
+				mustEvent(t, `{"type":"response.function_call_arguments.done","sequence_number":3,"output_index":0,"item_id":"fc_1","name":"search","arguments":"{\"query\":\"golang\"}"}`),
+				mustEvent(t, `{"type":"response.completed","sequence_number":4,"response":{"id":"resp_stream_1","created_at":1,"model":"gpt-oss-120b","object":"response","output":[],"usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}}}`),
+			}},
+			&fakeStream{events: []responses.ResponseStreamEventUnion{
+				mustEvent(t, `{"type":"response.created","sequence_number":1,"response":{"id":"resp_stream_2","created_at":2,"model":"gpt-oss-120b","object":"response","output":[],"parallel_tool_calls":false,"temperature":0}}`),
+				mustEvent(t, `{"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[]}}`),
+				mustEvent(t, `{"type":"response.output_text.delta","sequence_number":3,"output_index":0,"content_index":0,"item_id":"msg_1","delta":"Go answer","logprobs":[]}`),
+				mustEvent(t, `{"type":"response.completed","sequence_number":4,"response":{"id":"resp_stream_2","created_at":2,"model":"gpt-oss-120b","object":"response","output":[],"usage":{"input_tokens":4,"output_tokens":5,"total_tokens":9}}}`),
+			}},
+		},
+	}
+	service := NewService(
+		client,
+		&fakeSearcher{results: map[string][]search.Result{
+			"golang": {{Title: "Go", URL: "https://go.dev", Content: "Go info"}},
+		}},
+		nil,
+		nil,
+	)
+
+	result, err := service.Stream(context.Background(), chatRequest(), &captureEmitter{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Usage.PromptTokens != 5 || result.Usage.CompletionTokens != 7 || result.Usage.TotalTokens != 12 {
+		t.Fatalf("unexpected aggregated usage: %+v", result.Usage)
 	}
 }
 
