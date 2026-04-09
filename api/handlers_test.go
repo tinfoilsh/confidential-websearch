@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	openai "github.com/openai/openai-go/v3"
 	"github.com/tinfoilsh/confidential-websearch/agent"
 	"github.com/tinfoilsh/confidential-websearch/engine"
 	"github.com/tinfoilsh/confidential-websearch/pipeline"
@@ -456,6 +457,22 @@ func TestHandleResponses_ResolvesPreviousResponseID(t *testing.T) {
 func TestHandleResponses_StreamingIDsRemainReusable(t *testing.T) {
 	streamRunner := &MockRunner{
 		StreamFunc: func(ctx context.Context, req *pipeline.Request, emitter pipeline.EventEmitter) (*engine.Result, error) {
+			if err := emitter.EmitMessageStart("msg_test"); err != nil {
+				return nil, err
+			}
+			if err := emitter.EmitChunk([]byte(`{"choices":[{"delta":{"content":"hello"}}]}`)); err != nil {
+				return nil, err
+			}
+			if err := emitter.EmitMessageEnd("hello", nil); err != nil {
+				return nil, err
+			}
+			if err := emitter.EmitDone("resp_public", 123, req.Model, openai.CompletionUsage{
+				PromptTokens:     1,
+				CompletionTokens: 1,
+				TotalTokens:      2,
+			}); err != nil {
+				return nil, err
+			}
 			return &engine.Result{ID: "resp_upstream_final"}, nil
 		},
 	}
@@ -486,6 +503,22 @@ func TestHandleResponses_StreamingIDsRemainReusable(t *testing.T) {
 		t.Fatalf("expected public response id, got %+v", response["id"])
 	}
 
+	getReq := httptest.NewRequest("GET", "/v1/responses/"+publicID, nil)
+	getResp := httptest.NewRecorder()
+	srv.HandleResponseResource(getResp, getReq)
+	if getResp.Code != http.StatusOK {
+		t.Fatalf("expected cached streamed response, got %d", getResp.Code)
+	}
+	var stored struct {
+		Output []json.RawMessage `json:"output"`
+	}
+	if err := json.Unmarshal(getResp.Body.Bytes(), &stored); err != nil {
+		t.Fatalf("failed to parse cached streamed response: %v", err)
+	}
+	if len(stored.Output) == 0 {
+		t.Fatalf("expected cached streamed output, got %+v", stored)
+	}
+
 	srv.Runner = &captureRunner{
 		t: t,
 		check: func(req *pipeline.Request) {
@@ -505,6 +538,62 @@ func TestHandleResponses_StreamingIDsRemainReusable(t *testing.T) {
 
 	if followupResp.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", followupResp.Code)
+	}
+}
+
+func TestHandleResponses_CachesResponseForRetrieveAndDelete(t *testing.T) {
+	srv := &Server{
+		Runner: &MockRunner{
+			RunFunc: func(ctx context.Context, req *pipeline.Request) (*engine.Result, error) {
+				return &engine.Result{
+					ID:      "resp_cached",
+					Model:   "gpt-oss-120b",
+					Object:  "response",
+					Created: 123,
+					Content: "hello",
+				}, nil
+			},
+		},
+	}
+
+	createReq := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{
+		"model":"gpt-oss-120b",
+		"input":"hello"
+	}`))
+	createResp := httptest.NewRecorder()
+	srv.HandleResponses(createResp, createReq)
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", createResp.Code)
+	}
+
+	getReq := httptest.NewRequest("GET", "/v1/responses/resp_cached", nil)
+	getResp := httptest.NewRecorder()
+	srv.HandleResponseResource(getResp, getReq)
+	if getResp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", getResp.Code)
+	}
+
+	var retrieved struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(getResp.Body.Bytes(), &retrieved); err != nil {
+		t.Fatalf("failed to parse retrieved response: %v", err)
+	}
+	if retrieved.ID != "resp_cached" {
+		t.Fatalf("expected cached response id, got %q", retrieved.ID)
+	}
+
+	deleteReq := httptest.NewRequest("DELETE", "/v1/responses/resp_cached", nil)
+	deleteResp := httptest.NewRecorder()
+	srv.HandleResponseResource(deleteResp, deleteReq)
+	if deleteResp.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", deleteResp.Code)
+	}
+
+	missingResp := httptest.NewRecorder()
+	srv.HandleResponseResource(missingResp, getReq)
+	if missingResp.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 after delete, got %d", missingResp.Code)
 	}
 }
 

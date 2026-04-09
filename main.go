@@ -92,6 +92,7 @@ func main() {
 	mux.Handle("/mcp", handler)
 	mux.HandleFunc("/v1/chat/completions", api.RecoveryMiddleware(apiServer.HandleChatCompletions))
 	mux.HandleFunc("/v1/responses", api.RecoveryMiddleware(apiServer.HandleResponses))
+	mux.HandleFunc("/v1/responses/", api.RecoveryMiddleware(apiServer.HandleResponseResource))
 	mux.HandleFunc("/health", apiServer.HandleHealth)
 	mux.HandleFunc("/", apiServer.HandleRoot)
 

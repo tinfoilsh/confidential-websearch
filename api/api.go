@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -150,11 +151,25 @@ func (s *Server) continuationStore() *responseContinuationStore {
 	return s.responseStore
 }
 
-func (s *Server) rememberResponseID(publicID, upstreamID string) {
-	if publicID == "" || upstreamID == "" || publicID == upstreamID {
+func (s *Server) rememberResponse(publicID, upstreamID string, response any) {
+	if publicID == "" {
 		return
 	}
-	s.continuationStore().Put(publicID, upstreamID)
+
+	var raw json.RawMessage
+	if response != nil {
+		body, err := json.Marshal(response)
+		if err != nil {
+			log.WithError(err).Warn("failed to cache response payload")
+		} else {
+			raw = body
+		}
+	}
+
+	if upstreamID == "" {
+		upstreamID = publicID
+	}
+	s.continuationStore().Put(publicID, upstreamID, raw)
 }
 
 func (s *Server) resolvePreviousResponseID(id string) string {
@@ -167,7 +182,7 @@ func (s *Server) resolvePreviousResponseID(id string) string {
 	return id
 }
 
-func (s *responseContinuationStore) Put(publicID, upstreamID string) {
+func (s *responseContinuationStore) Put(publicID, upstreamID string, response ...json.RawMessage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -178,8 +193,13 @@ func (s *responseContinuationStore) Put(publicID, upstreamID string) {
 	if len(s.entries) >= responseContinuationMaxSize {
 		s.evictOldestLocked()
 	}
+	var raw json.RawMessage
+	if len(response) > 0 {
+		raw = response[0]
+	}
 	s.entries[publicID] = responseContinuationEntry{
 		upstreamID: upstreamID,
+		response:   raw,
 		expiresAt:  now.Add(responseContinuationTTL),
 	}
 }
@@ -204,6 +224,39 @@ func (s *responseContinuationStore) Get(publicID string) (string, bool) {
 	}
 
 	return entry.upstreamID, true
+}
+
+func (s *responseContinuationStore) GetResponse(publicID string) (json.RawMessage, bool) {
+	s.mu.RLock()
+	entry, ok := s.entries[publicID]
+	s.mu.RUnlock()
+	if !ok {
+		return nil, false
+	}
+
+	now := time.Now()
+	if now.After(entry.expiresAt) {
+		s.mu.Lock()
+		entry, ok = s.entries[publicID]
+		if ok && now.After(entry.expiresAt) {
+			delete(s.entries, publicID)
+		}
+		s.mu.Unlock()
+		return nil, false
+	}
+	if len(entry.response) == 0 {
+		return nil, false
+	}
+
+	cloned := make(json.RawMessage, len(entry.response))
+	copy(cloned, entry.response)
+	return cloned, true
+}
+
+func (s *responseContinuationStore) Delete(publicID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.entries, publicID)
 }
 
 func (s *responseContinuationStore) pruneExpiredLocked(now time.Time) {
@@ -483,7 +536,7 @@ func (s *Server) handleStreamingResponses(w http.ResponseWriter, r *http.Request
 		emitter.EmitError(err)
 		return
 	}
-	s.rememberResponseID(responseID, result.ID)
+	s.rememberResponse(responseID, result.ID, emitter.CompletedResponse())
 
 	log.Infof("Streaming responses completed: %d searches", len(result.SearchResults))
 }
@@ -546,7 +599,6 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	if responseID == "" {
 		responseID = IDPrefixResponse + uuid.New().String()[:8]
 	}
-	s.rememberResponseID(responseID, result.ID)
 
 	var output []ResponsesOutput
 
@@ -625,7 +677,33 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	s.rememberResponse(responseID, result.ID, responsesResp)
+
 	writeJSON(w, responsesResp)
+}
+
+func (s *Server) HandleResponseResource(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/v1/responses/")
+	if path == "" || strings.Contains(path, "/") {
+		jsonError(w, fmt.Sprintf("Invalid URL (%s %s)", r.Method, r.URL.Path), http.StatusNotFound)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		body, ok := s.continuationStore().GetResponse(path)
+		if !ok {
+			jsonError(w, "response not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	case http.MethodDelete:
+		s.continuationStore().Delete(path)
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func (s *Server) HandleHealth(w http.ResponseWriter, r *http.Request) {
