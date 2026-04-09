@@ -166,6 +166,83 @@ func TestResponsesEmitter_EmitDoneIncludesUsage(t *testing.T) {
 	t.Fatal("expected response.completed event")
 }
 
+func TestResponsesEmitter_MessageEventsMatchSDKShape(t *testing.T) {
+	w := httptest.NewRecorder()
+	emitter, err := NewResponsesEmitter(w, "resp_test", "gpt-oss-120b")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if err := emitter.EmitMessageStart("msg_test"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := emitter.EmitChunk([]byte(`{"choices":[{"delta":{"content":"Hello"}}]}`)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := emitter.EmitMessageEnd("Hello", []pipeline.Annotation{
+		{
+			Type: pipeline.AnnotationTypeURLCitation,
+			URLCitation: pipeline.URLCitation{
+				URL:        "https://example.com",
+				Title:      "Example",
+				StartIndex: 0,
+				EndIndex:   5,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := emitter.EmitDone("resp_test", 123, "gpt-oss-120b", openai.CompletionUsage{
+		PromptTokens:     2,
+		CompletionTokens: 1,
+		TotalTokens:      3,
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	events := decodeSSEDataLines(t, w.Body.String())
+	for _, event := range events {
+		switch event["type"] {
+		case "response.output_item.added":
+			item, ok := event["item"].(map[string]any)
+			if !ok || item["id"] != "msg_test" {
+				continue
+			}
+			content, ok := item["content"].([]any)
+			if !ok || len(content) != 0 {
+				t.Fatalf("expected empty content array on message add, got %+v", item["content"])
+			}
+		case "response.content_part.added", "response.content_part.done", "response.output_text.delta", "response.output_text.done", "response.output_text.annotation.added":
+			if event["item_id"] != "msg_test" {
+				t.Fatalf("expected item_id on %s, got %+v", event["type"], event)
+			}
+			if event["type"] == "response.output_text.delta" || event["type"] == "response.output_text.done" {
+				logprobs, ok := event["logprobs"].([]any)
+				if !ok || len(logprobs) != 0 {
+					t.Fatalf("expected empty logprobs on %s, got %+v", event["type"], event["logprobs"])
+				}
+			}
+		case "response.completed":
+			response, ok := event["response"].(map[string]any)
+			if !ok {
+				t.Fatalf("expected response payload, got %+v", event["response"])
+			}
+			output, ok := response["output"].([]any)
+			if !ok || len(output) != 1 {
+				t.Fatalf("expected one output item in completed response, got %+v", response["output"])
+			}
+			message, ok := output[0].(map[string]any)
+			if !ok {
+				t.Fatalf("expected message output item, got %+v", output[0])
+			}
+			content, ok := message["content"].([]any)
+			if !ok || len(content) != 1 {
+				t.Fatalf("expected one content part in completed response, got %+v", message["content"])
+			}
+		}
+	}
+}
+
 func decodeSSEDataLines(t *testing.T, body string) []map[string]any {
 	t.Helper()
 

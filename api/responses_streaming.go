@@ -26,9 +26,11 @@ type ResponsesEmitter struct {
 	nextOutputIdx int
 	itemIndexes   map[string]int
 	itemsAdded    map[string]bool
+	outputItems   []map[string]any
 	messageItemID string
 	messageIdx    int
 	reasoning     string
+	completed     map[string]any
 }
 
 // NewResponsesEmitter creates a new Responses API SSE emitter
@@ -106,6 +108,81 @@ func (e *ResponsesEmitter) currentMessageIndex() int {
 	return e.messageIdx
 }
 
+func cloneJSONValue(v any) any {
+	switch value := v.(type) {
+	case map[string]any:
+		cloned := make(map[string]any, len(value))
+		for key, child := range value {
+			cloned[key] = cloneJSONValue(child)
+		}
+		return cloned
+	case []any:
+		cloned := make([]any, len(value))
+		for i, child := range value {
+			cloned[i] = cloneJSONValue(child)
+		}
+		return cloned
+	default:
+		return value
+	}
+}
+
+func (e *ResponsesEmitter) setOutputItem(outputIdx int, item map[string]any) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	for len(e.outputItems) <= outputIdx {
+		e.outputItems = append(e.outputItems, nil)
+	}
+	e.outputItems[outputIdx] = cloneJSONValue(item).(map[string]any)
+}
+
+func (e *ResponsesEmitter) currentMessageItemID() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.messageItemID
+}
+
+func (e *ResponsesEmitter) completedResponse(usage openai.CompletionUsage) map[string]any {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	output := make([]any, 0, len(e.outputItems))
+	for _, item := range e.outputItems {
+		if item == nil {
+			continue
+		}
+		output = append(output, cloneJSONValue(item))
+	}
+
+	response := map[string]any{
+		"id":         e.responseID,
+		"object":     ObjectResponse,
+		"created_at": e.createdAt,
+		"status":     StatusCompleted,
+		"model":      e.model,
+		"output":     output,
+	}
+	if usage.PromptTokens > 0 || usage.CompletionTokens > 0 || usage.TotalTokens > 0 {
+		response["usage"] = map[string]any{
+			"input_tokens":  usage.PromptTokens,
+			"output_tokens": usage.CompletionTokens,
+			"total_tokens":  usage.TotalTokens,
+		}
+	}
+	e.completed = cloneJSONValue(response).(map[string]any)
+	return cloneJSONValue(response).(map[string]any)
+}
+
+func (e *ResponsesEmitter) CompletedResponse() map[string]any {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.completed == nil {
+		return nil
+	}
+	return cloneJSONValue(e.completed).(map[string]any)
+}
+
 // EmitResponseStart emits response.created and response.in_progress events
 func (e *ResponsesEmitter) EmitResponseStart() error {
 	// Emit response.created
@@ -152,6 +229,7 @@ func (e *ResponsesEmitter) emitWebSearchCallEvents(itemID, status string, action
 			"status": StatusInProgress,
 			"action": action,
 		}
+		e.setOutputItem(outputIdx, item)
 		if err := e.emit("response.output_item.added", map[string]any{
 			"type":            "response.output_item.added",
 			"sequence_number": e.nextSeq(),
@@ -169,6 +247,13 @@ func (e *ResponsesEmitter) emitWebSearchCallEvents(itemID, status string, action
 
 	case StatusCompleted:
 		outputIdx := e.outputIndexFor(itemID)
+		doneItem := map[string]any{
+			"type":   ItemTypeWebSearchCall,
+			"id":     itemID,
+			"status": StatusCompleted,
+			"action": action,
+		}
+		e.setOutputItem(outputIdx, doneItem)
 		if err := e.emit("response.web_search_call.completed", map[string]any{
 			"type":            "response.web_search_call.completed",
 			"sequence_number": e.nextSeq(),
@@ -181,12 +266,7 @@ func (e *ResponsesEmitter) emitWebSearchCallEvents(itemID, status string, action
 			"type":            "response.output_item.done",
 			"sequence_number": e.nextSeq(),
 			"output_index":    outputIdx,
-			"item": map[string]any{
-				"type":   ItemTypeWebSearchCall,
-				"id":     itemID,
-				"status": StatusCompleted,
-				"action": action,
-			},
+			"item":            doneItem,
 		}); err != nil {
 			return err
 		}
@@ -205,6 +285,7 @@ func (e *ResponsesEmitter) emitWebSearchCallEvents(itemID, status string, action
 		if action != nil {
 			item["action"] = action
 		}
+		e.setOutputItem(outputIdx, item)
 		if !alreadyAdded {
 			e.mu.Lock()
 			e.itemsAdded[itemID] = true
@@ -282,23 +363,26 @@ func (e *ResponsesEmitter) EmitMetadata(id string, created int64, model string, 
 
 // EmitMessageStart emits the message output item start
 func (e *ResponsesEmitter) EmitMessageStart(itemID string) error {
-	e.messageItemID = itemID
 	outputIdx := e.outputIndexFor(itemID)
 	e.mu.Lock()
+	e.messageItemID = itemID
 	e.messageIdx = outputIdx
 	e.mu.Unlock()
 
 	// Emit output_item.added for message
+	item := map[string]any{
+		"type":    ItemTypeMessage,
+		"id":      itemID,
+		"role":    RoleAssistant,
+		"status":  StatusInProgress,
+		"content": []any{},
+	}
+	e.setOutputItem(outputIdx, item)
 	if err := e.emit("response.output_item.added", map[string]any{
 		"type":            "response.output_item.added",
 		"sequence_number": e.nextSeq(),
 		"output_index":    outputIdx,
-		"item": map[string]any{
-			"type":   ItemTypeMessage,
-			"id":     itemID,
-			"role":   RoleAssistant,
-			"status": StatusInProgress,
-		},
+		"item":            item,
 	}); err != nil {
 		return err
 	}
@@ -307,6 +391,7 @@ func (e *ResponsesEmitter) EmitMessageStart(itemID string) error {
 	return e.emit("response.content_part.added", map[string]any{
 		"type":            "response.content_part.added",
 		"sequence_number": e.nextSeq(),
+		"item_id":         itemID,
 		"output_index":    outputIdx,
 		"content_index":   0,
 		"part": map[string]any{
@@ -337,24 +422,29 @@ func (e *ResponsesEmitter) EmitChunk(data []byte) error {
 	}
 
 	outputIdx := e.currentMessageIndex()
+	itemID := e.currentMessageItemID()
 	return e.emit("response.output_text.delta", map[string]any{
 		"type":            "response.output_text.delta",
 		"sequence_number": e.nextSeq(),
+		"item_id":         itemID,
 		"output_index":    outputIdx,
 		"content_index":   0,
 		"delta":           chunk.Choices[0].Delta.Content,
+		"logprobs":        []any{},
 	})
 }
 
 // EmitMessageEnd emits the message output item completion
 func (e *ResponsesEmitter) EmitMessageEnd(text string, annotations []pipeline.Annotation) error {
 	outputIdx := e.currentMessageIndex()
+	itemID := e.currentMessageItemID()
 
 	// Emit annotations
 	for i, ann := range annotations {
 		if err := e.emit("response.output_text.annotation.added", map[string]any{
 			"type":             "response.output_text.annotation.added",
 			"sequence_number":  e.nextSeq(),
+			"item_id":          itemID,
 			"output_index":     outputIdx,
 			"content_index":    0,
 			"annotation_index": i,
@@ -374,9 +464,11 @@ func (e *ResponsesEmitter) EmitMessageEnd(text string, annotations []pipeline.An
 	if err := e.emit("response.output_text.done", map[string]any{
 		"type":            "response.output_text.done",
 		"sequence_number": e.nextSeq(),
+		"item_id":         itemID,
 		"output_index":    outputIdx,
 		"content_index":   0,
 		"text":            text,
+		"logprobs":        []any{},
 	}); err != nil {
 		return err
 	}
@@ -390,9 +482,18 @@ func (e *ResponsesEmitter) EmitMessageEnd(text string, annotations []pipeline.An
 	if e.reasoning != "" {
 		part["search_reasoning"] = e.reasoning
 	}
+	completedItem := map[string]any{
+		"type":    ItemTypeMessage,
+		"id":      itemID,
+		"role":    RoleAssistant,
+		"status":  StatusCompleted,
+		"content": []any{cloneJSONValue(part)},
+	}
+	e.setOutputItem(outputIdx, completedItem)
 	if err := e.emit("response.content_part.done", map[string]any{
 		"type":            "response.content_part.done",
 		"sequence_number": e.nextSeq(),
+		"item_id":         itemID,
 		"output_index":    outputIdx,
 		"content_index":   0,
 		"part":            part,
@@ -405,12 +506,7 @@ func (e *ResponsesEmitter) EmitMessageEnd(text string, annotations []pipeline.An
 		"type":            "response.output_item.done",
 		"sequence_number": e.nextSeq(),
 		"output_index":    outputIdx,
-		"item": map[string]any{
-			"type":   ItemTypeMessage,
-			"id":     e.messageItemID,
-			"role":   RoleAssistant,
-			"status": StatusCompleted,
-		},
+		"item":            completedItem,
 	})
 }
 
@@ -443,20 +539,7 @@ func (e *ResponsesEmitter) EmitError(err error) error {
 
 // EmitDone emits the response.completed event
 func (e *ResponsesEmitter) EmitDone(id string, created int64, model string, usage openai.CompletionUsage) error {
-	response := map[string]any{
-		"id":         e.responseID,
-		"object":     ObjectResponse,
-		"created_at": e.createdAt,
-		"status":     StatusCompleted,
-		"model":      e.model,
-	}
-	if usage.PromptTokens > 0 || usage.CompletionTokens > 0 || usage.TotalTokens > 0 {
-		response["usage"] = map[string]any{
-			"input_tokens":  usage.PromptTokens,
-			"output_tokens": usage.CompletionTokens,
-			"total_tokens":  usage.TotalTokens,
-		}
-	}
+	response := e.completedResponse(usage)
 	return e.emit("response.completed", map[string]any{
 		"type":            "response.completed",
 		"sequence_number": e.nextSeq(),

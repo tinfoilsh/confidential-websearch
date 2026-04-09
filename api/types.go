@@ -70,6 +70,7 @@ type responseContinuationStore struct {
 
 type responseContinuationEntry struct {
 	upstreamID string
+	response   json.RawMessage
 	expiresAt  time.Time
 }
 
