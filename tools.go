@@ -37,8 +37,9 @@ func newSearchHandler(service *engine.Service, cfg *config.Config) mcp.ToolHandl
 		}
 
 		outcome, err := service.Search(ctx, args.Query, engine.ToolOptions{
-			MaxResults:  args.MaxResults,
-			PIICheckEnabled: cfg.EnablePIICheck,
+			MaxResults:            args.MaxResults,
+			PIICheckEnabled:       cfg.EnablePIICheck,
+			InjectionCheckEnabled: cfg.EnableInjectionCheck,
 		})
 		if err != nil {
 			return nil, SearchResult{}, fmt.Errorf("search failed: %w", err)
@@ -58,8 +59,8 @@ func newFetchHandler(service *engine.Service, cfg *config.Config) mcp.ToolHandle
 		}
 
 		results := service.FetchDetailed(ctx, args.URLs, engine.ToolOptions{
-			PIICheckEnabled:            false,
-			FetchInjectionCheckEnabled: cfg.EnableFetchInjectionCheck,
+			PIICheckEnabled:       false,
+			InjectionCheckEnabled: cfg.EnableInjectionCheck,
 		})
 
 		pages := make([]fetch.FetchedPage, 0, len(results))

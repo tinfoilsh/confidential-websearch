@@ -92,12 +92,12 @@ type Runner interface {
 }
 
 type ToolOptions struct {
-	MaxResults                 int
-	PIICheckEnabled            bool
-	FetchInjectionCheckEnabled bool
-	SearchContextSize          pipeline.SearchContextSize
-	UserLocation               *pipeline.UserLocation
-	AllowedDomains             []string
+	MaxResults            int
+	PIICheckEnabled       bool
+	InjectionCheckEnabled bool
+	SearchContextSize     pipeline.SearchContextSize
+	UserLocation          *pipeline.UserLocation
+	AllowedDomains        []string
 }
 
 type SearchOutcome struct {
@@ -237,6 +237,10 @@ func (s *Service) Search(ctx context.Context, query string, opts ToolOptions) (S
 		return SearchOutcome{}, err
 	}
 
+	if opts.InjectionCheckEnabled && len(results) > 0 && s.safeguard != nil {
+		results = filterSearchResults(ctx, s.safeguard, results)
+	}
+
 	return SearchOutcome{Results: results}, nil
 }
 
@@ -249,7 +253,7 @@ func (s *Service) Fetch(ctx context.Context, urls []string, opts ToolOptions) []
 	}
 
 	pages := s.fetcher.FetchURLs(ctx, urls)
-	if opts.FetchInjectionCheckEnabled && len(pages) > 0 && s.safeguard != nil {
+	if opts.InjectionCheckEnabled && len(pages) > 0 && s.safeguard != nil {
 		pages = filterFetchedPages(ctx, s.safeguard, pages)
 	}
 
@@ -296,7 +300,7 @@ func (s *Service) FetchDetailed(ctx context.Context, urls []string, opts ToolOpt
 	}
 
 	results := detailedFetcher.FetchURLResults(ctx, urls)
-	if opts.FetchInjectionCheckEnabled && len(results) > 0 && s.safeguard != nil {
+	if opts.InjectionCheckEnabled && len(results) > 0 && s.safeguard != nil {
 		results = filterFetchResults(ctx, s.safeguard, results)
 	}
 
@@ -593,12 +597,12 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 	var wg sync.WaitGroup
 
 	toolOpts := ToolOptions{
-		MaxResults:                 config.DefaultMaxSearchResults,
-		PIICheckEnabled:            req.PIICheckEnabled,
-		FetchInjectionCheckEnabled: req.FetchInjectionCheckEnabled,
-		SearchContextSize:          req.SearchContextSize,
-		UserLocation:               req.UserLocation,
-		AllowedDomains:             req.AllowedDomains,
+		MaxResults:            config.DefaultMaxSearchResults,
+		PIICheckEnabled:       req.PIICheckEnabled,
+		InjectionCheckEnabled: req.InjectionCheckEnabled,
+		SearchContextSize:     req.SearchContextSize,
+		UserLocation:          req.UserLocation,
+		AllowedDomains:        req.AllowedDomains,
 	}
 
 	for _, call := range sortedCalls {

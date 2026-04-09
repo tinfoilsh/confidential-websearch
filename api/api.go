@@ -76,11 +76,17 @@ func sanitizeErrorMessage(err error) string {
 }
 
 func parseRequestBody(r *http.Request, v any) error {
-	dec := json.NewDecoder(r.Body)
-	if err := dec.Decode(v); err != nil {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
 		if err == io.EOF {
 			return fmt.Errorf("failed to read request: empty body")
 		}
+		return fmt.Errorf("failed to read request: %w", err)
+	}
+	if len(body) == 0 {
+		return fmt.Errorf("failed to read request: empty body")
+	}
+	if err := json.Unmarshal(body, v); err != nil {
 		return fmt.Errorf("failed to parse request: %w", err)
 	}
 	return nil
@@ -304,7 +310,7 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// Derive feature flags from options presence
 	webSearchEnabled := req.WebSearchOptions != nil
 	piiCheckEnabled := s.DefaultPIICheckEnabled || req.PIICheckOptions != nil
-	fetchInjectionCheckEnabled := s.DefaultFetchInjectionCheckEnabled || req.InjectionCheckOptions != nil
+	injectionCheckEnabled := s.DefaultInjectionCheckEnabled || req.InjectionCheckOptions != nil
 	var searchContextSize pipeline.SearchContextSize
 	var userLocation *pipeline.UserLocation
 	var allowedDomains []string
@@ -315,22 +321,22 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			allowedDomains = req.WebSearchOptions.Filters.AllowedDomains
 		}
 	}
-	log.Debugf("Request features: web_search=%v, pii_check=%v, fetch_injection_check=%v",
-		webSearchEnabled, piiCheckEnabled, fetchInjectionCheckEnabled)
+	log.Debugf("Request features: web_search=%v, pii_check=%v, injection_check=%v",
+		webSearchEnabled, piiCheckEnabled, injectionCheckEnabled)
 
 	pipelineReq := &pipeline.Request{
-		Model:                      req.Model,
-		Messages:                   convertMessages(req.Messages),
-		Stream:                     req.Stream,
-		Temperature:                req.Temperature,
-		MaxTokens:                  req.MaxTokens,
-		Format:                     pipeline.FormatChatCompletion,
-		WebSearchEnabled:           webSearchEnabled,
-		PIICheckEnabled:            piiCheckEnabled,
-		FetchInjectionCheckEnabled: fetchInjectionCheckEnabled,
-		SearchContextSize:          searchContextSize,
-		UserLocation:               userLocation,
-		AllowedDomains:             allowedDomains,
+		Model:                 req.Model,
+		Messages:              convertMessages(req.Messages),
+		Stream:                req.Stream,
+		Temperature:           req.Temperature,
+		MaxTokens:             req.MaxTokens,
+		Format:                pipeline.FormatChatCompletion,
+		WebSearchEnabled:      webSearchEnabled,
+		PIICheckEnabled:       piiCheckEnabled,
+		InjectionCheckEnabled: injectionCheckEnabled,
+		SearchContextSize:     searchContextSize,
+		UserLocation:          userLocation,
+		AllowedDomains:        allowedDomains,
 	}
 
 	if req.Stream {
@@ -491,22 +497,22 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	// Derive feature flags from tools array and options
 	webSearchEnabled, searchContextSize, userLocation, allowedDomains := extractResponsesWebSearchOptions(req.Tools)
 	piiCheckEnabled := s.DefaultPIICheckEnabled || req.PIICheckOptions != nil
-	fetchInjectionCheckEnabled := s.DefaultFetchInjectionCheckEnabled || req.InjectionCheckOptions != nil
-	log.Debugf("Responses request features: web_search=%v, pii_check=%v, fetch_injection_check=%v",
-		webSearchEnabled, piiCheckEnabled, fetchInjectionCheckEnabled)
+	injectionCheckEnabled := s.DefaultInjectionCheckEnabled || req.InjectionCheckOptions != nil
+	log.Debugf("Responses request features: web_search=%v, pii_check=%v, injection_check=%v",
+		webSearchEnabled, piiCheckEnabled, injectionCheckEnabled)
 
 	pipelineReq := &pipeline.Request{
-		Model:                      req.Model,
-		Input:                      req.Input,
-		PreviousResponseID:         s.resolvePreviousResponseID(req.PreviousResponseID),
-		Stream:                     req.Stream,
-		Format:                     pipeline.FormatResponses,
-		WebSearchEnabled:           webSearchEnabled,
-		PIICheckEnabled:            piiCheckEnabled,
-		FetchInjectionCheckEnabled: fetchInjectionCheckEnabled,
-		SearchContextSize:          searchContextSize,
-		UserLocation:               userLocation,
-		AllowedDomains:             allowedDomains,
+		Model:                 req.Model,
+		Input:                 req.Input,
+		PreviousResponseID:    s.resolvePreviousResponseID(req.PreviousResponseID),
+		Stream:                req.Stream,
+		Format:                pipeline.FormatResponses,
+		WebSearchEnabled:      webSearchEnabled,
+		PIICheckEnabled:       piiCheckEnabled,
+		InjectionCheckEnabled: injectionCheckEnabled,
+		SearchContextSize:     searchContextSize,
+		UserLocation:          userLocation,
+		AllowedDomains:        allowedDomains,
 	}
 
 	if req.Stream {

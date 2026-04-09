@@ -65,8 +65,8 @@ func main() {
 
 	apiServer := &api.Server{
 		Runner:                       service,
-		DefaultPIICheckEnabled:            cfg.EnablePIICheck,
-		DefaultFetchInjectionCheckEnabled: cfg.EnableFetchInjectionCheck,
+		DefaultPIICheckEnabled:       cfg.EnablePIICheck,
+		DefaultInjectionCheckEnabled: cfg.EnableInjectionCheck,
 	}
 
 	server := mcp.NewServer(&mcp.Implementation{
@@ -130,5 +130,3 @@ func (c responsesClient) New(ctx context.Context, body responses.ResponseNewPara
 func (c responsesClient) NewStreaming(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) engine.ResponseStream {
 	return c.inner.NewStreaming(ctx, body, opts...)
 }
-
-

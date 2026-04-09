@@ -492,6 +492,28 @@ func TestSearch_AllowsSearchWhenPIICheckErrors(t *testing.T) {
 	}
 }
 
+func TestSearch_FiltersResultsWhenInjectionCheckEnabled(t *testing.T) {
+	service := NewService(nil, &fakeSearcher{results: map[string][]search.Result{
+		"golang": {
+			{Title: "Safe", URL: "https://example.com/safe", Content: "safe"},
+			{Title: "Unsafe", URL: "https://example.com/unsafe", Content: "unsafe"},
+		},
+	}}, nil, &fakeSafeguard{
+		blocked: map[string]string{"unsafe": "prompt injection detected"},
+	})
+
+	outcome, err := service.Search(context.Background(), "golang", ToolOptions{InjectionCheckEnabled: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(outcome.Results) != 1 {
+		t.Fatalf("expected one filtered search result, got %d", len(outcome.Results))
+	}
+	if outcome.Results[0].Title != "Safe" {
+		t.Fatalf("expected safe result to remain, got %q", outcome.Results[0].Title)
+	}
+}
+
 func TestFilterSearchResults_KeepsResultsWhenInjectionCheckErrors(t *testing.T) {
 	results := filterSearchResults(context.Background(), &fakeSafeguard{
 		errs: map[string]error{"unsafe": fmt.Errorf("timeout")},

@@ -60,7 +60,7 @@ func setupIntegrationServer(t *testing.T) *api.Server {
 		// AgentModel removed in refactor:           "gpt-oss-120b",
 		ExaAPIKey:            exaKey,
 		SafeguardModel:       "gpt-oss-safeguard-120b",
-		EnableFetchInjectionCheck: true,
+		EnableInjectionCheck: true,
 	}
 
 	searcher, err := search.NewProvider(search.Config{ExaAPIKey: cfg.ExaAPIKey})
@@ -88,7 +88,7 @@ func setupIntegrationServer(t *testing.T) *api.Server {
 	return &api.Server{
 		Runner:                       service,
 		DefaultPIICheckEnabled:       cfg.EnablePIICheck,
-		DefaultFetchInjectionCheckEnabled: cfg.EnableFetchInjectionCheck,
+		DefaultInjectionCheckEnabled: cfg.EnableInjectionCheck,
 	}
 }
 

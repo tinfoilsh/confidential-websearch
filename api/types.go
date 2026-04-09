@@ -56,7 +56,7 @@ const (
 type Server struct {
 	Runner                       engine.Runner
 	DefaultPIICheckEnabled       bool
-	DefaultFetchInjectionCheckEnabled bool
+	DefaultInjectionCheckEnabled bool
 
 	responseStoreOnce sync.Once
 	responseStore     *responseContinuationStore
