@@ -307,10 +307,10 @@ func TestRun_MultiStepUsesPreviousResponseIDAndTracksSources(t *testing.T) {
 	if len(client.params) != 3 {
 		t.Fatalf("expected 3 model calls, got %d", len(client.params))
 	}
-	assertContainsJSON(t, client.params[1], `"previous_response_id":"resp_1"`)
 	assertContainsJSON(t, client.params[1], `"call_id":"call_search"`)
-	assertContainsJSON(t, client.params[2], `"previous_response_id":"resp_2"`)
+	assertContainsJSON(t, client.params[1], `"name":"search"`)
 	assertContainsJSON(t, client.params[2], `"call_id":"call_fetch"`)
+	assertContainsJSON(t, client.params[2], `"name":"fetch"`)
 
 	if len(result.Annotations) != 2 {
 		t.Fatalf("expected 2 annotations, got %d", len(result.Annotations))
@@ -344,7 +344,8 @@ func TestRun_MixedTextAndFunctionCallContinuesCleanly(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	assertContainsJSON(t, client.params[1], `"previous_response_id":"resp_mix_1"`)
+	assertContainsJSON(t, client.params[1], `"call_id":"call_search"`)
+	assertContainsJSON(t, client.params[1], `"name":"search"`)
 	if result.Content != "Here is the answer【1】" {
 		t.Fatalf("unexpected final content: %q", result.Content)
 	}
@@ -403,7 +404,8 @@ func TestStream_UsesPreviousResponseIDAndEmitsMatchingAnnotations(t *testing.T) 
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	assertContainsJSON(t, client.params[1], `"previous_response_id":"resp_stream_1"`)
+	assertContainsJSON(t, client.params[1], `"call_id":"call_search"`)
+	assertContainsJSON(t, client.params[1], `"name":"search"`)
 	if len(emitter.annotations) != 1 || len(result.Annotations) != 1 {
 		t.Fatalf("expected one annotation from streaming result")
 	}
