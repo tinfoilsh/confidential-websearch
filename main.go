@@ -117,6 +117,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	httpServer.Shutdown(ctx)
+	apiServer.Close()
 }
 
 type responsesClient struct {

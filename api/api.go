@@ -247,6 +247,13 @@ func (s *responseContinuationStore) stop() {
 	close(s.stopPrune)
 }
 
+// Close stops background goroutines owned by the server.
+func (s *Server) Close() {
+	if s.responseStore != nil {
+		s.responseStore.stop()
+	}
+}
+
 func (s *Server) validateForStreaming(req *pipeline.Request) error {
 	validator, ok := s.Runner.(requestValidator)
 	if !ok {
