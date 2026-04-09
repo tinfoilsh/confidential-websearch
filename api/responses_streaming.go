@@ -25,6 +25,7 @@ type ResponsesEmitter struct {
 	mu            sync.Mutex
 	nextOutputIdx int
 	itemIndexes   map[string]int
+	itemsAdded    map[string]bool
 	messageItemID string
 	messageIdx    int
 	reasoning     string
@@ -48,6 +49,7 @@ func NewResponsesEmitter(w http.ResponseWriter, responseID, model string) (*Resp
 		model:       model,
 		createdAt:   time.Now().Unix(),
 		itemIndexes: make(map[string]int),
+		itemsAdded:  make(map[string]bool),
 	}, nil
 }
 
@@ -96,18 +98,20 @@ func (e *ResponsesEmitter) outputIndexFor(itemID string) int {
 	return index
 }
 
-func (e *ResponsesEmitter) outputIndexForWithExisting(itemID string) (int, bool) {
+func (e *ResponsesEmitter) outputIndexForWithAdded(itemID string) (int, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	added := e.itemsAdded[itemID]
+
 	if index, ok := e.itemIndexes[itemID]; ok {
-		return index, true
+		return index, added
 	}
 
 	index := e.nextOutputIdx
 	e.itemIndexes[itemID] = index
 	e.nextOutputIdx++
-	return index, false
+	return index, added
 }
 
 func (e *ResponsesEmitter) currentMessageIndex() int {
@@ -153,6 +157,9 @@ func (e *ResponsesEmitter) emitWebSearchCallEvents(itemID, status string, action
 	switch status {
 	case StatusInProgress:
 		outputIdx := e.reserveOutputIndex(itemID)
+		e.mu.Lock()
+		e.itemsAdded[itemID] = true
+		e.mu.Unlock()
 		item := map[string]any{
 			"type":   ItemTypeWebSearchCall,
 			"id":     itemID,
@@ -200,7 +207,7 @@ func (e *ResponsesEmitter) emitWebSearchCallEvents(itemID, status string, action
 		return nil
 
 	case StatusBlocked, StatusFailed:
-		outputIdx, existed := e.outputIndexForWithExisting(itemID)
+		outputIdx, alreadyAdded := e.outputIndexForWithAdded(itemID)
 		item := map[string]any{
 			"type":   ItemTypeWebSearchCall,
 			"id":     itemID,
@@ -212,7 +219,10 @@ func (e *ResponsesEmitter) emitWebSearchCallEvents(itemID, status string, action
 		if action != nil {
 			item["action"] = action
 		}
-		if !existed {
+		if !alreadyAdded {
+			e.mu.Lock()
+			e.itemsAdded[itemID] = true
+			e.mu.Unlock()
 			if err := e.emit("response.output_item.added", map[string]any{
 				"type":            "response.output_item.added",
 				"sequence_number": e.nextSeq(),
