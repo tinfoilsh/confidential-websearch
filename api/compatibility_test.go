@@ -50,11 +50,14 @@ func TestHandleChatCompletions_MapsFeatureFlagsToPipelineRequest(t *testing.T) {
 				if req.UserLocation == nil || req.UserLocation.Country != "US" || req.UserLocation.City != "San Francisco" || req.UserLocation.Region != "CA" {
 					t.Fatalf("expected user location to be mapped, got %+v", req.UserLocation)
 				}
+				if len(req.AllowedDomains) != 2 || req.AllowedDomains[0] != "example.com" || req.AllowedDomains[1] != "docs.example.com" {
+					t.Fatalf("expected allowed domains to be mapped, got %+v", req.AllowedDomains)
+				}
 				if !req.PIICheckEnabled {
 					t.Fatal("expected pii check to be enabled")
 				}
-				if !req.FetchInjectionCheckEnabled {
-					t.Fatal("expected fetch injection check to be enabled")
+				if !req.InjectionCheckEnabled {
+					t.Fatal("expected injection check to be enabled")
 				}
 				if req.Format != pipeline.FormatChatCompletion {
 					t.Fatalf("expected chat completion format, got %v", req.Format)
@@ -75,6 +78,9 @@ func TestHandleChatCompletions_MapsFeatureFlagsToPipelineRequest(t *testing.T) {
 					"city":"San Francisco",
 					"region":"CA"
 				}
+			},
+			"filters":{
+				"allowed_domains":["example.com","docs.example.com"]
 			}
 		},
 		"pii_check_options":{},
@@ -103,11 +109,14 @@ func TestHandleResponses_MapsFeatureFlagsToPipelineRequest(t *testing.T) {
 				if req.UserLocation == nil || req.UserLocation.Country != "FR" {
 					t.Fatalf("expected user location country FR, got %+v", req.UserLocation)
 				}
+				if len(req.AllowedDomains) != 1 || req.AllowedDomains[0] != "example.fr" {
+					t.Fatalf("expected allowed domains to be mapped, got %+v", req.AllowedDomains)
+				}
 				if !req.PIICheckEnabled {
 					t.Fatal("expected pii check to be enabled")
 				}
-				if !req.FetchInjectionCheckEnabled {
-					t.Fatal("expected fetch injection check to be enabled")
+				if !req.InjectionCheckEnabled {
+					t.Fatal("expected injection check to be enabled")
 				}
 				if req.Format != pipeline.FormatResponses {
 					t.Fatalf("expected responses format, got %v", req.Format)
@@ -130,6 +139,9 @@ func TestHandleResponses_MapsFeatureFlagsToPipelineRequest(t *testing.T) {
 				"approximate":{
 					"country":"FR"
 				}
+			},
+			"filters":{
+				"allowed_domains":["example.fr"]
 			}
 		}],
 		"pii_check_options":{},

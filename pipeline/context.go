@@ -101,12 +101,12 @@ type Request struct {
 	AuthHeader         string
 
 	// Feature flags
-	WebSearchEnabled           bool
-	PIICheckEnabled            bool
-	FetchInjectionCheckEnabled bool
-	SearchContextSize          SearchContextSize
-	UserLocation               *UserLocation
-	AllowedDomains             []string
+	WebSearchEnabled      bool
+	PIICheckEnabled       bool
+	InjectionCheckEnabled bool
+	SearchContextSize     SearchContextSize
+	UserLocation          *UserLocation
+	AllowedDomains        []string
 }
 
 // EventEmitter handles streaming output events

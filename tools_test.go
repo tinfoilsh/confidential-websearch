@@ -10,6 +10,7 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/config"
 	"github.com/tinfoilsh/confidential-websearch/engine"
 	"github.com/tinfoilsh/confidential-websearch/fetch"
+	"github.com/tinfoilsh/confidential-websearch/safeguard"
 	"github.com/tinfoilsh/confidential-websearch/search"
 )
 
@@ -33,6 +34,17 @@ func (m *mockSearchProvider) Name() string { return "mock" }
 type mockFetcher struct {
 	pages   []fetch.FetchedPage
 	results []fetch.URLResult
+}
+
+type mockSafeguard struct {
+	blocked map[string]string
+}
+
+func (m *mockSafeguard) Check(ctx context.Context, policy, content string) (*safeguard.CheckResult, error) {
+	if reason, ok := m.blocked[content]; ok {
+		return &safeguard.CheckResult{Violation: true, Rationale: reason}, nil
+	}
+	return &safeguard.CheckResult{}, nil
 }
 
 func (m *mockFetcher) FetchURLs(ctx context.Context, urls []string) []fetch.FetchedPage {
@@ -153,6 +165,30 @@ func TestSearchHandler_PIICheckDisabled(t *testing.T) {
 	}
 	if len(result.Results) != 1 {
 		t.Errorf("expected 1 result, got %d", len(result.Results))
+	}
+}
+
+func TestSearchHandler_InjectionCheckEnabled(t *testing.T) {
+	searcher := &mockSearchProvider{
+		results: []search.Result{
+			{Title: "Safe", URL: "https://example.com/safe", Content: "safe"},
+			{Title: "Unsafe", URL: "https://example.com/unsafe", Content: "unsafe"},
+		},
+	}
+	service := engine.NewService(nil, searcher, nil, &mockSafeguard{
+		blocked: map[string]string{"unsafe": "prompt injection detected"},
+	})
+	handler := newSearchHandler(service, &config.Config{EnableInjectionCheck: true})
+
+	_, result, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "test"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("expected one filtered result, got %d", len(result.Results))
+	}
+	if result.Results[0].Title != "Safe" {
+		t.Fatalf("expected safe result to remain, got %q", result.Results[0].Title)
 	}
 }
 

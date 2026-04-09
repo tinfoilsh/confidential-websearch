@@ -163,13 +163,13 @@ func TestHandleChatCompletions_AppliesDefaultSafeguardFlags(t *testing.T) {
 				if !req.PIICheckEnabled {
 					t.Fatal("expected default pii check to be enabled")
 				}
-				if !req.FetchInjectionCheckEnabled {
-					t.Fatal("expected default fetch injection check to be enabled")
+				if !req.InjectionCheckEnabled {
+					t.Fatal("expected default injection check to be enabled")
 				}
 			},
 		},
-		DefaultPIICheckEnabled:            true,
-		DefaultFetchInjectionCheckEnabled: true,
+		DefaultPIICheckEnabled:       true,
+		DefaultInjectionCheckEnabled: true,
 	}
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{
 		"model":"gpt-oss-120b",
@@ -403,13 +403,13 @@ func TestHandleResponses_AppliesDefaultSafeguardFlags(t *testing.T) {
 				if !req.PIICheckEnabled {
 					t.Fatal("expected default pii check to be enabled")
 				}
-				if !req.FetchInjectionCheckEnabled {
-					t.Fatal("expected default fetch injection check to be enabled")
+				if !req.InjectionCheckEnabled {
+					t.Fatal("expected default injection check to be enabled")
 				}
 			},
 		},
-		DefaultPIICheckEnabled:            true,
-		DefaultFetchInjectionCheckEnabled: true,
+		DefaultPIICheckEnabled:       true,
+		DefaultInjectionCheckEnabled: true,
 	}
 	req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{
 		"model":"gpt-oss-120b",
@@ -759,6 +759,68 @@ func TestParseRequestBody_EmptyBody(t *testing.T) {
 	err := parseRequestBody(req, &result)
 	if err == nil {
 		t.Fatal("expected error for empty body")
+	}
+}
+
+func TestParseRequestBody_TrailingJunk(t *testing.T) {
+	body := bytes.NewReader([]byte(`{"model":"gpt-oss-120b","messages":[]}junk`))
+	req := httptest.NewRequest("POST", "/", body)
+
+	var result IncomingRequest
+	err := parseRequestBody(req, &result)
+	if err == nil {
+		t.Fatal("expected error for trailing junk")
+	}
+
+	if !strings.Contains(err.Error(), "failed to parse request") {
+		t.Errorf("expected parse error, got: %v", err)
+	}
+}
+
+func TestParseRequestBody_MultipleJSONValues(t *testing.T) {
+	body := bytes.NewReader([]byte(`{"model":"gpt-oss-120b","messages":[]}{"model":"gpt-oss-120b","messages":[]}`))
+	req := httptest.NewRequest("POST", "/", body)
+
+	var result IncomingRequest
+	err := parseRequestBody(req, &result)
+	if err == nil {
+		t.Fatal("expected error for multiple JSON values")
+	}
+
+	if !strings.Contains(err.Error(), "failed to parse request") {
+		t.Errorf("expected parse error, got: %v", err)
+	}
+}
+
+func TestHandleChatCompletions_RejectsOversizedTrailingPayload(t *testing.T) {
+	srv := &Server{}
+	body := `{"model":"gpt-oss-120b","messages":[]}` + strings.Repeat("x", int(MaxRequestBodySize))
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	srv.HandleChatCompletions(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "request body too large") {
+		t.Fatalf("expected request body too large error, got %s", w.Body.String())
+	}
+}
+
+func TestHandleResponses_RejectsOversizedTrailingPayload(t *testing.T) {
+	srv := &Server{}
+	body := `{"model":"gpt-oss-120b","input":"hello"}` + strings.Repeat("x", int(MaxRequestBodySize))
+	req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	srv.HandleResponses(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "request body too large") {
+		t.Fatalf("expected request body too large error, got %s", w.Body.String())
 	}
 }
 
