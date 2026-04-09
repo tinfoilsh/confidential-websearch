@@ -13,12 +13,13 @@ import (
 
 // SSEEmitter implements pipeline.EventEmitter for Server-Sent Events
 type SSEEmitter struct {
-	w       http.ResponseWriter
-	flusher http.Flusher
+	w            http.ResponseWriter
+	flusher      http.Flusher
+	includeUsage bool
 }
 
 // NewSSEEmitter creates a new SSE emitter from a response writer
-func NewSSEEmitter(w http.ResponseWriter) (*SSEEmitter, error) {
+func NewSSEEmitter(w http.ResponseWriter, includeUsage bool) (*SSEEmitter, error) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		return nil, fmt.Errorf("streaming not supported")
@@ -28,7 +29,7 @@ func NewSSEEmitter(w http.ResponseWriter) (*SSEEmitter, error) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	return &SSEEmitter{w: w, flusher: flusher}, nil
+	return &SSEEmitter{w: w, flusher: flusher, includeUsage: includeUsage}, nil
 }
 
 // emit writes SSE data and flushes
@@ -167,7 +168,27 @@ func (e *SSEEmitter) EmitError(err error) error {
 }
 
 // EmitDone emits the final done signal
-func (e *SSEEmitter) EmitDone() error {
+func (e *SSEEmitter) EmitDone(id string, created int64, model string, usage openai.CompletionUsage) error {
+	if e.includeUsage {
+		usageChunk, err := json.Marshal(map[string]any{
+			"id":      id,
+			"object":  ObjectChatCompletionChunk,
+			"created": created,
+			"model":   model,
+			"choices": []any{},
+			"usage": map[string]any{
+				"prompt_tokens":     usage.PromptTokens,
+				"completion_tokens": usage.CompletionTokens,
+				"total_tokens":      usage.TotalTokens,
+			},
+		})
+		if err != nil {
+			return err
+		}
+		if err := e.emit(usageChunk); err != nil {
+			return err
+		}
+	}
 	return e.emit([]byte("[DONE]"))
 }
 

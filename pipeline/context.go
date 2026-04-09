@@ -3,6 +3,7 @@ package pipeline
 import (
 	"encoding/json"
 
+	openai "github.com/openai/openai-go/v3"
 	"github.com/tinfoilsh/confidential-websearch/agent"
 )
 
@@ -107,6 +108,7 @@ type Request struct {
 	SearchContextSize     SearchContextSize
 	UserLocation          *UserLocation
 	AllowedDomains        []string
+	StreamIncludeUsage    bool
 }
 
 // EventEmitter handles streaming output events
@@ -128,7 +130,7 @@ type EventEmitter interface {
 	EmitError(err error) error
 
 	// EmitDone emits the final done signal
-	EmitDone() error
+	EmitDone(id string, created int64, model string, usage openai.CompletionUsage) error
 
 	// Responses API lifecycle methods (no-op for Chat Completions)
 	EmitResponseStart() error

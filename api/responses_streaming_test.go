@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	openai "github.com/openai/openai-go/v3"
 	"github.com/tinfoilsh/confidential-websearch/pipeline"
 )
 
@@ -95,6 +96,74 @@ func TestResponsesEmitter_UsesFlatAnnotationsInContentPartDone(t *testing.T) {
 	}
 
 	t.Fatal("expected response.content_part.done event")
+}
+
+func TestResponsesEmitter_DoesNotReAddBlockedToolItem(t *testing.T) {
+	w := httptest.NewRecorder()
+	emitter, err := NewResponsesEmitter(w, "resp_test", "gpt-oss-120b")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if err := emitter.EmitSearchCall("a", StatusInProgress, "query a", "", 0, "gpt-oss-120b"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := emitter.EmitSearchCall("a", StatusBlocked, "query a", "blocked", 0, "gpt-oss-120b"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	events := decodeSSEDataLines(t, w.Body.String())
+	addedCount := 0
+	for _, event := range events {
+		if event["type"] != "response.output_item.added" {
+			continue
+		}
+		item, ok := event["item"].(map[string]any)
+		if !ok || item["id"] != IDPrefixWebSearch+"a" {
+			continue
+		}
+		addedCount++
+	}
+	if addedCount != 1 {
+		t.Fatalf("expected one output_item.added for blocked item, got %d", addedCount)
+	}
+}
+
+func TestResponsesEmitter_EmitDoneIncludesUsage(t *testing.T) {
+	w := httptest.NewRecorder()
+	emitter, err := NewResponsesEmitter(w, "resp_test", "gpt-oss-120b")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if err := emitter.EmitDone("resp_test", 123, "gpt-oss-120b", openai.CompletionUsage{
+		PromptTokens:     7,
+		CompletionTokens: 4,
+		TotalTokens:      11,
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	events := decodeSSEDataLines(t, w.Body.String())
+	for _, event := range events {
+		if event["type"] != "response.completed" {
+			continue
+		}
+		response, ok := event["response"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected response payload, got %+v", event["response"])
+		}
+		usage, ok := response["usage"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected usage payload, got %+v", response["usage"])
+		}
+		if usage["input_tokens"] != float64(7) || usage["output_tokens"] != float64(4) || usage["total_tokens"] != float64(11) {
+			t.Fatalf("unexpected usage payload: %+v", usage)
+		}
+		return
+	}
+
+	t.Fatal("expected response.completed event")
 }
 
 func decodeSSEDataLines(t *testing.T, body string) []map[string]any {
