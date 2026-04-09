@@ -70,20 +70,6 @@ func (e *ResponsesEmitter) nextSeq() int64 {
 	return e.seqNum.Add(1)
 }
 
-func (e *ResponsesEmitter) reserveOutputIndex(itemID string) int {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	if index, ok := e.itemIndexes[itemID]; ok {
-		return index
-	}
-
-	index := e.nextOutputIdx
-	e.itemIndexes[itemID] = index
-	e.nextOutputIdx++
-	return index
-}
-
 func (e *ResponsesEmitter) outputIndexFor(itemID string) int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -156,7 +142,7 @@ func (e *ResponsesEmitter) EmitResponseStart() error {
 func (e *ResponsesEmitter) emitWebSearchCallEvents(itemID, status string, action map[string]any, reason string) error {
 	switch status {
 	case StatusInProgress:
-		outputIdx := e.reserveOutputIndex(itemID)
+		outputIdx := e.outputIndexFor(itemID)
 		e.mu.Lock()
 		e.itemsAdded[itemID] = true
 		e.mu.Unlock()
@@ -297,7 +283,7 @@ func (e *ResponsesEmitter) EmitMetadata(id string, created int64, model string, 
 // EmitMessageStart emits the message output item start
 func (e *ResponsesEmitter) EmitMessageStart(itemID string) error {
 	e.messageItemID = itemID
-	outputIdx := e.reserveOutputIndex(itemID)
+	outputIdx := e.outputIndexFor(itemID)
 	e.mu.Lock()
 	e.messageIdx = outputIdx
 	e.mu.Unlock()
