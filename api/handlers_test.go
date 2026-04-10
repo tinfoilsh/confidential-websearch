@@ -189,12 +189,11 @@ func TestHandleChatCompletions_NonStreaming_Success(t *testing.T) {
 	mockRunner := &MockRunner{
 		RunFunc: func(ctx context.Context, req *pipeline.Request) (*engine.Result, error) {
 			return &engine.Result{
-				ID:              "resp_123",
-				Model:           "gpt-4",
-				Object:          "chat.completion",
-				Created:         1234567890,
-				Content:         "Here is the response",
-				SearchReasoning: "Searched for test query",
+				ID:      "resp_123",
+				Model:   "gpt-4",
+				Object:  "chat.completion",
+				Created: 1234567890,
+				Content: "Here is the response",
 				SearchResults: []agent.ToolCall{
 					{
 						ID:    "call_123",
@@ -235,9 +234,6 @@ func TestHandleChatCompletions_NonStreaming_Success(t *testing.T) {
 	}
 	if resp.Choices[0].Message.Content != "Here is the response" {
 		t.Errorf("expected content 'Here is the response', got '%s'", resp.Choices[0].Message.Content)
-	}
-	if resp.Choices[0].Message.SearchReasoning != "Searched for test query" {
-		t.Errorf("expected search reasoning, got '%s'", resp.Choices[0].Message.SearchReasoning)
 	}
 }
 

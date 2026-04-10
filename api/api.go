@@ -460,7 +460,6 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 					Role:            RoleAssistant,
 					Content:         result.Content,
 					Annotations:     annotations,
-					SearchReasoning: result.SearchReasoning,
 					BlockedSearches: blockedSearches,
 					FetchCalls:      fetchCalls,
 				},
@@ -647,10 +646,9 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		Role:   RoleAssistant,
 		Content: []ResponsesContent{
 			{
-				Type:            ContentTypeOutputText,
-				Text:            result.Content,
-				Annotations:     flatAnnotations,
-				SearchReasoning: result.SearchReasoning,
+				Type:        ContentTypeOutputText,
+				Text:        result.Content,
+				Annotations: flatAnnotations,
 			},
 		},
 	})

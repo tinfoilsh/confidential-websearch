@@ -142,8 +142,7 @@ type WebSearchCall struct {
 
 // StreamingDelta represents a delta in a streaming chunk
 type StreamingDelta struct {
-	Annotations     []pipeline.Annotation `json:"annotations,omitempty"`
-	SearchReasoning string                `json:"search_reasoning,omitempty"`
+	Annotations []pipeline.Annotation `json:"annotations,omitempty"`
 }
 
 // StreamingChoice represents a choice in a streaming chunk
@@ -191,10 +190,9 @@ type ResponsesOutput struct {
 
 // ResponsesContent represents content in Responses API message output
 type ResponsesContent struct {
-	Type            string           `json:"type"`
-	Text            string           `json:"text"`
-	Annotations     []FlatAnnotation `json:"annotations,omitempty"`
-	SearchReasoning string           `json:"search_reasoning,omitempty"`
+	Type        string           `json:"type"`
+	Text        string           `json:"text"`
+	Annotations []FlatAnnotation `json:"annotations,omitempty"`
 }
 
 // WebSearchFilters restricts search results to specific domains (OpenAI-compatible)
@@ -255,7 +253,6 @@ type BlockedSearch struct {
 // ChatCompletionMessageOutput represents the assistant message.
 // Includes standard OpenAI fields plus custom extensions:
 //   - annotations: URL citations from web search (standard format)
-//   - search_reasoning: Agent's reasoning about search decisions (extension)
 //   - blocked_searches: Queries blocked by safety filters (extension)
 //
 // FetchCall represents a URL fetch that was performed
@@ -269,7 +266,6 @@ type ChatCompletionMessageOutput struct {
 	Role            string                `json:"role"`
 	Content         string                `json:"content"`
 	Annotations     []pipeline.Annotation `json:"annotations,omitempty"`
-	SearchReasoning string                `json:"search_reasoning,omitempty"`
 	BlockedSearches []BlockedSearch       `json:"blocked_searches,omitempty"`
 	FetchCalls      []FetchCall           `json:"fetch_calls,omitempty"`
 }

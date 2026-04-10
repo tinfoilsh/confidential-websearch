@@ -120,8 +120,8 @@ type EventEmitter interface {
 	// EmitFetchCall emits a URL fetch event (action.type "open_page")
 	EmitFetchCall(id, status, url string, created int64, model string) error
 
-	// EmitMetadata emits annotations and reasoning before content
-	EmitMetadata(id string, created int64, model string, annotations []Annotation, reasoning string) error
+	// EmitMetadata emits annotations before content
+	EmitMetadata(id string, created int64, model string, annotations []Annotation) error
 
 	// EmitChunk emits a raw chunk of data
 	EmitChunk(data []byte) error
