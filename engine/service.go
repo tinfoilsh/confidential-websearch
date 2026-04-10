@@ -435,64 +435,8 @@ func (s *Service) Validate(req *pipeline.Request) error {
 func (s *Service) streamIteration(ctx context.Context, req *pipeline.Request, state *executionState, emitter pipeline.EventEmitter, streamID string, created int64, allowTools bool, input []responses.ResponseInputItemUnionParam, previousResponseID string) (*Result, []responses.ResponseInputItemUnionParam, error) {
 	stream := s.responses.NewStreaming(ctx, s.buildParams(req, input, allowTools, previousResponseID))
 	parser := &streamState{functionCalls: make(map[int]*functionCall)}
-	messageStarted := false
-
-	for stream.Next() {
-		event := stream.Current()
-		switch event.Type {
-		case "response.created":
-			parser.responseID = event.Response.ID
-		case "response.completed":
-			parser.usage = toCompletionUsage(event.Response.Usage)
-		case "response.output_item.added":
-			switch event.Item.Type {
-			case "function_call":
-				call := event.Item.AsFunctionCall()
-				parser.functionCalls[int(event.OutputIndex)] = &functionCall{
-					index: int(event.OutputIndex),
-					id:    call.CallID,
-					name:  call.Name,
-				}
-			case "message":
-				message := event.Item.AsMessage()
-				parser.messageID = message.ID
-			}
-		case "response.function_call_arguments.delta":
-			call := parser.functionCalls[int(event.OutputIndex)]
-			if call != nil {
-				call.arguments.WriteString(event.Delta)
-			}
-		case "response.function_call_arguments.done":
-			call := parser.functionCalls[int(event.OutputIndex)]
-			if call == nil {
-				call = &functionCall{
-					index: int(event.OutputIndex),
-					id:    event.ItemID,
-					name:  event.Name,
-				}
-				parser.functionCalls[int(event.OutputIndex)] = call
-			}
-			call.arguments.Reset()
-			call.arguments.WriteString(event.Arguments)
-		case "response.output_text.delta":
-			if !messageStarted {
-				if err := startLiveMessage(emitter, streamID, created, req.Model, parser.messageID, streamingAnnotationsFromSources(state.sources)); err != nil {
-					return nil, nil, err
-				}
-				messageStarted = true
-			}
-			parser.text.WriteString(event.Delta)
-			contentChunk, err := marshalChatContentChunk(streamID, created, req.Model, event.Delta)
-			if err != nil {
-				return nil, nil, err
-			}
-			if err := emitter.EmitChunk(contentChunk); err != nil {
-				return nil, nil, err
-			}
-		}
-	}
-
-	if err := stream.Err(); err != nil {
+	messageStarted, err := s.consumeStreamEvents(stream, emitter, streamID, created, req.Model, streamingAnnotationsFromSources(state.sources), parser)
+	if err != nil {
 		return nil, nil, err
 	}
 	if parser.responseID != "" {
@@ -505,12 +449,7 @@ func (s *Service) streamIteration(ctx context.Context, req *pipeline.Request, st
 		}
 
 		result := state.finalResult(req, streamResultID(req, state, streamID), objectFor(req.Format), created, req.Model, parser.text.String(), state.usage)
-		if !messageStarted {
-			if err := startLiveMessage(emitter, streamID, created, req.Model, parser.messageID, streamingAnnotationsFromSources(state.sources)); err != nil {
-				return nil, nil, err
-			}
-		}
-		if err := finishLiveMessage(emitter, streamID, created, req.Model, parser.text.String(), result.Annotations, result.Usage); err != nil {
+		if err := finalizeLiveMessage(emitter, streamID, created, req.Model, parser, messageStarted, streamingAnnotationsFromSources(state.sources), result.Annotations, result.Usage); err != nil {
 			return nil, nil, err
 		}
 		return result, nil, nil
@@ -525,60 +464,101 @@ func (s *Service) streamIteration(ctx context.Context, req *pipeline.Request, st
 
 func (s *Service) streamFinalAnswer(ctx context.Context, req *pipeline.Request, state *executionState, emitter pipeline.EventEmitter, streamID string, created int64, input []responses.ResponseInputItemUnionParam) (*Result, error) {
 	stream := s.responses.NewStreaming(ctx, s.buildParams(req, input, false, ""))
-	messageID := "msg_" + uuid.New().String()[:8]
-	var text strings.Builder
+	parser := &streamState{messageID: "msg_" + uuid.New().String()[:8]}
+	messageStarted, err := s.consumeStreamEvents(stream, emitter, streamID, created, req.Model, streamingAnnotationsFromSources(state.sources), parser)
+	if err != nil {
+		return nil, err
+	}
+	if parser.responseID != "" {
+		state.previousID = parser.responseID
+	}
+	state.addUsage(parser.usage)
+	if parser.text.Len() == 0 {
+		return nil, fmt.Errorf("model returned no final answer")
+	}
+
+	result := state.finalResult(req, streamResultID(req, state, streamID), objectFor(req.Format), created, req.Model, parser.text.String(), state.usage)
+	if err := finalizeLiveMessage(emitter, streamID, created, req.Model, parser, messageStarted, streamingAnnotationsFromSources(state.sources), result.Annotations, result.Usage); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+func (s *Service) consumeStreamEvents(stream ResponseStream, emitter pipeline.EventEmitter, streamID string, created int64, model string, streamingAnnotations []pipeline.Annotation, parser *streamState) (bool, error) {
 	messageStarted := false
 
 	for stream.Next() {
 		event := stream.Current()
 		switch event.Type {
 		case "response.created":
-			state.previousID = event.Response.ID
+			parser.responseID = event.Response.ID
 		case "response.completed":
-			state.addUsage(toCompletionUsage(event.Response.Usage))
+			parser.usage = toCompletionUsage(event.Response.Usage)
 		case "response.output_item.added":
-			if event.Item.Type == "message" {
+			switch event.Item.Type {
+			case "function_call":
+				if parser.functionCalls == nil {
+					continue
+				}
+				call := event.Item.AsFunctionCall()
+				parser.functionCalls[int(event.OutputIndex)] = &functionCall{
+					index: int(event.OutputIndex),
+					id:    call.CallID,
+					name:  call.Name,
+				}
+			case "message":
 				message := event.Item.AsMessage()
 				if message.ID != "" {
-					messageID = message.ID
+					parser.messageID = message.ID
 				}
 			}
+		case "response.function_call_arguments.delta":
+			if parser.functionCalls == nil {
+				continue
+			}
+			call := parser.functionCalls[int(event.OutputIndex)]
+			if call != nil {
+				call.arguments.WriteString(event.Delta)
+			}
+		case "response.function_call_arguments.done":
+			if parser.functionCalls == nil {
+				continue
+			}
+			call := parser.functionCalls[int(event.OutputIndex)]
+			if call == nil {
+				call = &functionCall{
+					index: int(event.OutputIndex),
+					id:    event.ItemID,
+					name:  event.Name,
+				}
+				parser.functionCalls[int(event.OutputIndex)] = call
+			}
+			call.arguments.Reset()
+			call.arguments.WriteString(event.Arguments)
 		case "response.output_text.delta":
 			if !messageStarted {
-				if err := startLiveMessage(emitter, streamID, created, req.Model, messageID, streamingAnnotationsFromSources(state.sources)); err != nil {
-					return nil, err
+				if err := startLiveMessage(emitter, streamID, created, model, parser.messageID, streamingAnnotations); err != nil {
+					return false, err
 				}
 				messageStarted = true
 			}
-			text.WriteString(event.Delta)
-			contentChunk, err := marshalChatContentChunk(streamID, created, req.Model, event.Delta)
+			parser.text.WriteString(event.Delta)
+			contentChunk, err := marshalChatContentChunk(streamID, created, model, event.Delta)
 			if err != nil {
-				return nil, err
+				return false, err
 			}
 			if err := emitter.EmitChunk(contentChunk); err != nil {
-				return nil, err
+				return false, err
 			}
 		}
 	}
 
 	if err := stream.Err(); err != nil {
-		return nil, err
-	}
-	if text.Len() == 0 {
-		return nil, fmt.Errorf("model returned no final answer")
+		return false, err
 	}
 
-	result := state.finalResult(req, streamResultID(req, state, streamID), objectFor(req.Format), created, req.Model, text.String(), state.usage)
-	if !messageStarted {
-		if err := startLiveMessage(emitter, streamID, created, req.Model, messageID, streamingAnnotationsFromSources(state.sources)); err != nil {
-			return nil, err
-		}
-	}
-	if err := finishLiveMessage(emitter, streamID, created, req.Model, text.String(), result.Annotations, result.Usage); err != nil {
-		return nil, err
-	}
-
-	return result, nil
+	return messageStarted, nil
 }
 
 func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, calls map[int]*functionCall, emitter pipeline.EventEmitter) ([]*functionCall, map[string]*toolExecution) {
@@ -1573,6 +1553,15 @@ func startLiveMessage(emitter pipeline.EventEmitter, streamID string, created in
 		return err
 	}
 	return emitter.EmitChunk(roleChunk)
+}
+
+func finalizeLiveMessage(emitter pipeline.EventEmitter, streamID string, created int64, model string, parser *streamState, messageStarted bool, streamingAnnotations, annotations []pipeline.Annotation, usage openai.CompletionUsage) error {
+	if !messageStarted {
+		if err := startLiveMessage(emitter, streamID, created, model, parser.messageID, streamingAnnotations); err != nil {
+			return err
+		}
+	}
+	return finishLiveMessage(emitter, streamID, created, model, parser.text.String(), annotations, usage)
 }
 
 func finishLiveMessage(emitter pipeline.EventEmitter, streamID string, created int64, model, text string, annotations []pipeline.Annotation, usage openai.CompletionUsage) error {
