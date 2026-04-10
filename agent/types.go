@@ -51,10 +51,9 @@ type ContextMessage struct {
 
 // Result contains executed tool results from the agent loop
 type Result struct {
-	SearchResults   []ToolCall          // Executed search results
-	FetchedPages    []fetch.FetchedPage // Pages fetched during the agent loop
-	BlockedQueries  []BlockedQuery      // Queries blocked by PII filter
-	SearchReasoning string              // Agent's reasoning about decisions
+	SearchResults  []ToolCall          // Executed search results
+	FetchedPages   []fetch.FetchedPage // Pages fetched during the agent loop
+	BlockedQueries []BlockedQuery      // Queries blocked by PII filter
 }
 
 // ChunkCallback is called for each streaming event from the agent LLM

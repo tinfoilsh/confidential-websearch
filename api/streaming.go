@@ -107,10 +107,10 @@ func (e *SSEEmitter) EmitFetchCall(id, status, url string, created int64, model 
 	return e.emit(data)
 }
 
-// EmitMetadata emits annotations and reasoning as a custom chunk.
+// EmitMetadata emits annotations as a custom chunk.
 // This is an extension - OpenAI doesn't stream annotations in Chat Completions.
-func (e *SSEEmitter) EmitMetadata(id string, created int64, model string, annotations []pipeline.Annotation, reasoning string) error {
-	if len(annotations) == 0 && reasoning == "" {
+func (e *SSEEmitter) EmitMetadata(id string, created int64, model string, annotations []pipeline.Annotation) error {
+	if len(annotations) == 0 {
 		return nil
 	}
 
@@ -123,8 +123,7 @@ func (e *SSEEmitter) EmitMetadata(id string, created int64, model string, annota
 			{
 				Index: 0,
 				Delta: StreamingDelta{
-					Annotations:     annotations,
-					SearchReasoning: reasoning,
+					Annotations: annotations,
 				},
 			},
 		},

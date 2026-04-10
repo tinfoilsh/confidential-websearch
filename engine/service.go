@@ -119,18 +119,17 @@ type CitationSource struct {
 }
 
 type Result struct {
-	ID              string
-	Object          string
-	Created         int64
-	Model           string
-	Content         string
-	Usage           openai.CompletionUsage
-	SearchResults   []agent.ToolCall
-	FetchedPages    []fetch.FetchedPage
-	FetchCalls      []FetchCall
-	BlockedQueries  []agent.BlockedQuery
-	SearchReasoning string
-	Annotations     []pipeline.Annotation
+	ID             string
+	Object         string
+	Created        int64
+	Model          string
+	Content        string
+	Usage          openai.CompletionUsage
+	SearchResults  []agent.ToolCall
+	FetchedPages   []fetch.FetchedPage
+	FetchCalls     []FetchCall
+	BlockedQueries []agent.BlockedQuery
+	Annotations    []pipeline.Annotation
 }
 
 type ServiceOption func(*Service)
@@ -156,7 +155,6 @@ type streamState struct {
 	responseID    string
 	messageID     string
 	text          strings.Builder
-	reasoning     strings.Builder
 	usage         openai.CompletionUsage
 }
 
@@ -175,7 +173,6 @@ type executionState struct {
 	fetchCalls     []FetchCall
 	blockedQueries []agent.BlockedQuery
 	sources        []CitationSource
-	reasoning      strings.Builder
 	nextCitation   int
 	previousID     string
 	usage          openai.CompletionUsage
@@ -361,10 +358,7 @@ func (s *Service) Run(ctx context.Context, req *pipeline.Request) (*Result, erro
 		state.previousID = resp.ID
 		state.addUsage(toCompletionUsage(resp.Usage))
 
-		functionCalls, reasoning, text := parseResponse(resp)
-		if reasoning != "" {
-			state.reasoning.WriteString(reasoning)
-		}
+		functionCalls, text := parseResponse(resp)
 
 		if len(functionCalls) == 0 {
 			if text == "" {
@@ -385,10 +379,7 @@ func (s *Service) Run(ctx context.Context, req *pipeline.Request) (*Result, erro
 	state.previousID = resp.ID
 	state.addUsage(toCompletionUsage(resp.Usage))
 
-	_, reasoning, text := parseResponse(resp)
-	if reasoning != "" {
-		state.reasoning.WriteString(reasoning)
-	}
+	_, text := parseResponse(resp)
 	if text == "" {
 		return nil, fmt.Errorf("model returned no final answer")
 	}
@@ -483,11 +474,9 @@ func (s *Service) streamIteration(ctx context.Context, req *pipeline.Request, st
 			}
 			call.arguments.Reset()
 			call.arguments.WriteString(event.Arguments)
-		case "response.reasoning_text.delta":
-			parser.reasoning.WriteString(event.Delta)
 		case "response.output_text.delta":
 			if !messageStarted {
-				if err := startLiveMessage(emitter, streamID, created, req.Model, parser.messageID, streamingAnnotationsFromSources(state.sources), state.reasoning.String()+parser.reasoning.String()); err != nil {
+				if err := startLiveMessage(emitter, streamID, created, req.Model, parser.messageID, streamingAnnotationsFromSources(state.sources)); err != nil {
 					return nil, nil, err
 				}
 				messageStarted = true
@@ -510,10 +499,6 @@ func (s *Service) streamIteration(ctx context.Context, req *pipeline.Request, st
 		state.previousID = parser.responseID
 	}
 	state.addUsage(parser.usage)
-	if parser.reasoning.Len() > 0 {
-		state.reasoning.WriteString(parser.reasoning.String())
-	}
-
 	if len(parser.functionCalls) == 0 {
 		if parser.text.Len() == 0 {
 			return nil, nil, fmt.Errorf("model returned no tool calls or message content")
@@ -521,7 +506,7 @@ func (s *Service) streamIteration(ctx context.Context, req *pipeline.Request, st
 
 		result := state.finalResult(req, streamResultID(req, state, streamID), objectFor(req.Format), created, req.Model, parser.text.String(), state.usage)
 		if !messageStarted {
-			if err := startLiveMessage(emitter, streamID, created, req.Model, parser.messageID, streamingAnnotationsFromSources(state.sources), state.reasoning.String()); err != nil {
+			if err := startLiveMessage(emitter, streamID, created, req.Model, parser.messageID, streamingAnnotationsFromSources(state.sources)); err != nil {
 				return nil, nil, err
 			}
 		}
@@ -558,11 +543,9 @@ func (s *Service) streamFinalAnswer(ctx context.Context, req *pipeline.Request, 
 					messageID = message.ID
 				}
 			}
-		case "response.reasoning_text.delta":
-			state.reasoning.WriteString(event.Delta)
 		case "response.output_text.delta":
 			if !messageStarted {
-				if err := startLiveMessage(emitter, streamID, created, req.Model, messageID, streamingAnnotationsFromSources(state.sources), state.reasoning.String()); err != nil {
+				if err := startLiveMessage(emitter, streamID, created, req.Model, messageID, streamingAnnotationsFromSources(state.sources)); err != nil {
 					return nil, err
 				}
 				messageStarted = true
@@ -587,7 +570,7 @@ func (s *Service) streamFinalAnswer(ctx context.Context, req *pipeline.Request, 
 
 	result := state.finalResult(req, streamResultID(req, state, streamID), objectFor(req.Format), created, req.Model, text.String(), state.usage)
 	if !messageStarted {
-		if err := startLiveMessage(emitter, streamID, created, req.Model, messageID, streamingAnnotationsFromSources(state.sources), state.reasoning.String()); err != nil {
+		if err := startLiveMessage(emitter, streamID, created, req.Model, messageID, streamingAnnotationsFromSources(state.sources)); err != nil {
 			return nil, err
 		}
 	}
@@ -803,18 +786,17 @@ func appendToolLoopItems(accumulated []responses.ResponseInputItemUnionParam, so
 func (s *executionState) finalResult(req *pipeline.Request, id, object string, created int64, model, content string, usage openai.CompletionUsage) *Result {
 	annotations := buildAnnotationsFromContent(content, s.sources)
 	return &Result{
-		ID:              id,
-		Object:          object,
-		Created:         created,
-		Model:           model,
-		Content:         content,
-		Usage:           usage,
-		SearchResults:   s.searchResults,
-		FetchedPages:    s.fetchedPages,
-		FetchCalls:      s.fetchCalls,
-		BlockedQueries:  s.blockedQueries,
-		SearchReasoning: s.reasoning.String(),
-		Annotations:     annotations,
+		ID:             id,
+		Object:         object,
+		Created:        created,
+		Model:          model,
+		Content:        content,
+		Usage:          usage,
+		SearchResults:  s.searchResults,
+		FetchedPages:   s.fetchedPages,
+		FetchCalls:     s.fetchCalls,
+		BlockedQueries: s.blockedQueries,
+		Annotations:    annotations,
 	}
 }
 
@@ -1119,15 +1101,12 @@ func decodeContentParts(content json.RawMessage) (responses.ResponseInputMessage
 	return parts, nil
 }
 
-func parseResponse(resp *responses.Response) (map[int]*functionCall, string, string) {
+func parseResponse(resp *responses.Response) (map[int]*functionCall, string) {
 	functionCalls := make(map[int]*functionCall)
-	var reasoning strings.Builder
 	var text strings.Builder
 
 	for i, item := range resp.Output {
 		switch item.Type {
-		case "reasoning":
-			reasoning.WriteString(extractReasoning(item))
 		case "function_call":
 			call := item.AsFunctionCall()
 			functionCalls[i] = &functionCall{
@@ -1142,18 +1121,7 @@ func parseResponse(resp *responses.Response) (map[int]*functionCall, string, str
 		}
 	}
 
-	return functionCalls, reasoning.String(), text.String()
-}
-
-func extractReasoning(item responses.ResponseOutputItemUnion) string {
-	reasoning := item.AsReasoning()
-	var out strings.Builder
-	for _, part := range reasoning.Summary {
-		if part.Type == "summary_text" {
-			out.WriteString(part.Text)
-		}
-	}
-	return out.String()
+	return functionCalls, text.String()
 }
 
 func extractOutputText(message responses.ResponseOutputMessage) string {
@@ -1332,7 +1300,7 @@ func (s *Service) summarizeToolOutput(ctx context.Context, req *pipeline.Request
 		return "", err
 	}
 
-	_, _, text := parseResponse(resp)
+	_, text := parseResponse(resp)
 	if text == "" {
 		return "", fmt.Errorf("summary model returned no content")
 	}
@@ -1588,8 +1556,8 @@ func buildInstructions(req *pipeline.Request) string {
 	return out.String()
 }
 
-func startLiveMessage(emitter pipeline.EventEmitter, streamID string, created int64, model, messageID string, annotations []pipeline.Annotation, reasoning string) error {
-	if err := emitter.EmitMetadata(streamID, created, model, annotations, reasoning); err != nil {
+func startLiveMessage(emitter pipeline.EventEmitter, streamID string, created int64, model, messageID string, annotations []pipeline.Annotation) error {
+	if err := emitter.EmitMetadata(streamID, created, model, annotations); err != nil {
 		return err
 	}
 

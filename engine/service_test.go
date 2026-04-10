@@ -103,7 +103,6 @@ func (f *fakeSafeguard) Check(ctx context.Context, policy, content string) (*saf
 
 type captureEmitter struct {
 	annotations []pipeline.Annotation
-	reasoning   string
 	chunks      []string
 }
 
@@ -113,9 +112,8 @@ func (e *captureEmitter) EmitSearchCall(id, status, query, reason string, create
 func (e *captureEmitter) EmitFetchCall(id, status, url string, created int64, model string) error {
 	return nil
 }
-func (e *captureEmitter) EmitMetadata(id string, created int64, model string, annotations []pipeline.Annotation, reasoning string) error {
+func (e *captureEmitter) EmitMetadata(id string, created int64, model string, annotations []pipeline.Annotation) error {
 	e.annotations = annotations
-	e.reasoning = reasoning
 	return nil
 }
 func (e *captureEmitter) EmitChunk(data []byte) error {
@@ -161,7 +159,7 @@ func (e *serializingEmitter) EmitFetchCall(id, status, url string, created int64
 	return nil
 }
 
-func (e *serializingEmitter) EmitMetadata(id string, created int64, model string, annotations []pipeline.Annotation, reasoning string) error {
+func (e *serializingEmitter) EmitMetadata(id string, created int64, model string, annotations []pipeline.Annotation) error {
 	return nil
 }
 func (e *serializingEmitter) EmitChunk(data []byte) error { return nil }
@@ -192,7 +190,7 @@ func (e *recordingEmitter) EmitSearchCall(id, status, query, reason string, crea
 func (e *recordingEmitter) EmitFetchCall(id, status, url string, created int64, model string) error {
 	return nil
 }
-func (e *recordingEmitter) EmitMetadata(id string, created int64, model string, annotations []pipeline.Annotation, reasoning string) error {
+func (e *recordingEmitter) EmitMetadata(id string, created int64, model string, annotations []pipeline.Annotation) error {
 	return nil
 }
 func (e *recordingEmitter) EmitChunk(data []byte) error { return nil }
@@ -216,7 +214,7 @@ func (e *signalingEmitter) EmitSearchCall(id, status, query, reason string, crea
 func (e *signalingEmitter) EmitFetchCall(id, status, url string, created int64, model string) error {
 	return nil
 }
-func (e *signalingEmitter) EmitMetadata(id string, created int64, model string, annotations []pipeline.Annotation, reasoning string) error {
+func (e *signalingEmitter) EmitMetadata(id string, created int64, model string, annotations []pipeline.Annotation) error {
 	return nil
 }
 func (e *signalingEmitter) EmitChunk(data []byte) error {

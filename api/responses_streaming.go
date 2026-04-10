@@ -29,7 +29,6 @@ type ResponsesEmitter struct {
 	outputItems   []map[string]any
 	messageItemID string
 	messageIdx    int
-	reasoning     string
 	completed     map[string]any
 }
 
@@ -354,10 +353,8 @@ func (e *ResponsesEmitter) EmitFetchCall(id, status, url string, created int64, 
 	return e.emitWebSearchCallEvents(itemID, status, action, "")
 }
 
-// EmitMetadata stores reasoning for later emission in EmitMessageEnd.
-// Annotations are emitted via EmitMessageEnd, not here.
-func (e *ResponsesEmitter) EmitMetadata(id string, created int64, model string, annotations []pipeline.Annotation, reasoning string) error {
-	e.reasoning = reasoning
+// EmitMetadata is a no-op for Responses. Annotations are emitted via EmitMessageEnd.
+func (e *ResponsesEmitter) EmitMetadata(id string, created int64, model string, annotations []pipeline.Annotation) error {
 	return nil
 }
 
@@ -478,9 +475,6 @@ func (e *ResponsesEmitter) EmitMessageEnd(text string, annotations []pipeline.An
 		"type":        ContentTypeOutputText,
 		"text":        text,
 		"annotations": buildFlatAnnotations(annotations),
-	}
-	if e.reasoning != "" {
-		part["search_reasoning"] = e.reasoning
 	}
 	completedItem := map[string]any{
 		"type":    ItemTypeMessage,

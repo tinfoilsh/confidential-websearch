@@ -156,7 +156,7 @@ func TestSSEEmitter_EmitMetadata(t *testing.T) {
 		},
 	}
 
-	err := emitter.EmitMetadata("chatcmpl-123", 1234567890, "gpt-oss-120b", annotations, "Search reasoning")
+	err := emitter.EmitMetadata("chatcmpl-123", 1234567890, "gpt-oss-120b", annotations)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -183,16 +183,13 @@ func TestSSEEmitter_EmitMetadata(t *testing.T) {
 	if !strings.Contains(body, "https://example.com") {
 		t.Error("expected annotation URL")
 	}
-	if !strings.Contains(body, "Search reasoning") {
-		t.Error("expected search reasoning")
-	}
 }
 
 func TestSSEEmitter_EmitMetadata_Empty(t *testing.T) {
 	w := httptest.NewRecorder()
 	emitter, _ := NewSSEEmitter(w, false)
 
-	err := emitter.EmitMetadata("", 0, "", nil, "")
+	err := emitter.EmitMetadata("", 0, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
