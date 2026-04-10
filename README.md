@@ -127,18 +127,29 @@ curl http://localhost:8089/v1/chat/completions \
   }'
 ```
 
-Response includes standard OpenAI fields plus custom extensions:
+This endpoint is OpenAI-compatible, but web search and fetch metadata are exposed as custom extensions.
+
+Non-streaming responses include standard OpenAI fields plus:
 
 - `choices[0].message.annotations` - URL citations
 - `choices[0].message.fetch_calls` - fetched URLs with status
 - `choices[0].message.search_reasoning` - search/fetch orchestration reasoning
 - `choices[0].message.blocked_searches` - queries blocked by safety filters
 
+Streaming responses are delivered through the same SSE stream as the completion chunks:
+
+1. Custom `web_search_call` chunks for search and fetch progress (`type: "web_search_call"` with empty `choices`)
+2. One metadata chunk carrying `delta.annotations` and `delta.search_reasoning` when available
+3. Standard chat completion content chunks
+4. The final stop chunk and `data: [DONE]`
+
 `web_search_options.search_context_size` and `web_search_options.user_location` are optional.
 
 ### Responses API
 
 `POST /v1/responses`
+`GET /v1/responses/{id}`
+`DELETE /v1/responses/{id}`
 
 ```bash
 curl http://localhost:8089/v1/responses \
@@ -151,7 +162,9 @@ curl http://localhost:8089/v1/responses \
   }'
 ```
 
-Response includes structured `web_search_call` items for both searches and URL fetches, plus message content with annotations.
+This endpoint supports OpenAI-style Responses create and stream flows, plus cached retrieval and deletion for responses created through this server.
+
+Responses output uses standard `message` items and `response.*` streaming events where possible. Web search and fetch activity are represented as `web_search_call` output items, and message output text may include `search_reasoning` alongside annotations.
 
 ### MCP
 
