@@ -250,11 +250,6 @@ type BlockedSearch struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// ChatCompletionMessageOutput represents the assistant message.
-// Includes standard OpenAI fields plus custom extensions:
-//   - annotations: URL citations from web search (standard format)
-//   - blocked_searches: Queries blocked by safety filters (extension)
-//
 // FetchCall represents a URL fetch that was performed
 type FetchCall struct {
 	ID     string           `json:"id"`
@@ -262,6 +257,10 @@ type FetchCall struct {
 	Action *WebSearchAction `json:"action"`
 }
 
+// ChatCompletionMessageOutput represents the assistant message.
+// Includes standard OpenAI fields plus custom extensions:
+//   - annotations: URL citations from web search (standard format)
+//   - blocked_searches: Queries blocked by safety filters (extension)
 type ChatCompletionMessageOutput struct {
 	Role            string                `json:"role"`
 	Content         string                `json:"content"`
