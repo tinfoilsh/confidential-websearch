@@ -498,12 +498,7 @@ func (s *Service) consumeStreamEvents(stream ResponseStream, emitter pipeline.Ev
 			parser.usage = toCompletionUsage(event.Response.Usage)
 			for _, item := range event.Response.Output {
 				if item.Type == "reasoning" {
-					r := item.AsReasoning()
-					summaries := make([]responses.ResponseReasoningItemSummaryParam, len(r.Summary))
-					for j, s := range r.Summary {
-						summaries[j] = responses.ResponseReasoningItemSummaryParam{Text: s.Text}
-					}
-					parser.reasoningItems = append(parser.reasoningItems, responses.ResponseInputItemParamOfReasoning(r.ID, summaries))
+					parser.reasoningItems = append(parser.reasoningItems, buildReasoningInputItem(item.AsReasoning()))
 				}
 			}
 		case "response.output_item.added":
@@ -1127,12 +1122,7 @@ func parseResponse(resp *responses.Response) (map[int]*functionCall, []responses
 			functionCalls[i].arguments.WriteString(call.Arguments)
 			continuationItems = append(continuationItems, responses.ResponseInputItemParamOfFunctionCall(call.Arguments, call.CallID, call.Name))
 		case "reasoning":
-			r := item.AsReasoning()
-			summaries := make([]responses.ResponseReasoningItemSummaryParam, len(r.Summary))
-			for j, s := range r.Summary {
-				summaries[j] = responses.ResponseReasoningItemSummaryParam{Text: s.Text}
-			}
-			continuationItems = append(continuationItems, responses.ResponseInputItemParamOfReasoning(r.ID, summaries))
+			continuationItems = append(continuationItems, buildReasoningInputItem(item.AsReasoning()))
 		case "message":
 			message := item.AsMessage()
 			messageText := extractOutputText(message)
@@ -1144,6 +1134,52 @@ func parseResponse(resp *responses.Response) (map[int]*functionCall, []responses
 	}
 
 	return functionCalls, continuationItems, text.String()
+}
+
+func buildReasoningInputItem(r responses.ResponseReasoningItem) responses.ResponseInputItemUnionParam {
+	param := responses.ResponseReasoningItemParam{
+		ID:      r.ID,
+		Summary: make([]responses.ResponseReasoningItemSummaryParam, 0, len(r.Summary)),
+	}
+	for _, s := range r.Summary {
+		param.Summary = append(param.Summary, responses.ResponseReasoningItemSummaryParam{Text: s.Text})
+	}
+	for _, c := range r.Content {
+		param.Content = append(param.Content, responses.ResponseReasoningItemContentParam{Text: c.Text})
+	}
+	return responses.ResponseInputItemUnionParam{OfReasoning: &param}
+}
+
+func buildReasoningInputItemFromRaw(raw map[string]json.RawMessage) (responses.ResponseInputItemUnionParam, error) {
+	id := rawStringField(raw["id"])
+	param := responses.ResponseReasoningItemParam{
+		ID:      id,
+		Summary: []responses.ResponseReasoningItemSummaryParam{},
+	}
+
+	if contentRaw := mustRawField(raw, "content"); contentRaw != nil {
+		var parts []struct {
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(contentRaw, &parts); err == nil {
+			for _, p := range parts {
+				param.Content = append(param.Content, responses.ResponseReasoningItemContentParam{Text: p.Text})
+			}
+		}
+	}
+
+	if summaryRaw := mustRawField(raw, "summary"); summaryRaw != nil {
+		var parts []struct {
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(summaryRaw, &parts); err == nil {
+			for _, p := range parts {
+				param.Summary = append(param.Summary, responses.ResponseReasoningItemSummaryParam{Text: p.Text})
+			}
+		}
+	}
+
+	return responses.ResponseInputItemUnionParam{OfReasoning: &param}, nil
 }
 
 func (s *streamState) continuationItems() []responses.ResponseInputItemUnionParam {
