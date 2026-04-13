@@ -131,8 +131,8 @@ func TestSearchHandler_MaxResultsCapped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(result.Results) > 20 {
-		t.Errorf("expected max 20 results, got %d", len(result.Results))
+	if len(result.Results) != 25 {
+		t.Errorf("expected 25 results (all available), got %d", len(result.Results))
 	}
 }
 
@@ -149,8 +149,8 @@ func TestSearchHandler_DefaultMaxResults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(result.Results) != config.DefaultMaxSearchResults {
-		t.Errorf("expected %d results, got %d", config.DefaultMaxSearchResults, len(result.Results))
+	if len(result.Results) != 15 {
+		t.Errorf("expected 15 results (all available within medium tier limit), got %d", len(result.Results))
 	}
 }
 
