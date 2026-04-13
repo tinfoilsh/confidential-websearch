@@ -981,9 +981,6 @@ func buildInputMessage(message pipeline.Message) (responses.ResponseInputItemUni
 	}
 
 	if text, ok := decodeStringContent(message.Content); ok {
-		if message.Role == "assistant" && len(message.Annotations) > 0 {
-			text += "\n\nSources used:\n" + formatHistoricalAnnotations(message.Annotations)
-		}
 		return responses.ResponseInputItemParamOfMessage(text, role), nil
 	}
 
@@ -994,10 +991,6 @@ func buildInputMessage(message pipeline.Message) (responses.ResponseInputItemUni
 			return responses.ResponseInputItemUnionParam{}, &pipeline.ValidationError{Message: "unsupported message content"}
 		}
 		parts = responses.ResponseInputMessageContentListParam{inputTextPart(text)}
-	}
-
-	if message.Role == "assistant" && len(message.Annotations) > 0 {
-		parts = append(parts, inputTextPart("\n\nSources used:\n"+formatHistoricalAnnotations(message.Annotations)))
 	}
 
 	return responses.ResponseInputItemParamOfMessage(parts, role), nil
@@ -1423,16 +1416,6 @@ func buildAnnotationsFromContent(content string, sources []CitationSource) []pip
 	}
 
 	return annotations
-}
-
-func formatHistoricalAnnotations(annotations []pipeline.Annotation) string {
-	var out strings.Builder
-	for i, annotation := range annotations {
-		if annotation.Type == pipeline.AnnotationTypeURLCitation {
-			fmt.Fprintf(&out, "[%d] %s (%s)\n", i+1, annotation.URLCitation.Title, annotation.URLCitation.URL)
-		}
-	}
-	return strings.TrimSpace(out.String())
 }
 
 func normalizeSearchContextSize(size pipeline.SearchContextSize) pipeline.SearchContextSize {
