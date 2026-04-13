@@ -563,7 +563,6 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 	var wg sync.WaitGroup
 
 	toolOpts := ToolOptions{
-		MaxResults:            config.DefaultMaxSearchResults,
 		PIICheckEnabled:       req.PIICheckEnabled,
 		InjectionCheckEnabled: req.InjectionCheckEnabled,
 		SearchContextSize:     req.SearchContextSize,
