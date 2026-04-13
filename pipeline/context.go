@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 
 	openai "github.com/openai/openai-go/v3"
-	"github.com/tinfoilsh/confidential-websearch/agent"
 )
 
 // APIFormat indicates which API format the request uses
@@ -138,24 +137,4 @@ type EventEmitter interface {
 	EmitMessageEnd(text string, annotations []Annotation) error
 }
 
-// BuildAnnotations creates URL citations from search results.
-func BuildAnnotations(searchResults []agent.ToolCall) []Annotation {
-	if len(searchResults) == 0 {
-		return nil
-	}
 
-	var annotations []Annotation
-	for _, toolCall := range searchResults {
-		for _, result := range toolCall.Results {
-			annotations = append(annotations, Annotation{
-				Type: AnnotationTypeURLCitation,
-				URLCitation: URLCitation{
-					URL:   result.URL,
-					Title: result.Title,
-				},
-			})
-		}
-	}
-
-	return annotations
-}
