@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/tinfoilsh/confidential-websearch/agent"
 	"github.com/tinfoilsh/confidential-websearch/pipeline"
 )
 
@@ -337,21 +336,7 @@ func buildFlatAnnotations(annotations []pipeline.Annotation) []FlatAnnotation {
 	return flat
 }
 
-// buildLegacyFlatAnnotations creates URL citations from search results when
-// exact marker locations are unavailable.
-func buildLegacyFlatAnnotations(toolCalls []agent.ToolCall) []FlatAnnotation {
-	var annotations []FlatAnnotation
-	for _, tc := range toolCalls {
-		for _, r := range tc.Results {
-			annotations = append(annotations, FlatAnnotation{
-				Type:  ContentTypeURLCitation,
-				URL:   r.URL,
-				Title: r.Title,
-			})
-		}
-	}
-	return annotations
-}
+
 
 func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -420,9 +405,6 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 	log.Infof("Web search completed: %d searches", len(result.SearchResults))
 
 	annotations := result.Annotations
-	if len(annotations) == 0 {
-		annotations = pipeline.BuildAnnotations(result.SearchResults)
-	}
 
 	// Convert agent reasoning and blocked queries to API format
 	var blockedSearches []BlockedSearch
@@ -590,9 +572,6 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	flatAnnotations := buildFlatAnnotations(result.Annotations)
-	if len(flatAnnotations) == 0 {
-		flatAnnotations = buildLegacyFlatAnnotations(result.SearchResults)
-	}
 
 	responseID := result.ID
 	if responseID == "" {
