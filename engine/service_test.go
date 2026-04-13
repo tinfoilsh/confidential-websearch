@@ -342,9 +342,10 @@ func TestRun_MixedTextAndFunctionCallContinuesCleanly(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	assertContainsJSON(t, client.params[1], `Let me check that.`)
 	assertContainsJSON(t, client.params[1], `"call_id":"call_search"`)
 	assertContainsJSON(t, client.params[1], `"name":"search"`)
-	if result.Content != "Here is the answer【1】" {
+	if result.Content != "Let me check that.Here is the answer【1】" {
 		t.Fatalf("unexpected final content: %q", result.Content)
 	}
 }
@@ -412,6 +413,52 @@ func TestStream_UsesPreviousResponseIDAndEmitsMatchingAnnotations(t *testing.T) 
 	}
 	if !strings.Contains(strings.Join(emitter.chunks, ""), `Go answer`) {
 		t.Fatalf("expected emitted chunks to contain final answer")
+	}
+}
+
+func TestStream_MixedTextAndFunctionCallContinuesCleanly(t *testing.T) {
+	client := &fakeResponsesClient{
+		streams: []ResponseStream{
+			&fakeStream{events: []responses.ResponseStreamEventUnion{
+				mustEvent(t, `{"type":"response.created","sequence_number":1,"response":{"id":"resp_stream_mix_1","created_at":1,"model":"gpt-oss-120b","object":"response","output":[],"parallel_tool_calls":false,"temperature":0}}`),
+				mustEvent(t, `{"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"msg_pre","type":"message","role":"assistant","status":"completed","content":[]}}`),
+				mustEvent(t, `{"type":"response.output_text.delta","sequence_number":3,"output_index":0,"content_index":0,"item_id":"msg_pre","delta":"Let me check that.","logprobs":[]}`),
+				mustEvent(t, `{"type":"response.output_item.added","sequence_number":4,"output_index":1,"item":{"id":"fc_1","type":"function_call","call_id":"call_search","name":"search","arguments":""}}`),
+				mustEvent(t, `{"type":"response.function_call_arguments.done","sequence_number":5,"output_index":1,"item_id":"fc_1","name":"search","arguments":"{\"query\":\"golang\"}"}`),
+			}},
+			&fakeStream{events: []responses.ResponseStreamEventUnion{
+				mustEvent(t, `{"type":"response.created","sequence_number":1,"response":{"id":"resp_stream_mix_2","created_at":2,"model":"gpt-oss-120b","object":"response","output":[],"parallel_tool_calls":false,"temperature":0}}`),
+				mustEvent(t, `{"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"msg_final","type":"message","role":"assistant","status":"completed","content":[]}}`),
+				mustEvent(t, `{"type":"response.output_text.delta","sequence_number":3,"output_index":0,"content_index":0,"item_id":"msg_final","delta":"Here is the answer【1】","logprobs":[]}`),
+			}},
+		},
+	}
+	service := NewService(
+		client,
+		&fakeSearcher{results: map[string][]search.Result{
+			"golang": {{Title: "Go", URL: "https://go.dev", Content: "Go info"}},
+		}},
+		nil,
+		nil,
+	)
+	emitter := &captureEmitter{}
+
+	result, err := service.Stream(context.Background(), chatRequest(), emitter)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	assertContainsJSON(t, client.params[1], `Let me check that.`)
+	assertContainsJSON(t, client.params[1], `"call_id":"call_search"`)
+	assertContainsJSON(t, client.params[1], `"name":"search"`)
+	if result.Content != "Let me check that.Here is the answer【1】" {
+		t.Fatalf("unexpected final content: %q", result.Content)
+	}
+	if !strings.Contains(strings.Join(emitter.chunks, ""), `Let me check that.`) {
+		t.Fatalf("expected emitted chunks to contain interim text")
+	}
+	if !strings.Contains(strings.Join(emitter.chunks, ""), `Here is the answer`) {
+		t.Fatalf("expected emitted chunks to contain final text")
 	}
 }
 
