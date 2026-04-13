@@ -31,7 +31,7 @@ import (
 const (
 	chatCompletionObject               = "chat.completion"
 	chatCompletionChunkObject          = "chat.completion.chunk"
-	maxFetchURLs                       = 5
+	maxFetchURLs                       = 20
 	searchContextMaxResultsLow         = 10
 	searchContextMaxResultsMedium      = 20
 	searchContextMaxResultsHigh        = 30
