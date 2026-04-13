@@ -32,19 +32,21 @@ const (
 	chatCompletionObject               = "chat.completion"
 	chatCompletionChunkObject          = "chat.completion.chunk"
 	maxFetchURLs                       = 5
-	searchContextMaxResultsLow         = 5
-	searchContextMaxResultsHigh        = 12
-	searchContextCharsLow              = 800
-	searchContextCharsHigh             = 4000
-	searchToolSummaryCharsLow          = 1800
-	searchToolSummaryCharsMedium       = 3600
-	searchToolSummaryCharsHigh         = 5600
-	fetchToolSummaryCharsLow           = 2400
-	fetchToolSummaryCharsMedium        = 5200
-	fetchToolSummaryCharsHigh          = 8400
-	toolSummaryTokensLow         int64 = 600
+	searchContextMaxResultsLow         = 10
+	searchContextMaxResultsMedium      = 20
+	searchContextMaxResultsHigh        = 30
+	searchContextCharsLow              = 1400
+	searchContextCharsMedium           = 10000
+	searchContextCharsHigh             = 25000
+	searchToolSummaryCharsLow          = 3000
+	searchToolSummaryCharsMedium       = 18000
+	searchToolSummaryCharsHigh         = 35000
+	fetchToolSummaryCharsLow           = 4000
+	fetchToolSummaryCharsMedium        = 26000
+	fetchToolSummaryCharsHigh          = 52500
+	toolSummaryTokensLow         int64 = 500
 	toolSummaryTokensMedium      int64 = 1000
-	toolSummaryTokensHigh        int64 = 1600
+	toolSummaryTokensHigh        int64 = 5000
 )
 
 var citationMarkerPattern = regexp.MustCompile(`【(\d+)】`)
@@ -307,20 +309,18 @@ func (s *Service) FetchDetailed(ctx context.Context, urls []string, opts ToolOpt
 }
 
 func searchOptionsForTool(opts ToolOptions) search.Options {
-	maxCharacters := config.MaxSearchContentLength
-	maxResults := opts.MaxResults
+	var maxCharacters, maxResults int
 
 	switch normalizeSearchContextSize(opts.SearchContextSize) {
 	case pipeline.SearchContextSizeLow:
 		maxCharacters = searchContextCharsLow
-		if maxResults <= 0 || maxResults > searchContextMaxResultsLow {
-			maxResults = searchContextMaxResultsLow
-		}
+		maxResults = searchContextMaxResultsLow
 	case pipeline.SearchContextSizeHigh:
 		maxCharacters = searchContextCharsHigh
-		if maxResults <= 0 || maxResults < searchContextMaxResultsHigh {
-			maxResults = searchContextMaxResultsHigh
-		}
+		maxResults = searchContextMaxResultsHigh
+	default:
+		maxCharacters = searchContextCharsMedium
+		maxResults = searchContextMaxResultsMedium
 	}
 
 	return search.Options{
