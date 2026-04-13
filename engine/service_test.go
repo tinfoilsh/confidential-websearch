@@ -487,7 +487,7 @@ func TestStream_AggregatesUsageAcrossStreamingResponses(t *testing.T) {
 }
 
 func TestRun_CompactsFetchedToolOutputWithSummaryModel(t *testing.T) {
-	longPage := strings.Repeat("Long fetched content. ", 400)
+	longPage := strings.Repeat("Long fetched content. ", 1500)
 	client := &fakeResponsesClient{
 		responses: []*responses.Response{
 			mustResponse(t, `{"id":"resp_fetch_1","created_at":1,"model":"gpt-oss-120b","output":[{"id":"fc_1","type":"function_call","call_id":"call_fetch","name":"fetch","arguments":"{\"url\":\"https://go.dev/doc\"}"}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`),
