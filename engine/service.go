@@ -971,6 +971,17 @@ func buildResponsesInputItem(input json.RawMessage) (responses.ResponseInputItem
 			Role:    role,
 			Content: mustRawField(raw, "content"),
 		})
+	case itemType == "function_call":
+		callID := rawStringField(raw["call_id"])
+		if callID == "" {
+			return responses.ResponseInputItemUnionParam{}, &pipeline.ValidationError{Field: "input", Message: "function_call items require call_id"}
+		}
+		name := rawStringField(raw["name"])
+		if name == "" {
+			return responses.ResponseInputItemUnionParam{}, &pipeline.ValidationError{Field: "input", Message: "function_call items require name"}
+		}
+		arguments := rawStringField(raw["arguments"])
+		return responses.ResponseInputItemParamOfFunctionCall(arguments, callID, name), nil
 	case itemType == "function_call_output":
 		callID := rawStringField(raw["call_id"])
 		if callID == "" {
@@ -981,6 +992,8 @@ func buildResponsesInputItem(input json.RawMessage) (responses.ResponseInputItem
 			return responses.ResponseInputItemUnionParam{}, &pipeline.ValidationError{Field: "input", Message: "function_call_output output must be valid JSON"}
 		}
 		return responses.ResponseInputItemParamOfFunctionCallOutput(callID, output), nil
+	case itemType == "reasoning":
+		return buildReasoningInputItemFromRaw(raw)
 	default:
 		return responses.ResponseInputItemUnionParam{}, &pipeline.ValidationError{Field: "input", Message: "unsupported responses input item"}
 	}

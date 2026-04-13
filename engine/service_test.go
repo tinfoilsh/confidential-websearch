@@ -746,6 +746,43 @@ func TestRun_ResponsesRequestSupportsStructuredInputAndClientPreviousResponseID(
 	assertContainsJSON(t, client.params[0], `"text":"hello"`)
 }
 
+func TestRun_ResponsesRequestSupportsReasoningAndFunctionCallInputItems(t *testing.T) {
+	client := &fakeResponsesClient{
+		responses: []*responses.Response{
+			mustResponse(t, `{"id":"resp_final","created_at":3,"model":"gpt-oss-120b","output":[{"id":"msg_final","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Done","annotations":[]}]}],"usage":{"input_tokens":2,"output_tokens":2,"total_tokens":4}}`),
+		},
+	}
+	service := NewService(client, nil, nil, nil)
+
+	input := `[
+		{"role":"user","content":"Search for cats"},
+		{"type":"reasoning","id":"rs_abc","content":[{"type":"reasoning_text","text":"thinking about cats"}],"summary":[]},
+		{"type":"function_call","call_id":"call_1","name":"search","arguments":"{\"query\":\"cats\"}"},
+		{"type":"function_call_output","call_id":"call_1","output":"cats are great"},
+		{"role":"assistant","content":"Here is info about cats."},
+		{"role":"user","content":"Tell me more"}
+	]`
+
+	result, err := service.Run(context.Background(), &pipeline.Request{
+		Model:  "gpt-oss-120b",
+		Format: pipeline.FormatResponses,
+		Input:  json.RawMessage(input),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Content != "Done" {
+		t.Fatalf("expected 'Done', got %q", result.Content)
+	}
+	if len(client.params) != 1 {
+		t.Fatalf("expected 1 model call, got %d", len(client.params))
+	}
+	assertContainsJSON(t, client.params[0], `"thinking about cats"`)
+	assertContainsJSON(t, client.params[0], `"call_id":"call_1"`)
+	assertContainsJSON(t, client.params[0], `"name":"search"`)
+	assertContainsJSON(t, client.params[0], `"cats are great"`)
+}
+
 func chatRequest() *pipeline.Request {
 	return &pipeline.Request{
 		Model:            "gpt-oss-120b",
