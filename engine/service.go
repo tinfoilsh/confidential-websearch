@@ -216,16 +216,7 @@ func (s *Service) Search(ctx context.Context, query string, opts ToolOptions) (S
 		}
 	}
 
-	maxResults := opts.MaxResults
-	if maxResults <= 0 {
-		maxResults = config.DefaultMaxSearchResults
-	}
-	if maxResults > 20 {
-		maxResults = 20
-	}
-
 	searchOpts := searchOptionsForTool(opts)
-	searchOpts.MaxResults = maxResults
 
 	results, err := s.searcher.Search(ctx, query, searchOpts)
 	if err != nil {
@@ -315,6 +306,10 @@ func searchOptionsForTool(opts ToolOptions) search.Options {
 	default:
 		maxCharacters = searchContextCharsMedium
 		maxResults = searchContextMaxResultsMedium
+	}
+
+	if opts.MaxResults > 0 {
+		maxResults = opts.MaxResults
 	}
 
 	return search.Options{
