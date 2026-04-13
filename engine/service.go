@@ -29,24 +29,24 @@ import (
 )
 
 const (
-	chatCompletionObject               = "chat.completion"
-	chatCompletionChunkObject          = "chat.completion.chunk"
-	maxFetchURLs                       = 20
-	searchContextMaxResultsLow         = 10
-	searchContextMaxResultsMedium      = 20
-	searchContextMaxResultsHigh        = 30
-	searchContextCharsLow              = 1400
-	searchContextCharsMedium           = 10000
-	searchContextCharsHigh             = 25000
-	searchToolSummaryCharsLow          = 3000
-	searchToolSummaryCharsMedium       = 18000
-	searchToolSummaryCharsHigh         = 35000
-	fetchToolSummaryCharsLow           = 4000
-	fetchToolSummaryCharsMedium        = 26000
-	fetchToolSummaryCharsHigh          = 52500
-	toolSummaryTokensLow         int64 = 500
-	toolSummaryTokensMedium      int64 = 1000
-	toolSummaryTokensHigh        int64 = 5000
+	chatCompletionObject                = "chat.completion"
+	chatCompletionChunkObject           = "chat.completion.chunk"
+	maxFetchURLs                        = 20
+	searchContextMaxResultsLow          = 10
+	searchContextMaxResultsMedium       = 20
+	searchContextMaxResultsHigh         = 30
+	searchContextCharsLow               = 1400
+	searchContextCharsMedium            = 10000
+	searchContextCharsHigh              = 25000
+	searchToolSummaryCharsLow           = 3000
+	searchToolSummaryCharsMedium        = 18000
+	searchToolSummaryCharsHigh          = 35000
+	fetchToolSummaryCharsLow            = 4000
+	fetchToolSummaryCharsMedium         = 26000
+	fetchToolSummaryCharsHigh           = 52500
+	toolSummaryTokensLow          int64 = 500
+	toolSummaryTokensMedium       int64 = 1000
+	toolSummaryTokensHigh         int64 = 5000
 )
 
 var citationMarkerPattern = regexp.MustCompile(`【(\d+)】`)
@@ -148,6 +148,7 @@ type functionCall struct {
 
 type streamState struct {
 	functionCalls  map[int]*functionCall
+	messageTexts   map[int]*strings.Builder
 	reasoningItems []responses.ResponseInputItemUnionParam
 	responseID     string
 	messageID      string
@@ -171,6 +172,7 @@ type executionState struct {
 	blockedQueries []agent.BlockedQuery
 	sources        []CitationSource
 	nextCitation   int
+	content        strings.Builder
 	previousID     string
 	usage          openai.CompletionUsage
 }
@@ -348,17 +350,18 @@ func (s *Service) Run(ctx context.Context, req *pipeline.Request) (*Result, erro
 		state.previousID = resp.ID
 		state.addUsage(toCompletionUsage(resp.Usage))
 
-		functionCalls, reasoningItems, text := parseResponse(resp)
+		functionCalls, continuationItems, text := parseResponse(resp)
 
 		if len(functionCalls) == 0 {
 			if text == "" {
 				return nil, fmt.Errorf("model returned no message content")
 			}
-			return state.finalResult(req, responseIDFor(req.Format, resp.ID), objectFor(req.Format), int64(resp.CreatedAt), string(resp.Model), text, state.usage), nil
+			return state.finalResult(req, responseIDFor(req.Format, resp.ID), objectFor(req.Format), int64(resp.CreatedAt), string(resp.Model), state.finalContent(text), state.usage), nil
 		}
 
+		state.appendContent(text)
 		sortedCalls, executions := s.executeToolCalls(ctx, req, functionCalls, nil)
-		accumulated = appendToolLoopItems(accumulated, reasoningItems, sortedCalls, s.applyToolExecutions(ctx, req, state, sortedCalls, executions))
+		accumulated = appendToolLoopItems(accumulated, continuationItems, s.applyToolExecutions(ctx, req, state, sortedCalls, executions))
 		allowTools = true
 	}
 
@@ -374,7 +377,7 @@ func (s *Service) Run(ctx context.Context, req *pipeline.Request) (*Result, erro
 		return nil, fmt.Errorf("model returned no final answer")
 	}
 
-	return state.finalResult(req, responseIDFor(req.Format, resp.ID), objectFor(req.Format), int64(resp.CreatedAt), string(resp.Model), text, state.usage), nil
+	return state.finalResult(req, responseIDFor(req.Format, resp.ID), objectFor(req.Format), int64(resp.CreatedAt), string(resp.Model), state.finalContent(text), state.usage), nil
 }
 
 func (s *Service) Stream(ctx context.Context, req *pipeline.Request, emitter pipeline.EventEmitter) (*Result, error) {
@@ -424,7 +427,10 @@ func (s *Service) Validate(req *pipeline.Request) error {
 
 func (s *Service) streamIteration(ctx context.Context, req *pipeline.Request, state *executionState, emitter pipeline.EventEmitter, streamID string, created int64, allowTools bool, input []responses.ResponseInputItemUnionParam, previousResponseID string) (*Result, []responses.ResponseInputItemUnionParam, error) {
 	stream := s.responses.NewStreaming(ctx, s.buildParams(req, input, allowTools, previousResponseID))
-	parser := &streamState{functionCalls: make(map[int]*functionCall)}
+	parser := &streamState{
+		functionCalls: make(map[int]*functionCall),
+		messageTexts:  make(map[int]*strings.Builder),
+	}
 	messageStarted, err := s.consumeStreamEvents(stream, emitter, streamID, created, req.Model, streamingAnnotationsFromSources(state.sources), parser)
 	if err != nil {
 		return nil, nil, err
@@ -438,23 +444,28 @@ func (s *Service) streamIteration(ctx context.Context, req *pipeline.Request, st
 			return nil, nil, fmt.Errorf("model returned no tool calls or message content")
 		}
 
-		result := state.finalResult(req, streamResultID(req, state, streamID), objectFor(req.Format), created, req.Model, parser.text.String(), state.usage)
+		result := state.finalResult(req, streamResultID(req, state, streamID), objectFor(req.Format), created, req.Model, state.finalContent(parser.text.String()), state.usage)
 		if err := finalizeLiveMessage(emitter, streamID, created, req.Model, parser, messageStarted, streamingAnnotationsFromSources(state.sources), result.Annotations, result.Usage); err != nil {
 			return nil, nil, err
 		}
 		return result, nil, nil
 	}
 
+	state.appendContent(parser.text.String())
 	sortedCalls, executions := s.executeToolCalls(ctx, req, parser.functionCalls, emitter)
 	toolOutputs := s.applyToolExecutions(ctx, req, state, sortedCalls, executions)
-	accumulated := appendToolLoopItems(input, parser.reasoningItems, sortedCalls, toolOutputs)
+	accumulated := appendToolLoopItems(input, parser.continuationItems(), toolOutputs)
 
 	return nil, accumulated, nil
 }
 
 func (s *Service) streamFinalAnswer(ctx context.Context, req *pipeline.Request, state *executionState, emitter pipeline.EventEmitter, streamID string, created int64, input []responses.ResponseInputItemUnionParam) (*Result, error) {
 	stream := s.responses.NewStreaming(ctx, s.buildParams(req, input, false, ""))
-	parser := &streamState{messageID: "msg_" + uuid.New().String()[:8]}
+	parser := &streamState{
+		messageID:     "msg_" + uuid.New().String()[:8],
+		functionCalls: make(map[int]*functionCall),
+		messageTexts:  make(map[int]*strings.Builder),
+	}
 	messageStarted, err := s.consumeStreamEvents(stream, emitter, streamID, created, req.Model, streamingAnnotationsFromSources(state.sources), parser)
 	if err != nil {
 		return nil, err
@@ -467,7 +478,7 @@ func (s *Service) streamFinalAnswer(ctx context.Context, req *pipeline.Request, 
 		return nil, fmt.Errorf("model returned no final answer")
 	}
 
-	result := state.finalResult(req, streamResultID(req, state, streamID), objectFor(req.Format), created, req.Model, parser.text.String(), state.usage)
+	result := state.finalResult(req, streamResultID(req, state, streamID), objectFor(req.Format), created, req.Model, state.finalContent(parser.text.String()), state.usage)
 	if err := finalizeLiveMessage(emitter, streamID, created, req.Model, parser, messageStarted, streamingAnnotationsFromSources(state.sources), result.Annotations, result.Usage); err != nil {
 		return nil, err
 	}
@@ -512,6 +523,11 @@ func (s *Service) consumeStreamEvents(stream ResponseStream, emitter pipeline.Ev
 				if message.ID != "" {
 					parser.messageID = message.ID
 				}
+				if parser.messageTexts != nil {
+					if _, ok := parser.messageTexts[int(event.OutputIndex)]; !ok {
+						parser.messageTexts[int(event.OutputIndex)] = &strings.Builder{}
+					}
+				}
 			}
 		case "response.function_call_arguments.delta":
 			if parser.functionCalls == nil {
@@ -542,6 +558,11 @@ func (s *Service) consumeStreamEvents(stream ResponseStream, emitter pipeline.Ev
 					return false, err
 				}
 				messageStarted = true
+			}
+			if parser.messageTexts != nil {
+				if builder, ok := parser.messageTexts[int(event.OutputIndex)]; ok {
+					builder.WriteString(event.Delta)
+				}
 			}
 			parser.text.WriteString(event.Delta)
 			contentChunk, err := marshalChatContentChunk(streamID, created, model, event.Delta)
@@ -751,14 +772,11 @@ func (s *Service) applyToolExecutions(ctx context.Context, req *pipeline.Request
 	return input
 }
 
-// appendToolLoopItems appends the model's function calls and their outputs to
-// the accumulated input so that subsequent iterations carry the full context
-// without relying on previous_response_id.
-func appendToolLoopItems(accumulated []responses.ResponseInputItemUnionParam, reasoningItems []responses.ResponseInputItemUnionParam, sortedCalls []*functionCall, toolOutputs []responses.ResponseInputItemUnionParam) []responses.ResponseInputItemUnionParam {
-	accumulated = append(accumulated, reasoningItems...)
-	for _, call := range sortedCalls {
-		accumulated = append(accumulated, responses.ResponseInputItemParamOfFunctionCall(call.arguments.String(), call.id, call.name))
-	}
+// appendToolLoopItems appends the model's prior output items and the matching
+// tool outputs to the accumulated input so that subsequent iterations carry the
+// full context without relying on previous_response_id.
+func appendToolLoopItems(accumulated []responses.ResponseInputItemUnionParam, continuationItems, toolOutputs []responses.ResponseInputItemUnionParam) []responses.ResponseInputItemUnionParam {
+	accumulated = append(accumulated, continuationItems...)
 	accumulated = append(accumulated, toolOutputs...)
 	return accumulated
 }
@@ -784,6 +802,25 @@ func (s *executionState) addUsage(usage openai.CompletionUsage) {
 	s.usage.PromptTokens += usage.PromptTokens
 	s.usage.CompletionTokens += usage.CompletionTokens
 	s.usage.TotalTokens += usage.TotalTokens
+}
+
+func (s *executionState) appendContent(content string) {
+	if content == "" {
+		return
+	}
+	s.content.WriteString(content)
+}
+
+func (s *executionState) finalContent(content string) string {
+	if s.content.Len() == 0 {
+		return content
+	}
+
+	var out strings.Builder
+	out.Grow(s.content.Len() + len(content))
+	out.WriteString(s.content.String())
+	out.WriteString(content)
+	return out.String()
 }
 
 func streamResultID(req *pipeline.Request, state *executionState, fallback string) string {
@@ -1075,7 +1112,7 @@ func decodeContentParts(content json.RawMessage) (responses.ResponseInputMessage
 
 func parseResponse(resp *responses.Response) (map[int]*functionCall, []responses.ResponseInputItemUnionParam, string) {
 	functionCalls := make(map[int]*functionCall)
-	var reasoningItems []responses.ResponseInputItemUnionParam
+	var continuationItems []responses.ResponseInputItemUnionParam
 	var text strings.Builder
 
 	for i, item := range resp.Output {
@@ -1088,20 +1125,62 @@ func parseResponse(resp *responses.Response) (map[int]*functionCall, []responses
 				name:  call.Name,
 			}
 			functionCalls[i].arguments.WriteString(call.Arguments)
+			continuationItems = append(continuationItems, responses.ResponseInputItemParamOfFunctionCall(call.Arguments, call.CallID, call.Name))
 		case "reasoning":
 			r := item.AsReasoning()
 			summaries := make([]responses.ResponseReasoningItemSummaryParam, len(r.Summary))
 			for j, s := range r.Summary {
 				summaries[j] = responses.ResponseReasoningItemSummaryParam{Text: s.Text}
 			}
-			reasoningItems = append(reasoningItems, responses.ResponseInputItemParamOfReasoning(r.ID, summaries))
+			continuationItems = append(continuationItems, responses.ResponseInputItemParamOfReasoning(r.ID, summaries))
 		case "message":
 			message := item.AsMessage()
-			text.WriteString(extractOutputText(message))
+			messageText := extractOutputText(message)
+			text.WriteString(messageText)
+			if messageText != "" {
+				continuationItems = append(continuationItems, responses.ResponseInputItemParamOfMessage(messageText, responses.EasyInputMessageRoleAssistant))
+			}
 		}
 	}
 
-	return functionCalls, reasoningItems, text.String()
+	return functionCalls, continuationItems, text.String()
+}
+
+func (s *streamState) continuationItems() []responses.ResponseInputItemUnionParam {
+	type indexedItem struct {
+		index int
+		item  responses.ResponseInputItemUnionParam
+	}
+
+	indexed := make([]indexedItem, 0, len(s.messageTexts)+len(s.functionCalls)+len(s.reasoningItems))
+	for _, reasoningItem := range s.reasoningItems {
+		indexed = append(indexed, indexedItem{index: -1, item: reasoningItem})
+	}
+	for index, builder := range s.messageTexts {
+		if builder == nil || builder.Len() == 0 {
+			continue
+		}
+		indexed = append(indexed, indexedItem{
+			index: index,
+			item:  responses.ResponseInputItemParamOfMessage(builder.String(), responses.EasyInputMessageRoleAssistant),
+		})
+	}
+	for index, call := range s.functionCalls {
+		indexed = append(indexed, indexedItem{
+			index: index,
+			item:  responses.ResponseInputItemParamOfFunctionCall(call.arguments.String(), call.id, call.name),
+		})
+	}
+
+	sort.Slice(indexed, func(i, j int) bool {
+		return indexed[i].index < indexed[j].index
+	})
+
+	items := make([]responses.ResponseInputItemUnionParam, 0, len(indexed))
+	for _, indexedItem := range indexed {
+		items = append(items, indexedItem.item)
+	}
+	return items
 }
 
 func extractOutputText(message responses.ResponseOutputMessage) string {
