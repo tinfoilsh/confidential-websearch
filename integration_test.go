@@ -83,6 +83,7 @@ func setupIntegrationServer(t *testing.T) *api.Server {
 		fetcher,
 		safeguardClient,
 		engine.WithChatCompletionsClient(chatCompletionsClient{inner: &client.Chat.Completions}),
+		engine.WithModelCatalog(engine.NewHTTPModelCatalog(nil)),
 		engine.WithToolSummaryModel(cfg.ToolSummaryModel),
 	)
 

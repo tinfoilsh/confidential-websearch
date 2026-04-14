@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"regexp"
 	"sort"
 	"strconv"
@@ -31,6 +32,7 @@ import (
 const (
 	chatCompletionObject                = "chat.completion"
 	chatCompletionChunkObject           = "chat.completion.chunk"
+	defaultModelsURL                    = "https://api.tinfoil.sh/v1/models"
 	maxFetchURLs                        = 20
 	searchContextMaxResultsLow          = 10
 	searchContextMaxResultsMedium       = 20
@@ -47,6 +49,7 @@ const (
 	toolSummaryTokensLow          int64 = 500
 	toolSummaryTokensMedium       int64 = 1000
 	toolSummaryTokensHigh         int64 = 5000
+	modelCatalogCacheTTL                = 5 * time.Minute
 )
 
 var citationMarkerPattern = regexp.MustCompile(`【(\d+)】`)
@@ -79,6 +82,10 @@ type ResponsesClient interface {
 type ChatCompletionsClient interface {
 	New(ctx context.Context, body openai.ChatCompletionNewParams, opts ...option.RequestOption) (*openai.ChatCompletion, error)
 	NewStreaming(ctx context.Context, body openai.ChatCompletionNewParams, opts ...option.RequestOption) ChatCompletionStream
+}
+
+type ModelCatalog interface {
+	SupportsToolCalling(ctx context.Context, model string) (bool, error)
 }
 
 type URLFetcher interface {
@@ -143,6 +150,7 @@ type ServiceOption func(*Service)
 
 type Service struct {
 	chatCompletions  ChatCompletionsClient
+	modelCatalog     ModelCatalog
 	responses        ResponsesClient
 	searcher         search.Provider
 	fetcher          URLFetcher
@@ -185,6 +193,25 @@ type toolOutput struct {
 	text   string
 }
 
+type httpModelCatalog struct {
+	client    *http.Client
+	url       string
+	cacheTTL  time.Duration
+	mu        sync.RWMutex
+	expiresAt time.Time
+	support   map[string]bool
+}
+
+type modelListResponse struct {
+	Data []modelMetadata `json:"data"`
+}
+
+type modelMetadata struct {
+	ID          string `json:"id"`
+	ToolCalling bool   `json:"tool_calling"`
+	Type        string `json:"type"`
+}
+
 type executionState struct {
 	searchResults  []agent.ToolCall
 	fetchedPages   []fetch.FetchedPage
@@ -223,12 +250,103 @@ func WithChatCompletionsClient(client ChatCompletionsClient) ServiceOption {
 	}
 }
 
+func WithModelCatalog(catalog ModelCatalog) ServiceOption {
+	return func(service *Service) {
+		service.modelCatalog = catalog
+	}
+}
+
 func WithToolLoopMaxIter(n int) ServiceOption {
 	return func(service *Service) {
 		if n > 0 {
 			service.toolLoopMaxIter = n
 		}
 	}
+}
+
+func NewHTTPModelCatalog(client *http.Client) ModelCatalog {
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
+	return &httpModelCatalog{
+		client:   client,
+		url:      defaultModelsURL,
+		cacheTTL: modelCatalogCacheTTL,
+	}
+}
+
+func (c *httpModelCatalog) SupportsToolCalling(ctx context.Context, model string) (bool, error) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return false, nil
+	}
+
+	if supported, ok := c.lookup(model); ok {
+		return supported, nil
+	}
+
+	if err := c.refresh(ctx); err != nil {
+		if supported, ok := c.lookupStale(model); ok {
+			return supported, nil
+		}
+		return true, err
+	}
+
+	if supported, ok := c.lookupStale(model); ok {
+		return supported, nil
+	}
+
+	return true, nil
+}
+
+func (c *httpModelCatalog) lookup(model string) (bool, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if time.Now().After(c.expiresAt) {
+		return false, false
+	}
+	supported, ok := c.support[model]
+	return supported, ok
+}
+
+func (c *httpModelCatalog) lookupStale(model string) (bool, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	supported, ok := c.support[model]
+	return supported, ok
+}
+
+func (c *httpModelCatalog) refresh(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url, nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("model catalog request failed with status %d", resp.StatusCode)
+	}
+
+	var payload modelListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return err
+	}
+
+	support := make(map[string]bool, len(payload.Data))
+	for _, model := range payload.Data {
+		support[model.ID] = model.ToolCalling && model.Type == "chat"
+	}
+
+	c.mu.Lock()
+	c.support = support
+	c.expiresAt = time.Now().Add(c.cacheTTL)
+	c.mu.Unlock()
+	return nil
 }
 
 func (s *Service) Search(ctx context.Context, query string, opts ToolOptions) (SearchOutcome, error) {
@@ -349,10 +467,30 @@ func searchOptionsForTool(opts ToolOptions) search.Options {
 	}
 }
 
+func (s *Service) effectiveRequest(ctx context.Context, req *pipeline.Request) *pipeline.Request {
+	if req == nil || !req.WebSearchEnabled || s.modelCatalog == nil {
+		return req
+	}
+
+	supported, err := s.modelCatalog.SupportsToolCalling(ctx, req.Model)
+	if err != nil {
+		log.WithError(err).Warnf("model capability lookup failed for %s; keeping web search enabled", req.Model)
+		return req
+	}
+	if supported {
+		return req
+	}
+
+	effective := *req
+	effective.WebSearchEnabled = false
+	return &effective
+}
+
 func (s *Service) Run(ctx context.Context, req *pipeline.Request) (*Result, error) {
 	if err := s.Validate(req); err != nil {
 		return nil, err
 	}
+	req = s.effectiveRequest(ctx, req)
 	if req.Format == pipeline.FormatChatCompletion && s.chatCompletions != nil {
 		return s.runChatCompletions(ctx, req)
 	}
@@ -413,6 +551,7 @@ func (s *Service) Stream(ctx context.Context, req *pipeline.Request, emitter pip
 	if err := s.Validate(req); err != nil {
 		return nil, err
 	}
+	req = s.effectiveRequest(ctx, req)
 	if req.Format == pipeline.FormatChatCompletion && s.chatCompletions != nil {
 		return s.streamChatCompletions(ctx, req, emitter)
 	}
