@@ -82,6 +82,7 @@ func setupIntegrationServer(t *testing.T) *api.Server {
 		searcher,
 		fetcher,
 		safeguardClient,
+		engine.WithChatCompletionsClient(chatCompletionsClient{inner: &client.Chat.Completions}),
 		engine.WithToolSummaryModel(cfg.ToolSummaryModel),
 	)
 

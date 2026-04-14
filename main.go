@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/responses"
 	log "github.com/sirupsen/logrus"
@@ -59,6 +60,7 @@ func main() {
 		searcher,
 		fetcher,
 		safeguardClient,
+		engine.WithChatCompletionsClient(chatCompletionsClient{inner: &client.Chat.Completions}),
 		engine.WithToolSummaryModel(cfg.ToolSummaryModel),
 		engine.WithToolLoopMaxIter(cfg.ToolLoopMaxIter),
 	)
@@ -130,5 +132,17 @@ func (c responsesClient) New(ctx context.Context, body responses.ResponseNewPara
 }
 
 func (c responsesClient) NewStreaming(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) engine.ResponseStream {
+	return c.inner.NewStreaming(ctx, body, opts...)
+}
+
+type chatCompletionsClient struct {
+	inner *openai.ChatCompletionService
+}
+
+func (c chatCompletionsClient) New(ctx context.Context, body openai.ChatCompletionNewParams, opts ...option.RequestOption) (*openai.ChatCompletion, error) {
+	return c.inner.New(ctx, body, opts...)
+}
+
+func (c chatCompletionsClient) NewStreaming(ctx context.Context, body openai.ChatCompletionNewParams, opts ...option.RequestOption) engine.ChatCompletionStream {
 	return c.inner.NewStreaming(ctx, body, opts...)
 }

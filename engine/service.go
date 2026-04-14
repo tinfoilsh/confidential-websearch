@@ -65,9 +65,20 @@ type ResponseStream interface {
 	Err() error
 }
 
+type ChatCompletionStream interface {
+	Next() bool
+	Current() openai.ChatCompletionChunk
+	Err() error
+}
+
 type ResponsesClient interface {
 	New(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) (*responses.Response, error)
 	NewStreaming(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) ResponseStream
+}
+
+type ChatCompletionsClient interface {
+	New(ctx context.Context, body openai.ChatCompletionNewParams, opts ...option.RequestOption) (*openai.ChatCompletion, error)
+	NewStreaming(ctx context.Context, body openai.ChatCompletionNewParams, opts ...option.RequestOption) ChatCompletionStream
 }
 
 type URLFetcher interface {
@@ -131,6 +142,7 @@ type Result struct {
 type ServiceOption func(*Service)
 
 type Service struct {
+	chatCompletions  ChatCompletionsClient
 	responses        ResponsesClient
 	searcher         search.Provider
 	fetcher          URLFetcher
@@ -168,6 +180,11 @@ type toolExecution struct {
 	err           error
 }
 
+type toolOutput struct {
+	callID string
+	text   string
+}
+
 type executionState struct {
 	searchResults  []agent.ToolCall
 	fetchedPages   []fetch.FetchedPage
@@ -197,6 +214,12 @@ func NewService(responsesClient ResponsesClient, searcher search.Provider, fetch
 func WithToolSummaryModel(model string) ServiceOption {
 	return func(service *Service) {
 		service.toolSummaryModel = strings.TrimSpace(model)
+	}
+}
+
+func WithChatCompletionsClient(client ChatCompletionsClient) ServiceOption {
+	return func(service *Service) {
+		service.chatCompletions = client
 	}
 }
 
@@ -330,6 +353,9 @@ func (s *Service) Run(ctx context.Context, req *pipeline.Request) (*Result, erro
 	if err := s.Validate(req); err != nil {
 		return nil, err
 	}
+	if req.Format == pipeline.FormatChatCompletion && s.chatCompletions != nil {
+		return s.runChatCompletions(ctx, req)
+	}
 
 	input, err := buildInput(req)
 	if err != nil {
@@ -387,6 +413,9 @@ func (s *Service) Stream(ctx context.Context, req *pipeline.Request, emitter pip
 	if err := s.Validate(req); err != nil {
 		return nil, err
 	}
+	if req.Format == pipeline.FormatChatCompletion && s.chatCompletions != nil {
+		return s.streamChatCompletions(ctx, req, emitter)
+	}
 
 	input, err := buildInput(req)
 	if err != nil {
@@ -420,8 +449,233 @@ func (s *Service) Stream(ctx context.Context, req *pipeline.Request, emitter pip
 	return s.streamFinalAnswer(ctx, req, state, emitter, streamID, created, accumulated)
 }
 
+func (s *Service) runChatCompletions(ctx context.Context, req *pipeline.Request) (*Result, error) {
+	messages, err := buildChatMessages(req)
+	if err != nil {
+		return nil, err
+	}
+
+	state := &executionState{
+		nextCitation: 1,
+	}
+	allowTools := req.WebSearchEnabled
+
+	for iteration := 0; iteration < s.toolLoopMaxIter; iteration++ {
+		resp, err := s.chatCompletions.New(ctx, s.buildChatParams(req, messages, allowTools, false))
+		if err != nil {
+			return nil, err
+		}
+		if len(resp.Choices) == 0 {
+			return nil, fmt.Errorf("model returned no choices")
+		}
+
+		choice := resp.Choices[0]
+		state.addUsage(resp.Usage)
+		functionCalls := parseChatToolCalls(choice.Message)
+		if len(functionCalls) == 0 {
+			if choice.Message.Content == "" {
+				return nil, fmt.Errorf("model returned no message content")
+			}
+			return state.finalResult(req, responseIDFor(req.Format, resp.ID), objectFor(req.Format), resp.Created, resp.Model, state.finalContent(choice.Message.Content), state.usage), nil
+		}
+
+		state.appendContent(choice.Message.Content)
+		sortedCalls, executions := s.executeToolCalls(ctx, req, functionCalls, nil)
+		messages = appendChatToolLoopItems(messages, choice.Message.ToParam(), s.prepareToolOutputs(ctx, req, state, sortedCalls, executions))
+		allowTools = true
+	}
+
+	resp, err := s.chatCompletions.New(ctx, s.buildChatParams(req, messages, false, false))
+	if err != nil {
+		return nil, err
+	}
+	if len(resp.Choices) == 0 {
+		return nil, fmt.Errorf("model returned no choices")
+	}
+
+	state.addUsage(resp.Usage)
+	finalText := resp.Choices[0].Message.Content
+	if finalText == "" {
+		return nil, fmt.Errorf("model returned no final answer")
+	}
+
+	return state.finalResult(req, responseIDFor(req.Format, resp.ID), objectFor(req.Format), resp.Created, resp.Model, state.finalContent(finalText), state.usage), nil
+}
+
+func (s *Service) streamChatCompletions(ctx context.Context, req *pipeline.Request, emitter pipeline.EventEmitter) (*Result, error) {
+	messages, err := buildChatMessages(req)
+	if err != nil {
+		return nil, err
+	}
+
+	state := &executionState{
+		nextCitation: 1,
+	}
+	streamID := responseIDFor(req.Format, "")
+	created := time.Now().Unix()
+	allowTools := req.WebSearchEnabled
+
+	for iteration := 0; iteration < s.toolLoopMaxIter; iteration++ {
+		result, continuationMessages, err := s.streamChatCompletionIteration(ctx, req, state, emitter, streamID, created, allowTools, messages)
+		if err != nil {
+			return nil, err
+		}
+		if result != nil {
+			return result, nil
+		}
+		messages = continuationMessages
+		allowTools = true
+	}
+
+	return s.streamChatCompletionFinalAnswer(ctx, req, state, emitter, streamID, created, messages)
+}
+
+func (s *Service) streamChatCompletionIteration(ctx context.Context, req *pipeline.Request, state *executionState, emitter pipeline.EventEmitter, streamID string, created int64, allowTools bool, messages []openai.ChatCompletionMessageParamUnion) (*Result, []openai.ChatCompletionMessageParamUnion, error) {
+	stream := s.chatCompletions.NewStreaming(ctx, s.buildChatParams(req, messages, allowTools, true))
+	accumulator := openai.ChatCompletionAccumulator{}
+	parser := &streamState{
+		messageID: "msg_" + uuid.New().String()[:8],
+	}
+	messageStarted := false
+	var usage openai.CompletionUsage
+
+	for stream.Next() {
+		chunk := stream.Current()
+		if !accumulator.AddChunk(chunk) {
+			return nil, nil, fmt.Errorf("failed to accumulate chat completion stream")
+		}
+		if chunk.Usage.TotalTokens > 0 {
+			usage = chunk.Usage
+		}
+		if len(chunk.Choices) == 0 || chunk.Choices[0].Delta.Content == "" {
+			continue
+		}
+		if !messageStarted {
+			if err := startLiveMessage(emitter, streamID, created, req.Model, parser.messageID, streamingAnnotationsFromSources(state.sources)); err != nil {
+				return nil, nil, err
+			}
+			messageStarted = true
+		}
+		parser.text.WriteString(chunk.Choices[0].Delta.Content)
+		contentChunk, err := marshalChatContentChunk(streamID, created, req.Model, chunk.Choices[0].Delta.Content)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := emitter.EmitChunk(contentChunk); err != nil {
+			return nil, nil, err
+		}
+	}
+	if err := stream.Err(); err != nil {
+		return nil, nil, err
+	}
+	var message openai.ChatCompletionMessage
+	if len(accumulator.Choices) > 0 {
+		message = accumulator.Choices[0].Message
+	}
+	functionCalls := parseChatToolCalls(message)
+	if parser.text.Len() == 0 && message.Content == "" && len(functionCalls) == 0 {
+		fallback, err := s.chatCompletions.New(ctx, s.buildChatParams(req, messages, allowTools, false))
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(fallback.Choices) == 0 {
+			return nil, nil, fmt.Errorf("model returned no choices")
+		}
+		message = fallback.Choices[0].Message
+		functionCalls = parseChatToolCalls(message)
+		usage = fallback.Usage
+	}
+
+	state.addUsage(usage)
+	if len(functionCalls) == 0 {
+		if message.Content == "" {
+			return nil, nil, fmt.Errorf("model returned no tool calls or message content")
+		}
+		result := state.finalResult(req, streamID, objectFor(req.Format), created, req.Model, state.finalContent(message.Content), state.usage)
+		if err := finalizeLiveMessage(emitter, streamID, created, req.Model, parser, message.Content, messageStarted, streamingAnnotationsFromSources(state.sources), result.Annotations, result.Usage); err != nil {
+			return nil, nil, err
+		}
+		return result, nil, nil
+	}
+
+	state.appendContent(message.Content)
+	sortedCalls, executions := s.executeToolCalls(ctx, req, functionCalls, emitter)
+	toolOutputs := s.prepareToolOutputs(ctx, req, state, sortedCalls, executions)
+	return nil, appendChatToolLoopItems(messages, message.ToParam(), toolOutputs), nil
+}
+
+func (s *Service) streamChatCompletionFinalAnswer(ctx context.Context, req *pipeline.Request, state *executionState, emitter pipeline.EventEmitter, streamID string, created int64, messages []openai.ChatCompletionMessageParamUnion) (*Result, error) {
+	stream := s.chatCompletions.NewStreaming(ctx, s.buildChatParams(req, messages, false, true))
+	accumulator := openai.ChatCompletionAccumulator{}
+	parser := &streamState{
+		messageID: "msg_" + uuid.New().String()[:8],
+	}
+	messageStarted := false
+	var usage openai.CompletionUsage
+
+	for stream.Next() {
+		chunk := stream.Current()
+		if !accumulator.AddChunk(chunk) {
+			return nil, fmt.Errorf("failed to accumulate chat completion stream")
+		}
+		if chunk.Usage.TotalTokens > 0 {
+			usage = chunk.Usage
+		}
+		if len(chunk.Choices) == 0 || chunk.Choices[0].Delta.Content == "" {
+			continue
+		}
+		if !messageStarted {
+			if err := startLiveMessage(emitter, streamID, created, req.Model, parser.messageID, streamingAnnotationsFromSources(state.sources)); err != nil {
+				return nil, err
+			}
+			messageStarted = true
+		}
+		parser.text.WriteString(chunk.Choices[0].Delta.Content)
+		contentChunk, err := marshalChatContentChunk(streamID, created, req.Model, chunk.Choices[0].Delta.Content)
+		if err != nil {
+			return nil, err
+		}
+		if err := emitter.EmitChunk(contentChunk); err != nil {
+			return nil, err
+		}
+	}
+	if err := stream.Err(); err != nil {
+		return nil, err
+	}
+	finalText := ""
+	if len(accumulator.Choices) > 0 {
+		finalText = accumulator.Choices[0].Message.Content
+	}
+	if parser.text.Len() == 0 && finalText == "" {
+		fallback, err := s.chatCompletions.New(ctx, s.buildChatParams(req, messages, false, false))
+		if err != nil {
+			return nil, err
+		}
+		if len(fallback.Choices) == 0 {
+			return nil, fmt.Errorf("model returned no choices")
+		}
+		finalText = fallback.Choices[0].Message.Content
+		usage = fallback.Usage
+	}
+
+	state.addUsage(usage)
+	if finalText == "" {
+		return nil, fmt.Errorf("model returned no final answer")
+	}
+
+	result := state.finalResult(req, streamID, objectFor(req.Format), created, req.Model, state.finalContent(finalText), state.usage)
+	if err := finalizeLiveMessage(emitter, streamID, created, req.Model, parser, finalText, messageStarted, streamingAnnotationsFromSources(state.sources), result.Annotations, result.Usage); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func (s *Service) Validate(req *pipeline.Request) error {
 	if err := validateRequest(req); err != nil {
+		return err
+	}
+	if req.Format == pipeline.FormatChatCompletion && s.chatCompletions != nil {
+		_, err := buildChatMessages(req)
 		return err
 	}
 	_, err := buildInput(req)
@@ -690,7 +944,16 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 }
 
 func (s *Service) applyToolExecutions(ctx context.Context, req *pipeline.Request, state *executionState, sortedCalls []*functionCall, executions map[string]*toolExecution) []responses.ResponseInputItemUnionParam {
-	var input []responses.ResponseInputItemUnionParam
+	outputs := s.prepareToolOutputs(ctx, req, state, sortedCalls, executions)
+	input := make([]responses.ResponseInputItemUnionParam, 0, len(outputs))
+	for _, output := range outputs {
+		input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(output.callID, output.text))
+	}
+	return input
+}
+
+func (s *Service) prepareToolOutputs(ctx context.Context, req *pipeline.Request, state *executionState, sortedCalls []*functionCall, executions map[string]*toolExecution) []toolOutput {
+	var outputs []toolOutput
 	for _, call := range sortedCalls {
 		exec := executions[call.id]
 		if exec == nil {
@@ -705,12 +968,12 @@ func (s *Service) applyToolExecutions(ctx context.Context, req *pipeline.Request
 					Query:  exec.query,
 					Reason: exec.searchOutcome.BlockedReason,
 				})
-				input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(call.id, "Search blocked: "+exec.searchOutcome.BlockedReason))
+				outputs = append(outputs, toolOutput{callID: call.id, text: "Search blocked: " + exec.searchOutcome.BlockedReason})
 				continue
 			}
 
 			if exec.err != nil {
-				input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(call.id, "Search failed: "+exec.err.Error()))
+				outputs = append(outputs, toolOutput{callID: call.id, text: "Search failed: " + exec.err.Error()})
 				continue
 			}
 
@@ -725,9 +988,9 @@ func (s *Service) applyToolExecutions(ctx context.Context, req *pipeline.Request
 					URL:   result.URL,
 				})
 			}
-			toolOutput := formatSearchToolOutput(state.nextCitation, exec.searchOutcome.Results)
-			toolOutput = s.maybeCompactToolOutput(ctx, req, "search", toolOutput)
-			input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(call.id, toolOutput))
+			outputText := formatSearchToolOutput(state.nextCitation, exec.searchOutcome.Results)
+			outputText = s.maybeCompactToolOutput(ctx, req, "search", outputText)
+			outputs = append(outputs, toolOutput{callID: call.id, text: outputText})
 			state.nextCitation += len(exec.searchOutcome.Results)
 
 		case "fetch":
@@ -737,7 +1000,7 @@ func (s *Service) applyToolExecutions(ctx context.Context, req *pipeline.Request
 					Status: pipeline.EmitStatusFailed,
 					URL:    exec.url,
 				})
-				input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(call.id, "Fetch failed: "+exec.err.Error()))
+				outputs = append(outputs, toolOutput{callID: call.id, text: "Fetch failed: " + exec.err.Error()})
 				continue
 			}
 
@@ -747,7 +1010,7 @@ func (s *Service) applyToolExecutions(ctx context.Context, req *pipeline.Request
 					Status: pipeline.EmitStatusFailed,
 					URL:    exec.url,
 				})
-				input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(call.id, "No page content could be fetched."))
+				outputs = append(outputs, toolOutput{callID: call.id, text: "No page content could be fetched."})
 				continue
 			}
 
@@ -765,14 +1028,14 @@ func (s *Service) applyToolExecutions(ctx context.Context, req *pipeline.Request
 				Title: page.URL,
 				URL:   page.URL,
 			})
-			toolOutput := formatFetchedPageOutput(citationIndex, page)
-			toolOutput = s.maybeCompactToolOutput(ctx, req, "fetch", toolOutput)
-			input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(call.id, toolOutput))
+			outputText := formatFetchedPageOutput(citationIndex, page)
+			outputText = s.maybeCompactToolOutput(ctx, req, "fetch", outputText)
+			outputs = append(outputs, toolOutput{callID: call.id, text: outputText})
 			state.nextCitation++
 		}
 	}
 
-	return input
+	return outputs
 }
 
 // appendToolLoopItems appends the model's prior output items and the matching
@@ -781,6 +1044,14 @@ func (s *Service) applyToolExecutions(ctx context.Context, req *pipeline.Request
 func appendToolLoopItems(accumulated []responses.ResponseInputItemUnionParam, continuationItems, toolOutputs []responses.ResponseInputItemUnionParam) []responses.ResponseInputItemUnionParam {
 	accumulated = append(accumulated, continuationItems...)
 	accumulated = append(accumulated, toolOutputs...)
+	return accumulated
+}
+
+func appendChatToolLoopItems(accumulated []openai.ChatCompletionMessageParamUnion, assistant openai.ChatCompletionMessageParamUnion, toolOutputs []toolOutput) []openai.ChatCompletionMessageParamUnion {
+	accumulated = append(accumulated, assistant)
+	for _, output := range toolOutputs {
+		accumulated = append(accumulated, openai.ToolMessage(output.text, output.callID))
+	}
 	return accumulated
 }
 
@@ -888,6 +1159,63 @@ func (s *Service) buildParams(req *pipeline.Request, input []responses.ResponseI
 	return params
 }
 
+func (s *Service) buildChatParams(req *pipeline.Request, messages []openai.ChatCompletionMessageParamUnion, allowTools bool, includeUsage bool) openai.ChatCompletionNewParams {
+	params := openai.ChatCompletionNewParams{
+		Model:             shared.ChatModel(req.Model),
+		Messages:          messages,
+		ParallelToolCalls: openai.Bool(false),
+	}
+	if req.Temperature != nil {
+		params.Temperature = openai.Float(*req.Temperature)
+	}
+	if req.MaxTokens != nil {
+		params.MaxCompletionTokens = openai.Int(*req.MaxTokens)
+	}
+	if includeUsage {
+		params.StreamOptions = openai.ChatCompletionStreamOptionsParam{
+			IncludeUsage: openai.Bool(true),
+		}
+	}
+
+	if allowTools {
+		searchTool := openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+			Name:        "search",
+			Description: openai.String("Search the web for current information. Results contain numbered source markers. " + citationInstructions + " " + toolOutputWarning),
+			Parameters: shared.FunctionParameters{
+				"type": "object",
+				"properties": map[string]any{
+					"query": map[string]any{
+						"type":        "string",
+						"description": "The web search query to execute.",
+					},
+				},
+				"required":             []string{"query"},
+				"additionalProperties": false,
+			},
+			Strict: openai.Bool(true),
+		})
+		fetchTool := openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+			Name:        "fetch",
+			Description: openai.String("Fetch the contents of a specific URL as text. Results contain numbered source markers. " + citationInstructions + " " + toolOutputWarning),
+			Parameters: shared.FunctionParameters{
+				"type": "object",
+				"properties": map[string]any{
+					"url": map[string]any{
+						"type":        "string",
+						"description": "The URL to fetch and read.",
+					},
+				},
+				"required":             []string{"url"},
+				"additionalProperties": false,
+			},
+			Strict: openai.Bool(true),
+		})
+		params.Tools = []openai.ChatCompletionToolUnionParam{searchTool, fetchTool}
+	}
+
+	return params
+}
+
 func validateRequest(req *pipeline.Request) error {
 	if req == nil {
 		return &pipeline.ValidationError{Message: "request is nil"}
@@ -929,6 +1257,114 @@ func buildInput(req *pipeline.Request) ([]responses.ResponseInputItemUnionParam,
 	}
 
 	return items, nil
+}
+
+func buildChatMessages(req *pipeline.Request) ([]openai.ChatCompletionMessageParamUnion, error) {
+	messages := make([]openai.ChatCompletionMessageParamUnion, 0, len(req.Messages)+1)
+	if msg := buildContextMessage(req); msg != "" {
+		messages = append(messages, openai.SystemMessage(msg))
+	}
+	for _, message := range req.Messages {
+		item, err := buildChatMessage(message)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, item)
+	}
+	return messages, nil
+}
+
+func buildChatMessage(message pipeline.Message) (openai.ChatCompletionMessageParamUnion, error) {
+	if text, ok := decodeStringContent(message.Content); ok {
+		return chatMessageForRole(message.Role, text)
+	}
+	if message.Role == "user" {
+		parts, err := decodeChatContentParts(message.Content)
+		if err == nil {
+			return openai.UserMessage(parts), nil
+		}
+	}
+	text := pipeline.ExtractTextContent(message.Content)
+	if text == "" {
+		return openai.ChatCompletionMessageParamUnion{}, &pipeline.ValidationError{Message: "unsupported message content"}
+	}
+	return chatMessageForRole(message.Role, text)
+}
+
+func chatMessageForRole(role, text string) (openai.ChatCompletionMessageParamUnion, error) {
+	switch role {
+	case "user":
+		return openai.UserMessage(text), nil
+	case "assistant":
+		return openai.AssistantMessage(text), nil
+	case "system":
+		return openai.SystemMessage(text), nil
+	case "developer":
+		return openai.DeveloperMessage(text), nil
+	default:
+		return openai.ChatCompletionMessageParamUnion{}, &pipeline.ValidationError{Field: "messages.role", Message: "unsupported role"}
+	}
+}
+
+func decodeChatContentParts(content json.RawMessage) ([]openai.ChatCompletionContentPartUnionParam, error) {
+	var rawParts []map[string]json.RawMessage
+	if err := json.Unmarshal(content, &rawParts); err != nil {
+		return nil, err
+	}
+
+	parts := make([]openai.ChatCompletionContentPartUnionParam, 0, len(rawParts))
+	for _, rawPart := range rawParts {
+		var partType string
+		if err := json.Unmarshal(rawPart["type"], &partType); err != nil {
+			continue
+		}
+
+		switch partType {
+		case "text", "input_text":
+			var text string
+			if err := json.Unmarshal(mustRawField(rawPart, "text"), &text); err != nil {
+				continue
+			}
+			parts = append(parts, openai.TextContentPart(text))
+		case "image_url":
+			var part struct {
+				ImageURL struct {
+					URL    string `json:"url"`
+					Detail string `json:"detail"`
+				} `json:"image_url"`
+			}
+			if err := json.Unmarshal(mustRawField(rawPart, "image_url"), &part.ImageURL); err != nil {
+				continue
+			}
+			if part.ImageURL.URL == "" {
+				continue
+			}
+			parts = append(parts, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
+				URL:    part.ImageURL.URL,
+				Detail: part.ImageURL.Detail,
+			}))
+		case "input_image":
+			var part struct {
+				ImageURL string `json:"image_url"`
+				Detail   string `json:"detail"`
+			}
+			if err := json.Unmarshal(marshalMap(rawPart), &part); err != nil {
+				continue
+			}
+			if part.ImageURL == "" {
+				continue
+			}
+			parts = append(parts, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
+				URL:    part.ImageURL,
+				Detail: part.Detail,
+			}))
+		}
+	}
+
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("unsupported content parts")
+	}
+	return parts, nil
 }
 
 func buildResponsesInput(input json.RawMessage) ([]responses.ResponseInputItemUnionParam, error) {
@@ -1159,6 +1595,19 @@ func parseOutputItems(output []responses.ResponseOutputItemUnion) (map[int]*func
 	}
 
 	return functionCalls, continuationItems, text.String()
+}
+
+func parseChatToolCalls(message openai.ChatCompletionMessage) map[int]*functionCall {
+	functionCalls := make(map[int]*functionCall)
+	for i, toolCall := range message.ToolCalls {
+		functionCalls[i] = &functionCall{
+			index: i,
+			id:    toolCall.ID,
+			name:  toolCall.Function.Name,
+		}
+		functionCalls[i].arguments.WriteString(toolCall.Function.Arguments)
+	}
+	return functionCalls
 }
 
 func buildReasoningInputItem(r responses.ResponseReasoningItem) responses.ResponseInputItemUnionParam {
