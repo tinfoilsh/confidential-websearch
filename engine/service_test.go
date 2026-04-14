@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -138,6 +140,22 @@ func (f *fakeSafeguard) Check(ctx context.Context, policy, content string) (*saf
 		return &safeguard.CheckResult{Violation: true, Rationale: reason}, nil
 	}
 	return &safeguard.CheckResult{}, nil
+}
+
+type fakeModelCatalog struct {
+	support map[string]bool
+	err     error
+}
+
+func (f *fakeModelCatalog) SupportsToolCalling(ctx context.Context, model string) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	supported, ok := f.support[model]
+	if !ok {
+		return true, nil
+	}
+	return supported, nil
 }
 
 type captureEmitter struct {
@@ -418,6 +436,135 @@ func TestRun_ChatCompletionsUsesChatToolLoop(t *testing.T) {
 	assertContainsChatJSON(t, chatClient.params[1], `"tool_call_id":"call_search"`)
 	if result.Content != "Let me check that.Here is the answer【1】" {
 		t.Fatalf("unexpected final content: %q", result.Content)
+	}
+}
+
+func TestRun_ChatCompletionsDisablesToolsWhenModelLacksSupport(t *testing.T) {
+	chatClient := &fakeChatCompletionsClient{
+		responses: []*openai.ChatCompletion{
+			mustChatCompletion(t, `{"id":"chatcmpl_1","created":1,"model":"glm-5-1","object":"chat.completion","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"Answer without tools"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`),
+		},
+	}
+	req := chatRequest()
+	req.Model = "glm-5-1"
+	service := NewService(
+		&fakeResponsesClient{},
+		nil,
+		nil,
+		nil,
+		WithChatCompletionsClient(chatClient),
+		WithModelCatalog(&fakeModelCatalog{support: map[string]bool{"glm-5-1": false}}),
+	)
+
+	result, err := service.Run(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Content != "Answer without tools" {
+		t.Fatalf("unexpected final content: %q", result.Content)
+	}
+	if len(chatClient.params) != 1 {
+		t.Fatalf("expected 1 chat completion call, got %d", len(chatClient.params))
+	}
+	assertNotContainsChatJSON(t, chatClient.params[0], `"tools"`)
+}
+
+func TestRun_ResponsesDisablesToolsWhenModelLacksSupport(t *testing.T) {
+	responseClient := &fakeResponsesClient{
+		responses: []*responses.Response{
+			mustResponse(t, `{"id":"resp_1","created_at":1,"model":"glm-5-1","output":[{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Answer without tools","annotations":[]}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`),
+		},
+	}
+	service := NewService(
+		responseClient,
+		nil,
+		nil,
+		nil,
+		WithModelCatalog(&fakeModelCatalog{support: map[string]bool{"glm-5-1": false}}),
+	)
+
+	result, err := service.Run(context.Background(), &pipeline.Request{
+		Model:            "glm-5-1",
+		Format:           pipeline.FormatResponses,
+		Input:            mustJSONRaw("hello"),
+		WebSearchEnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Content != "Answer without tools" {
+		t.Fatalf("unexpected final content: %q", result.Content)
+	}
+	if len(responseClient.params) != 1 {
+		t.Fatalf("expected 1 responses call, got %d", len(responseClient.params))
+	}
+	assertNotContainsJSON(t, responseClient.params[0], `"tools"`)
+}
+
+func TestRun_ModelCatalogFailureKeepsToolsEnabled(t *testing.T) {
+	chatClient := &fakeChatCompletionsClient{
+		responses: []*openai.ChatCompletion{
+			mustChatCompletion(t, `{"id":"chatcmpl_1","created":1,"model":"glm-5-1","object":"chat.completion","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":"","tool_calls":[{"id":"call_search","type":"function","function":{"name":"search","arguments":"{\"query\":\"golang\"}"}}]}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`),
+			mustChatCompletion(t, `{"id":"chatcmpl_2","created":2,"model":"glm-5-1","object":"chat.completion","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"Done"}}],"usage":{"prompt_tokens":2,"completion_tokens":2,"total_tokens":4}}`),
+		},
+	}
+	service := NewService(
+		&fakeResponsesClient{},
+		&fakeSearcher{results: map[string][]search.Result{
+			"golang": {{Title: "Go", URL: "https://go.dev", Content: "Go info"}},
+		}},
+		nil,
+		nil,
+		WithChatCompletionsClient(chatClient),
+		WithModelCatalog(&fakeModelCatalog{err: fmt.Errorf("lookup failed")}),
+	)
+
+	if _, err := service.Run(context.Background(), chatRequest()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(chatClient.params) != 2 {
+		t.Fatalf("expected 2 chat completion calls, got %d", len(chatClient.params))
+	}
+	assertContainsChatJSON(t, chatClient.params[0], `"tools"`)
+	assertContainsChatJSON(t, chatClient.params[1], `"tool_call_id":"call_search"`)
+}
+
+func TestHTTPModelCatalog_TreatsNonChatModelsAsNoToolSupport(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":"chat-model","tool_calling":true,"type":"chat"},{"id":"audio-model","tool_calling":true,"type":"audio"},{"id":"safety-model","tool_calling":true,"type":"safety"}]}`))
+	}))
+	defer server.Close()
+
+	catalog := &httpModelCatalog{
+		client:   server.Client(),
+		url:      server.URL,
+		cacheTTL: time.Minute,
+	}
+
+	supported, err := catalog.SupportsToolCalling(context.Background(), "chat-model")
+	if err != nil {
+		t.Fatalf("unexpected error for chat model: %v", err)
+	}
+	if !supported {
+		t.Fatal("expected chat model to support tools")
+	}
+
+	supported, err = catalog.SupportsToolCalling(context.Background(), "audio-model")
+	if err != nil {
+		t.Fatalf("unexpected error for audio model: %v", err)
+	}
+	if supported {
+		t.Fatal("expected non-chat audio model to disable tools")
+	}
+
+	supported, err = catalog.SupportsToolCalling(context.Background(), "safety-model")
+	if err != nil {
+		t.Fatalf("unexpected error for safety model: %v", err)
+	}
+	if supported {
+		t.Fatal("expected non-chat safety model to disable tools")
 	}
 }
 

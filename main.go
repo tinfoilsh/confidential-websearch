@@ -61,6 +61,7 @@ func main() {
 		fetcher,
 		safeguardClient,
 		engine.WithChatCompletionsClient(chatCompletionsClient{inner: &client.Chat.Completions}),
+		engine.WithModelCatalog(engine.NewHTTPModelCatalog(nil)),
 		engine.WithToolSummaryModel(cfg.ToolSummaryModel),
 		engine.WithToolLoopMaxIter(cfg.ToolLoopMaxIter),
 	)
