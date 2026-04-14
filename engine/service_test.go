@@ -39,6 +39,26 @@ func (f *fakeResponsesClient) NewStreaming(ctx context.Context, body responses.R
 	return stream
 }
 
+type fakeChatCompletionsClient struct {
+	responses []*openai.ChatCompletion
+	streams   []ChatCompletionStream
+	params    []openai.ChatCompletionNewParams
+}
+
+func (f *fakeChatCompletionsClient) New(ctx context.Context, body openai.ChatCompletionNewParams, opts ...option.RequestOption) (*openai.ChatCompletion, error) {
+	f.params = append(f.params, body)
+	resp := f.responses[0]
+	f.responses = f.responses[1:]
+	return resp, nil
+}
+
+func (f *fakeChatCompletionsClient) NewStreaming(ctx context.Context, body openai.ChatCompletionNewParams, opts ...option.RequestOption) ChatCompletionStream {
+	f.params = append(f.params, body)
+	stream := f.streams[0]
+	f.streams = f.streams[1:]
+	return stream
+}
+
 type fakeStream struct {
 	events []responses.ResponseStreamEventUnion
 	index  int
@@ -57,6 +77,25 @@ func (s *fakeStream) Current() responses.ResponseStreamEventUnion {
 }
 
 func (s *fakeStream) Err() error { return nil }
+
+type fakeChatStream struct {
+	chunks []openai.ChatCompletionChunk
+	index  int
+}
+
+func (s *fakeChatStream) Next() bool {
+	if s.index >= len(s.chunks) {
+		return false
+	}
+	s.index++
+	return true
+}
+
+func (s *fakeChatStream) Current() openai.ChatCompletionChunk {
+	return s.chunks[s.index-1]
+}
+
+func (s *fakeChatStream) Err() error { return nil }
 
 type fakeSearcher struct {
 	results map[string][]search.Result
@@ -350,6 +389,67 @@ func TestRun_MixedTextAndFunctionCallContinuesCleanly(t *testing.T) {
 	}
 }
 
+func TestRun_ChatCompletionsUsesChatToolLoop(t *testing.T) {
+	chatClient := &fakeChatCompletionsClient{
+		responses: []*openai.ChatCompletion{
+			mustChatCompletion(t, `{"id":"chatcmpl_1","created":1,"model":"glm-5-1","object":"chat.completion","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":"Let me check that.","tool_calls":[{"id":"call_search","type":"function","function":{"name":"search","arguments":"{\"query\":\"golang\"}"}}]}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`),
+			mustChatCompletion(t, `{"id":"chatcmpl_2","created":2,"model":"glm-5-1","object":"chat.completion","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"Here is the answer【1】"}}],"usage":{"prompt_tokens":2,"completion_tokens":2,"total_tokens":4}}`),
+		},
+	}
+	service := NewService(
+		&fakeResponsesClient{},
+		&fakeSearcher{results: map[string][]search.Result{
+			"golang": {{Title: "Go", URL: "https://go.dev", Content: "Go info"}},
+		}},
+		nil,
+		nil,
+		WithChatCompletionsClient(chatClient),
+	)
+
+	result, err := service.Run(context.Background(), chatRequest())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(chatClient.params) != 2 {
+		t.Fatalf("expected 2 chat completion calls, got %d", len(chatClient.params))
+	}
+	assertContainsChatJSON(t, chatClient.params[1], `Let me check that.`)
+	assertContainsChatJSON(t, chatClient.params[1], `"tool_call_id":"call_search"`)
+	if result.Content != "Let me check that.Here is the answer【1】" {
+		t.Fatalf("unexpected final content: %q", result.Content)
+	}
+}
+
+func TestRun_ResponsesFormatStillUsesResponsesClient(t *testing.T) {
+	responseClient := &fakeResponsesClient{
+		responses: []*responses.Response{
+			mustResponse(t, `{"id":"resp_1","created_at":1,"model":"gpt-oss-120b","output":[{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Done","annotations":[]}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`),
+		},
+	}
+	chatClient := &fakeChatCompletionsClient{}
+	service := NewService(responseClient, nil, nil, nil, WithChatCompletionsClient(chatClient))
+
+	result, err := service.Run(context.Background(), &pipeline.Request{
+		Model:  "gpt-oss-120b",
+		Format: pipeline.FormatResponses,
+		Input:  mustJSONRaw("hello"),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Content != "Done" {
+		t.Fatalf("unexpected content: %q", result.Content)
+	}
+	if len(responseClient.params) != 1 {
+		t.Fatalf("expected responses client to be called once, got %d", len(responseClient.params))
+	}
+	if len(chatClient.params) != 0 {
+		t.Fatalf("expected chat client to remain unused, got %d calls", len(chatClient.params))
+	}
+}
+
 func TestRun_BlockedSearchContinuesWithToolOutput(t *testing.T) {
 	client := &fakeResponsesClient{
 		responses: []*responses.Response{
@@ -459,6 +559,95 @@ func TestStream_MixedTextAndFunctionCallContinuesCleanly(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(emitter.chunks, ""), `Here is the answer`) {
 		t.Fatalf("expected emitted chunks to contain final text")
+	}
+}
+
+func TestStream_ChatCompletionsUsesChatToolLoop(t *testing.T) {
+	chatClient := &fakeChatCompletionsClient{
+		streams: []ChatCompletionStream{
+			&fakeChatStream{chunks: []openai.ChatCompletionChunk{
+				mustChatChunk(t, `{"id":"chatcmpl_1","created":1,"model":"glm-5-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"}}]}`),
+				mustChatChunk(t, `{"id":"chatcmpl_1","created":1,"model":"glm-5-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Let me check that."}}]}`),
+				mustChatChunk(t, `{"id":"chatcmpl_1","created":1,"model":"glm-5-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_search","type":"function","function":{"name":"search","arguments":"{\"query\":\"golang\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`),
+			}},
+			&fakeChatStream{chunks: []openai.ChatCompletionChunk{
+				mustChatChunk(t, `{"id":"chatcmpl_2","created":2,"model":"glm-5-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"}}]}`),
+				mustChatChunk(t, `{"id":"chatcmpl_2","created":2,"model":"glm-5-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Here is the answer【1】"}}]}`),
+				mustChatChunk(t, `{"id":"chatcmpl_2","created":2,"model":"glm-5-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":2,"total_tokens":4}}`),
+			}},
+		},
+	}
+	service := NewService(
+		&fakeResponsesClient{},
+		&fakeSearcher{results: map[string][]search.Result{
+			"golang": {{Title: "Go", URL: "https://go.dev", Content: "Go info"}},
+		}},
+		nil,
+		nil,
+		WithChatCompletionsClient(chatClient),
+	)
+	emitter := &captureEmitter{}
+
+	result, err := service.Stream(context.Background(), chatRequest(), emitter)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(chatClient.params) != 2 {
+		t.Fatalf("expected 2 chat completion streams, got %d", len(chatClient.params))
+	}
+	assertContainsChatJSON(t, chatClient.params[1], `Let me check that.`)
+	assertContainsChatJSON(t, chatClient.params[1], `"tool_call_id":"call_search"`)
+	if result.Content != "Let me check that.Here is the answer【1】" {
+		t.Fatalf("unexpected final content: %q", result.Content)
+	}
+	if !strings.Contains(strings.Join(emitter.chunks, ""), `Let me check that.`) {
+		t.Fatalf("expected emitted chunks to contain interim text")
+	}
+	if !strings.Contains(strings.Join(emitter.chunks, ""), `Here is the answer`) {
+		t.Fatalf("expected emitted chunks to contain final text")
+	}
+}
+
+func TestStream_ChatCompletionsFallsBackWhenStreamHasNoContent(t *testing.T) {
+	chatClient := &fakeChatCompletionsClient{
+		responses: []*openai.ChatCompletion{
+			mustChatCompletion(t, `{"id":"chatcmpl_fallback","created":2,"model":"kimi-k2-5","object":"chat.completion","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"Fallback answer"}}],"usage":{"prompt_tokens":2,"completion_tokens":2,"total_tokens":4}}`),
+		},
+		streams: []ChatCompletionStream{
+			&fakeChatStream{chunks: []openai.ChatCompletionChunk{
+				mustChatChunk(t, `{"id":"chatcmpl_stream","created":1,"model":"kimi-k2-5","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":0,"total_tokens":1}}`),
+			}},
+		},
+	}
+	service := NewService(
+		&fakeResponsesClient{},
+		nil,
+		nil,
+		nil,
+		WithChatCompletionsClient(chatClient),
+	)
+	emitter := &captureEmitter{}
+
+	result, err := service.Stream(context.Background(), &pipeline.Request{
+		Model:  "kimi-k2-5",
+		Format: pipeline.FormatChatCompletion,
+		Messages: []pipeline.Message{
+			{Role: "user", Content: mustJSONRaw("hello")},
+		},
+	}, emitter)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Content != "Fallback answer" {
+		t.Fatalf("unexpected final content: %q", result.Content)
+	}
+	if len(chatClient.params) != 2 {
+		t.Fatalf("expected one streaming and one fallback chat call, got %d", len(chatClient.params))
+	}
+	if !strings.Contains(strings.Join(emitter.chunks, ""), `Fallback answer`) {
+		t.Fatalf("expected emitted chunks to contain fallback answer")
 	}
 }
 
@@ -948,6 +1137,24 @@ func mustResponse(t *testing.T, raw string) *responses.Response {
 	return &resp
 }
 
+func mustChatCompletion(t *testing.T, raw string) *openai.ChatCompletion {
+	t.Helper()
+	var resp openai.ChatCompletion
+	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+		t.Fatalf("failed to unmarshal chat completion: %v", err)
+	}
+	return &resp
+}
+
+func mustChatChunk(t *testing.T, raw string) openai.ChatCompletionChunk {
+	t.Helper()
+	var chunk openai.ChatCompletionChunk
+	if err := json.Unmarshal([]byte(raw), &chunk); err != nil {
+		t.Fatalf("failed to unmarshal chat completion chunk: %v", err)
+	}
+	return chunk
+}
+
 func mustEvent(t *testing.T, raw string) responses.ResponseStreamEventUnion {
 	t.Helper()
 	var event responses.ResponseStreamEventUnion
@@ -1003,5 +1210,27 @@ func assertNotContainsJSON(t *testing.T, params responses.ResponseNewParams, nee
 	}
 	if strings.Contains(string(data), needle) {
 		t.Fatalf("expected marshaled params not to contain %q, got %s", needle, string(data))
+	}
+}
+
+func assertContainsChatJSON(t *testing.T, params openai.ChatCompletionNewParams, needle string) {
+	t.Helper()
+	data, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("failed to marshal chat params: %v", err)
+	}
+	if !strings.Contains(string(data), needle) {
+		t.Fatalf("expected marshaled chat params to contain %q, got %s", needle, string(data))
+	}
+}
+
+func assertNotContainsChatJSON(t *testing.T, params openai.ChatCompletionNewParams, needle string) {
+	t.Helper()
+	data, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("failed to marshal chat params: %v", err)
+	}
+	if strings.Contains(string(data), needle) {
+		t.Fatalf("expected marshaled chat params not to contain %q, got %s", needle, string(data))
 	}
 }
