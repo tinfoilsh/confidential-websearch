@@ -625,6 +625,11 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 					_ = emitter.EmitSearchCall(call.id, "in_progress", query, "", 0, req.Model)
 					emitterMu.Unlock()
 				}
+				if emitter != nil {
+					emitterMu.Lock()
+					_ = emitter.EmitSearchCall(call.id, "searching", query, "", 0, req.Model)
+					emitterMu.Unlock()
+				}
 				outcome, err := s.Search(ctx, query, toolOpts)
 				exec.searchOutcome = outcome
 				exec.err = err

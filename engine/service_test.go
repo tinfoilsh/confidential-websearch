@@ -794,8 +794,14 @@ func TestExecuteToolCalls_ReportsSearchFailureReason(t *testing.T) {
 
 	_, _ = service.executeToolCalls(context.Background(), req, calls, emitter)
 
-	if len(emitter.searchCalls) < 2 {
-		t.Fatalf("expected in_progress and failed events, got %d", len(emitter.searchCalls))
+	if len(emitter.searchCalls) != 3 {
+		t.Fatalf("expected in_progress, searching, and failed events, got %d", len(emitter.searchCalls))
+	}
+	if emitter.searchCalls[0].status != "in_progress" {
+		t.Fatalf("expected first search status in_progress, got %q", emitter.searchCalls[0].status)
+	}
+	if emitter.searchCalls[1].status != "searching" {
+		t.Fatalf("expected second search status searching, got %q", emitter.searchCalls[1].status)
 	}
 	lastCall := emitter.searchCalls[len(emitter.searchCalls)-1]
 	if lastCall.status != "failed" {
