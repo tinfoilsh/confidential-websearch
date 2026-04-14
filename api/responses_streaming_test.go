@@ -243,6 +243,80 @@ func TestResponsesEmitter_MessageEventsMatchSDKShape(t *testing.T) {
 	}
 }
 
+func TestResponsesEmitter_FlushesPartialMessageBeforeToolCalls(t *testing.T) {
+	w := httptest.NewRecorder()
+	emitter, err := NewResponsesEmitter(w, "resp_test", "gpt-oss-120b")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if err := emitter.EmitMessageStart("msg_pre"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := emitter.EmitChunk([]byte(`{"choices":[{"delta":{"content":"Let me check that."}}]}`)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := emitter.EmitSearchCall("search_1", StatusInProgress, "golang", "", 0, "gpt-oss-120b"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := emitter.EmitSearchCall("search_1", StatusCompleted, "golang", "", 0, "gpt-oss-120b"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := emitter.EmitMessageStart("msg_final"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := emitter.EmitChunk([]byte(`{"choices":[{"delta":{"content":"Here is the answer."}}]}`)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := emitter.EmitMessageEnd("Here is the answer.", nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := emitter.EmitDone("resp_test", 123, "gpt-oss-120b", openai.CompletionUsage{
+		PromptTokens:     2,
+		CompletionTokens: 2,
+		TotalTokens:      4,
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	events := decodeSSEDataLines(t, w.Body.String())
+	for _, event := range events {
+		if event["type"] != "response.completed" {
+			continue
+		}
+		response, ok := event["response"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected response payload, got %+v", event["response"])
+		}
+		output, ok := response["output"].([]any)
+		if !ok || len(output) != 3 {
+			t.Fatalf("expected three output items in completed response, got %+v", response["output"])
+		}
+
+		firstMessage := output[0].(map[string]any)
+		firstContent := firstMessage["content"].([]any)
+		firstPart := firstContent[0].(map[string]any)
+		if firstPart["text"] != "Let me check that." {
+			t.Fatalf("expected flushed partial text, got %+v", firstPart["text"])
+		}
+
+		toolItem := output[1].(map[string]any)
+		if toolItem["type"] != ItemTypeWebSearchCall || toolItem["status"] != StatusCompleted {
+			t.Fatalf("expected completed tool item, got %+v", toolItem)
+		}
+
+		finalMessage := output[2].(map[string]any)
+		finalContent := finalMessage["content"].([]any)
+		finalPart := finalContent[0].(map[string]any)
+		if finalPart["text"] != "Here is the answer." {
+			t.Fatalf("expected final message text, got %+v", finalPart["text"])
+		}
+		return
+	}
+
+	t.Fatal("expected response.completed event")
+}
+
 func decodeSSEDataLines(t *testing.T, body string) []map[string]any {
 	t.Helper()
 

@@ -462,6 +462,140 @@ func TestStream_MixedTextAndFunctionCallContinuesCleanly(t *testing.T) {
 	}
 }
 
+func TestStream_UsesCompletedOutputToReplayOrderedItems(t *testing.T) {
+	client := &fakeResponsesClient{
+		streams: []ResponseStream{
+			&fakeStream{events: []responses.ResponseStreamEventUnion{
+				mustEvent(t, `{"type":"response.created","sequence_number":1,"response":{"id":"resp_stream_order_1","created_at":1,"model":"gpt-oss-120b","object":"response","output":[],"parallel_tool_calls":false,"temperature":0}}`),
+				mustEvent(t, `{"type":"response.output_item.added","sequence_number":2,"output_index":2,"item":{"id":"fc_1","type":"function_call","call_id":"call_search","name":"search","arguments":""}}`),
+				mustEvent(t, `{"type":"response.function_call_arguments.done","sequence_number":3,"output_index":2,"item_id":"fc_1","name":"search","arguments":"{\"query\":\"golang\"}"}`),
+				mustEvent(t, `{"type":"response.output_item.added","sequence_number":4,"output_index":0,"item":{"id":"msg_pre","type":"message","role":"assistant","status":"completed","content":[]}}`),
+				mustEvent(t, `{"type":"response.output_text.delta","sequence_number":5,"output_index":0,"content_index":0,"item_id":"msg_pre","delta":"Let me check that.","logprobs":[]}`),
+				mustEventValue(t, map[string]any{
+					"type":            "response.completed",
+					"sequence_number": 6,
+					"response": map[string]any{
+						"id":         "resp_stream_order_1",
+						"created_at": 1,
+						"model":      "gpt-oss-120b",
+						"object":     "response",
+						"output": []map[string]any{
+							{
+								"id":     "msg_pre",
+								"type":   "message",
+								"role":   "assistant",
+								"status": "completed",
+								"content": []map[string]any{
+									{"type": "output_text", "text": "Let me check that.", "annotations": []any{}},
+								},
+							},
+							{
+								"type":    "reasoning",
+								"id":      "rs_abc",
+								"content": []map[string]any{{"type": "reasoning_text", "text": "thinking about golang"}},
+								"summary": []any{},
+							},
+							{
+								"id":        "fc_1",
+								"type":      "function_call",
+								"call_id":   "call_search",
+								"name":      "search",
+								"arguments": `{"query":"golang"}`,
+							},
+						},
+						"usage": map[string]any{
+							"input_tokens":  1,
+							"output_tokens": 1,
+							"total_tokens":  2,
+						},
+					},
+				}),
+			}},
+			&fakeStream{events: []responses.ResponseStreamEventUnion{
+				mustEvent(t, `{"type":"response.created","sequence_number":1,"response":{"id":"resp_stream_order_2","created_at":2,"model":"gpt-oss-120b","object":"response","output":[],"parallel_tool_calls":false,"temperature":0}}`),
+				mustEvent(t, `{"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"msg_final","type":"message","role":"assistant","status":"completed","content":[]}}`),
+				mustEvent(t, `{"type":"response.output_text.delta","sequence_number":3,"output_index":0,"content_index":0,"item_id":"msg_final","delta":"Here is the answer【1】","logprobs":[]}`),
+			}},
+		},
+	}
+	service := NewService(
+		client,
+		&fakeSearcher{results: map[string][]search.Result{
+			"golang": {{Title: "Go", URL: "https://go.dev", Content: "Go info"}},
+		}},
+		nil,
+		nil,
+	)
+
+	result, err := service.Stream(context.Background(), chatRequest(), &captureEmitter{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	assertJSONContainsInOrder(t, client.params[1], `Let me check that.`, `thinking about golang`, `"call_id":"call_search"`)
+	if result.Content != "Let me check that.Here is the answer【1】" {
+		t.Fatalf("unexpected final content: %q", result.Content)
+	}
+}
+
+func TestStream_EmitsCompletedOutputTextWithoutDeltas(t *testing.T) {
+	client := &fakeResponsesClient{
+		streams: []ResponseStream{
+			&fakeStream{events: []responses.ResponseStreamEventUnion{
+				mustEvent(t, `{"type":"response.created","sequence_number":1,"response":{"id":"resp_stream_done","created_at":1,"model":"gpt-oss-120b","object":"response","output":[],"parallel_tool_calls":false,"temperature":0}}`),
+				mustEvent(t, `{"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"msg_done","type":"message","role":"assistant","status":"completed","content":[]}}`),
+				mustEventValue(t, map[string]any{
+					"type":            "response.completed",
+					"sequence_number": 3,
+					"response": map[string]any{
+						"id":         "resp_stream_done",
+						"created_at": 1,
+						"model":      "gpt-oss-120b",
+						"object":     "response",
+						"output": []map[string]any{
+							{
+								"id":     "msg_done",
+								"type":   "message",
+								"role":   "assistant",
+								"status": "completed",
+								"content": []map[string]any{
+									{"type": "output_text", "text": "Final answer without deltas", "annotations": []any{}},
+								},
+							},
+						},
+						"usage": map[string]any{
+							"input_tokens":  1,
+							"output_tokens": 1,
+							"total_tokens":  2,
+						},
+					},
+				}),
+			}},
+		},
+	}
+	service := NewService(client, nil, nil, nil)
+	req := &pipeline.Request{
+		Model:  "gpt-oss-120b",
+		Format: pipeline.FormatChatCompletion,
+		Messages: []pipeline.Message{
+			{Role: "user", Content: mustJSONRaw("hello")},
+		},
+	}
+	emitter := &captureEmitter{}
+
+	result, err := service.Stream(context.Background(), req, emitter)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Content != "Final answer without deltas" {
+		t.Fatalf("unexpected final content: %q", result.Content)
+	}
+	if !strings.Contains(strings.Join(emitter.chunks, ""), `Final answer without deltas`) {
+		t.Fatalf("expected emitted chunks to contain completed output text")
+	}
+}
+
 func TestStream_EmitsContentBeforeAdvancingFinalAnswerStream(t *testing.T) {
 	contentEmitted := make(chan struct{}, 1)
 	client := &fakeResponsesClient{
@@ -823,6 +957,15 @@ func mustEvent(t *testing.T, raw string) responses.ResponseStreamEventUnion {
 	return event
 }
 
+func mustEventValue(t *testing.T, value any) responses.ResponseStreamEventUnion {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("failed to marshal event: %v", err)
+	}
+	return mustEvent(t, string(raw))
+}
+
 func assertContainsJSON(t *testing.T, params responses.ResponseNewParams, needle string) {
 	t.Helper()
 	data, err := json.Marshal(params)
@@ -831,6 +974,24 @@ func assertContainsJSON(t *testing.T, params responses.ResponseNewParams, needle
 	}
 	if !strings.Contains(string(data), needle) {
 		t.Fatalf("expected marshaled params to contain %q, got %s", needle, string(data))
+	}
+}
+
+func assertJSONContainsInOrder(t *testing.T, params responses.ResponseNewParams, needles ...string) {
+	t.Helper()
+	data, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("failed to marshal params: %v", err)
+	}
+
+	content := string(data)
+	index := 0
+	for _, needle := range needles {
+		next := strings.Index(content[index:], needle)
+		if next == -1 {
+			t.Fatalf("expected marshaled params to contain %q after %d bytes, got %s", needle, index, content)
+		}
+		index += next + len(needle)
 	}
 }
 
