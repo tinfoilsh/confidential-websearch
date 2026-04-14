@@ -45,6 +45,37 @@ func TestResponsesEmitter_ReusesOutputIndexPerToolItem(t *testing.T) {
 	}
 }
 
+func TestResponsesEmitter_EmitsSearchingEvent(t *testing.T) {
+	w := httptest.NewRecorder()
+	emitter, err := NewResponsesEmitter(w, "resp_test", "gpt-oss-120b")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if err := emitter.EmitSearchCall("a", StatusInProgress, "query a", "", 0, "gpt-oss-120b"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := emitter.EmitSearchCall("a", "searching", "query a", "", 0, "gpt-oss-120b"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := emitter.EmitSearchCall("a", StatusCompleted, "query a", "", 0, "gpt-oss-120b"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	events := decodeSSEDataLines(t, w.Body.String())
+	for _, event := range events {
+		if event["type"] != "response.web_search_call.searching" {
+			continue
+		}
+		if event["item_id"] != IDPrefixWebSearch+"a" {
+			t.Fatalf("expected searching event for item a, got %+v", event)
+		}
+		return
+	}
+
+	t.Fatal("expected response.web_search_call.searching event")
+}
+
 func TestResponsesEmitter_UsesFlatAnnotationsInContentPartDone(t *testing.T) {
 	w := httptest.NewRecorder()
 	emitter, err := NewResponsesEmitter(w, "resp_test", "gpt-oss-120b")
