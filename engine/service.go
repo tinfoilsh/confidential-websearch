@@ -147,13 +147,16 @@ type functionCall struct {
 }
 
 type streamState struct {
-	functionCalls  map[int]*functionCall
-	messageTexts   map[int]*strings.Builder
-	reasoningItems []responses.ResponseInputItemUnionParam
-	responseID     string
-	messageID      string
-	text           strings.Builder
-	usage          openai.CompletionUsage
+	functionCalls              map[int]*functionCall
+	messageTexts               map[int]*strings.Builder
+	completedFunctionCalls     map[int]*functionCall
+	completedContinuationItems []responses.ResponseInputItemUnionParam
+	completedText              string
+	hasCompletedOutput         bool
+	responseID                 string
+	messageID                  string
+	text                       strings.Builder
+	usage                      openai.CompletionUsage
 }
 
 type toolExecution struct {
@@ -439,20 +442,21 @@ func (s *Service) streamIteration(ctx context.Context, req *pipeline.Request, st
 		state.previousID = parser.responseID
 	}
 	state.addUsage(parser.usage)
-	if len(parser.functionCalls) == 0 {
-		if parser.text.Len() == 0 {
+	finalText := parser.finalText()
+	if len(parser.parsedFunctionCalls()) == 0 {
+		if finalText == "" {
 			return nil, nil, fmt.Errorf("model returned no tool calls or message content")
 		}
 
-		result := state.finalResult(req, streamResultID(req, state, streamID), objectFor(req.Format), created, req.Model, state.finalContent(parser.text.String()), state.usage)
-		if err := finalizeLiveMessage(emitter, streamID, created, req.Model, parser, messageStarted, streamingAnnotationsFromSources(state.sources), result.Annotations, result.Usage); err != nil {
+		result := state.finalResult(req, streamResultID(req, state, streamID), objectFor(req.Format), created, req.Model, state.finalContent(finalText), state.usage)
+		if err := finalizeLiveMessage(emitter, streamID, created, req.Model, parser, finalText, messageStarted, streamingAnnotationsFromSources(state.sources), result.Annotations, result.Usage); err != nil {
 			return nil, nil, err
 		}
 		return result, nil, nil
 	}
 
-	state.appendContent(parser.text.String())
-	sortedCalls, executions := s.executeToolCalls(ctx, req, parser.functionCalls, emitter)
+	state.appendContent(finalText)
+	sortedCalls, executions := s.executeToolCalls(ctx, req, parser.parsedFunctionCalls(), emitter)
 	toolOutputs := s.applyToolExecutions(ctx, req, state, sortedCalls, executions)
 	accumulated := appendToolLoopItems(input, parser.continuationItems(), toolOutputs)
 
@@ -474,12 +478,13 @@ func (s *Service) streamFinalAnswer(ctx context.Context, req *pipeline.Request, 
 		state.previousID = parser.responseID
 	}
 	state.addUsage(parser.usage)
-	if parser.text.Len() == 0 {
+	finalText := parser.finalText()
+	if finalText == "" {
 		return nil, fmt.Errorf("model returned no final answer")
 	}
 
-	result := state.finalResult(req, streamResultID(req, state, streamID), objectFor(req.Format), created, req.Model, state.finalContent(parser.text.String()), state.usage)
-	if err := finalizeLiveMessage(emitter, streamID, created, req.Model, parser, messageStarted, streamingAnnotationsFromSources(state.sources), result.Annotations, result.Usage); err != nil {
+	result := state.finalResult(req, streamResultID(req, state, streamID), objectFor(req.Format), created, req.Model, state.finalContent(finalText), state.usage)
+	if err := finalizeLiveMessage(emitter, streamID, created, req.Model, parser, finalText, messageStarted, streamingAnnotationsFromSources(state.sources), result.Annotations, result.Usage); err != nil {
 		return nil, err
 	}
 
@@ -496,10 +501,8 @@ func (s *Service) consumeStreamEvents(stream ResponseStream, emitter pipeline.Ev
 			parser.responseID = event.Response.ID
 		case "response.completed":
 			parser.usage = toCompletionUsage(event.Response.Usage)
-			for _, item := range event.Response.Output {
-				if item.Type == "reasoning" {
-					parser.reasoningItems = append(parser.reasoningItems, buildReasoningInputItem(item.AsReasoning()))
-				}
+			if len(event.Response.Output) > 0 {
+				parser.setCompletedOutput(event.Response.Output)
 			}
 		case "response.output_item.added":
 			switch event.Item.Type {
@@ -1119,11 +1122,15 @@ func decodeContentParts(content json.RawMessage) (responses.ResponseInputMessage
 }
 
 func parseResponse(resp *responses.Response) (map[int]*functionCall, []responses.ResponseInputItemUnionParam, string) {
+	return parseOutputItems(resp.Output)
+}
+
+func parseOutputItems(output []responses.ResponseOutputItemUnion) (map[int]*functionCall, []responses.ResponseInputItemUnionParam, string) {
 	functionCalls := make(map[int]*functionCall)
 	var continuationItems []responses.ResponseInputItemUnionParam
 	var text strings.Builder
 
-	for i, item := range resp.Output {
+	for i, item := range output {
 		switch item.Type {
 		case "function_call":
 			call := item.AsFunctionCall()
@@ -1196,15 +1203,16 @@ func buildReasoningInputItemFromRaw(raw map[string]json.RawMessage) (responses.R
 }
 
 func (s *streamState) continuationItems() []responses.ResponseInputItemUnionParam {
+	if s.hasCompletedOutput {
+		return s.completedContinuationItems
+	}
+
 	type indexedItem struct {
 		index int
 		item  responses.ResponseInputItemUnionParam
 	}
 
-	indexed := make([]indexedItem, 0, len(s.messageTexts)+len(s.functionCalls)+len(s.reasoningItems))
-	for _, reasoningItem := range s.reasoningItems {
-		indexed = append(indexed, indexedItem{index: -1, item: reasoningItem})
-	}
+	indexed := make([]indexedItem, 0, len(s.messageTexts)+len(s.functionCalls))
 	for index, builder := range s.messageTexts {
 		if builder == nil || builder.Len() == 0 {
 			continue
@@ -1232,6 +1240,25 @@ func (s *streamState) continuationItems() []responses.ResponseInputItemUnionPara
 	return items
 }
 
+func (s *streamState) parsedFunctionCalls() map[int]*functionCall {
+	if s.hasCompletedOutput {
+		return s.completedFunctionCalls
+	}
+	return s.functionCalls
+}
+
+func (s *streamState) finalText() string {
+	if s.hasCompletedOutput {
+		return s.completedText
+	}
+	return s.text.String()
+}
+
+func (s *streamState) setCompletedOutput(output []responses.ResponseOutputItemUnion) {
+	s.completedFunctionCalls, s.completedContinuationItems, s.completedText = parseOutputItems(output)
+	s.hasCompletedOutput = true
+}
+
 func extractOutputText(message responses.ResponseOutputMessage) string {
 	var out strings.Builder
 	for _, content := range message.Content {
@@ -1243,6 +1270,26 @@ func extractOutputText(message responses.ResponseOutputMessage) string {
 		}
 	}
 	return out.String()
+}
+
+func emitMissingLiveText(emitter pipeline.EventEmitter, streamID string, created int64, model, emittedText, finalText string) error {
+	if finalText == "" || emittedText == finalText {
+		return nil
+	}
+
+	missingText := finalText
+	if strings.HasPrefix(finalText, emittedText) {
+		missingText = finalText[len(emittedText):]
+	}
+	if missingText == "" {
+		return nil
+	}
+
+	contentChunk, err := marshalChatContentChunk(streamID, created, model, missingText)
+	if err != nil {
+		return err
+	}
+	return emitter.EmitChunk(contentChunk)
 }
 
 func filterSearchResults(ctx context.Context, checker SafeguardChecker, results []search.Result) []search.Result {
@@ -1682,13 +1729,16 @@ func startLiveMessage(emitter pipeline.EventEmitter, streamID string, created in
 	return emitter.EmitChunk(roleChunk)
 }
 
-func finalizeLiveMessage(emitter pipeline.EventEmitter, streamID string, created int64, model string, parser *streamState, messageStarted bool, streamingAnnotations, annotations []pipeline.Annotation, usage openai.CompletionUsage) error {
+func finalizeLiveMessage(emitter pipeline.EventEmitter, streamID string, created int64, model string, parser *streamState, finalText string, messageStarted bool, streamingAnnotations, annotations []pipeline.Annotation, usage openai.CompletionUsage) error {
 	if !messageStarted {
 		if err := startLiveMessage(emitter, streamID, created, model, parser.messageID, streamingAnnotations); err != nil {
 			return err
 		}
 	}
-	return finishLiveMessage(emitter, streamID, created, model, parser.text.String(), annotations, usage)
+	if err := emitMissingLiveText(emitter, streamID, created, model, parser.text.String(), finalText); err != nil {
+		return err
+	}
+	return finishLiveMessage(emitter, streamID, created, model, finalText, annotations, usage)
 }
 
 func finishLiveMessage(emitter pipeline.EventEmitter, streamID string, created int64, model, text string, annotations []pipeline.Annotation, usage openai.CompletionUsage) error {

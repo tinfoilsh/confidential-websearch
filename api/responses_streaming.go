@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,6 +30,8 @@ type ResponsesEmitter struct {
 	outputItems   []map[string]any
 	messageItemID string
 	messageIdx    int
+	messageOpen   bool
+	messageText   strings.Builder
 	completed     map[string]any
 }
 
@@ -325,6 +328,12 @@ func (e *ResponsesEmitter) emitWebSearchCallEvents(itemID, status string, action
 func (e *ResponsesEmitter) EmitSearchCall(id, status, query, reason string, created int64, model string) error {
 	itemID := IDPrefixWebSearch + id
 
+	if status == StatusInProgress {
+		if err := e.flushOpenMessage(); err != nil {
+			return err
+		}
+	}
+
 	if status == "searching" {
 		outputIdx := e.outputIndexFor(itemID)
 		return e.emit("response.web_search_call.searching", map[string]any{
@@ -346,6 +355,12 @@ func (e *ResponsesEmitter) EmitSearchCall(id, status, query, reason string, crea
 func (e *ResponsesEmitter) EmitFetchCall(id, status, url string, created int64, model string) error {
 	itemID := IDPrefixWebSearch + id
 
+	if status == StatusInProgress {
+		if err := e.flushOpenMessage(); err != nil {
+			return err
+		}
+	}
+
 	action := map[string]any{
 		"type": ActionTypeOpenPage,
 		"url":  url,
@@ -364,6 +379,8 @@ func (e *ResponsesEmitter) EmitMessageStart(itemID string) error {
 	e.mu.Lock()
 	e.messageItemID = itemID
 	e.messageIdx = outputIdx
+	e.messageOpen = true
+	e.messageText.Reset()
 	e.mu.Unlock()
 
 	// Emit output_item.added for message
@@ -420,6 +437,9 @@ func (e *ResponsesEmitter) EmitChunk(data []byte) error {
 
 	outputIdx := e.currentMessageIndex()
 	itemID := e.currentMessageItemID()
+	e.mu.Lock()
+	e.messageText.WriteString(chunk.Choices[0].Delta.Content)
+	e.mu.Unlock()
 	return e.emit("response.output_text.delta", map[string]any{
 		"type":            "response.output_text.delta",
 		"sequence_number": e.nextSeq(),
@@ -496,12 +516,20 @@ func (e *ResponsesEmitter) EmitMessageEnd(text string, annotations []pipeline.An
 	}
 
 	// Emit output_item.done
-	return e.emit("response.output_item.done", map[string]any{
+	if err := e.emit("response.output_item.done", map[string]any{
 		"type":            "response.output_item.done",
 		"sequence_number": e.nextSeq(),
 		"output_index":    outputIdx,
 		"item":            completedItem,
-	})
+	}); err != nil {
+		return err
+	}
+
+	e.mu.Lock()
+	e.messageOpen = false
+	e.messageText.Reset()
+	e.mu.Unlock()
+	return nil
 }
 
 // EmitError emits an error event
@@ -539,6 +567,17 @@ func (e *ResponsesEmitter) EmitDone(id string, created int64, model string, usag
 		"sequence_number": e.nextSeq(),
 		"response":        response,
 	})
+}
+
+func (e *ResponsesEmitter) flushOpenMessage() error {
+	e.mu.Lock()
+	open := e.messageOpen
+	text := e.messageText.String()
+	e.mu.Unlock()
+	if !open || text == "" {
+		return nil
+	}
+	return e.EmitMessageEnd(text, nil)
 }
 
 // Verify ResponsesEmitter implements EventEmitter
