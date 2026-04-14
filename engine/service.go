@@ -1277,10 +1277,10 @@ func emitMissingLiveText(emitter pipeline.EventEmitter, streamID string, created
 		return nil
 	}
 
-	missingText := finalText
-	if strings.HasPrefix(finalText, emittedText) {
-		missingText = finalText[len(emittedText):]
+	if !strings.HasPrefix(finalText, emittedText) {
+		return nil
 	}
+	missingText := finalText[len(emittedText):]
 	if missingText == "" {
 		return nil
 	}
