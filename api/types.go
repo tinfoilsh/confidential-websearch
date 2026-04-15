@@ -257,6 +257,13 @@ type FetchCall struct {
 	Action *WebSearchAction `json:"action"`
 }
 
+// WebSearchCallOutput represents a web search that was performed
+type WebSearchCallOutput struct {
+	ID     string           `json:"id"`
+	Status string           `json:"status"`
+	Action *WebSearchAction `json:"action"`
+}
+
 // ChatCompletionMessageOutput represents the assistant message.
 // Includes standard OpenAI fields plus custom extensions:
 //   - annotations: URL citations from web search (standard format)
@@ -265,6 +272,7 @@ type ChatCompletionMessageOutput struct {
 	Role            string                `json:"role"`
 	Content         string                `json:"content"`
 	Annotations     []pipeline.Annotation `json:"annotations,omitempty"`
+	WebSearchCalls  []WebSearchCallOutput `json:"web_search_calls,omitempty"`
 	BlockedSearches []BlockedSearch       `json:"blocked_searches,omitempty"`
 	FetchCalls      []FetchCall           `json:"fetch_calls,omitempty"`
 }

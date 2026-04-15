@@ -426,6 +426,18 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 		})
 	}
 
+	var webSearchCalls []WebSearchCallOutput
+	for _, sr := range result.SearchResults {
+		webSearchCalls = append(webSearchCalls, WebSearchCallOutput{
+			ID:     sr.ID,
+			Status: pipeline.EmitStatusCompleted,
+			Action: &WebSearchAction{
+				Type:  ActionTypeSearch,
+				Query: sr.Query,
+			},
+		})
+	}
+
 	var fetchCalls []FetchCall
 	for _, fp := range result.FetchCalls {
 		fetchCalls = append(fetchCalls, FetchCall{
@@ -452,6 +464,7 @@ func (s *Server) handleNonStreamingChatCompletion(w http.ResponseWriter, r *http
 					Role:            RoleAssistant,
 					Content:         result.Content,
 					Annotations:     annotations,
+					WebSearchCalls:  webSearchCalls,
 					BlockedSearches: blockedSearches,
 					FetchCalls:      fetchCalls,
 				},
