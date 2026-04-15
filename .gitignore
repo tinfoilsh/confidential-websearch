@@ -10,4 +10,5 @@ evals/**/__pycache__/
 evals/*_checkpoint.json
 evals/*_results.json
 evals/data/
+evals/results/
 .gocache/
