@@ -16,6 +16,9 @@ type SSEEmitter struct {
 	w            http.ResponseWriter
 	flusher      http.Flusher
 	includeUsage bool
+	streamID     string
+	created      int64
+	model        string
 }
 
 // NewSSEEmitter creates a new SSE emitter from a response writer
@@ -110,6 +113,10 @@ func (e *SSEEmitter) EmitFetchCall(id, status, url string, created int64, model 
 // EmitMetadata emits annotations as a custom chunk.
 // This is an extension - OpenAI doesn't stream annotations in Chat Completions.
 func (e *SSEEmitter) EmitMetadata(id string, created int64, model string, annotations []pipeline.Annotation) error {
+	e.streamID = id
+	e.created = created
+	e.model = model
+
 	if len(annotations) == 0 {
 		return nil
 	}
@@ -201,9 +208,32 @@ func (e *SSEEmitter) EmitMessageStart(itemID string) error {
 	return nil
 }
 
-// EmitMessageEnd is a no-op for Chat Completions (Responses API only)
+// EmitMessageEnd emits final annotations for chat completions streaming.
 func (e *SSEEmitter) EmitMessageEnd(text string, annotations []pipeline.Annotation) error {
-	return nil
+	if len(annotations) == 0 {
+		return nil
+	}
+
+	chunk := StreamingChunk{
+		ID:      e.streamID,
+		Object:  ObjectChatCompletionChunk,
+		Created: e.created,
+		Model:   e.model,
+		Choices: []StreamingChoice{
+			{
+				Index: 0,
+				Delta: StreamingDelta{
+					Annotations: annotations,
+				},
+			},
+		},
+	}
+
+	data, err := json.Marshal(chunk)
+	if err != nil {
+		return err
+	}
+	return e.emit(data)
 }
 
 // Verify SSEEmitter implements EventEmitter
