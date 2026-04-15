@@ -13,8 +13,8 @@ import (
 )
 
 type SearchArgs struct {
-	Query      string `json:"query" jsonschema:"the search query to execute"`
-	MaxResults int    `json:"max_results,omitempty" jsonschema:"maximum number of results to return,default 10"`
+	Query      string `json:"query" jsonschema:"Natural language search query. Be specific and descriptive for better results. Max ~400 characters."`
+	MaxResults int    `json:"max_results,omitempty" jsonschema:"Number of results to return (1-30). Defaults to 10 if omitted. Use fewer for focused queries and more for broad research."`
 }
 
 type SearchResult struct {
@@ -22,7 +22,7 @@ type SearchResult struct {
 }
 
 type FetchArgs struct {
-	URLs []string `json:"urls" jsonschema:"URLs to fetch as markdown,max 5"`
+	URLs []string `json:"urls" jsonschema:"One or more HTTP/HTTPS URLs to fetch. Each page is rendered in a headless browser and converted to clean markdown. Maximum 5 URLs per request."`
 }
 
 type FetchResult struct {
