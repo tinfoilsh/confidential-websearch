@@ -43,7 +43,7 @@ data=json.load(sys.stdin)
 for m in data['data']:
     if m['type']=='chat' and m.get('tool_calling') and '/v1/chat/completions' in m.get('endpoints',[]):
         print(m['id'])
-")
+" 2>/dev/null)
 
 RESP_MODELS=$(echo "$CATALOG" | python3 -c "
 import json,sys
@@ -51,7 +51,12 @@ data=json.load(sys.stdin)
 for m in data['data']:
     if m['type']=='chat' and m.get('tool_calling') and '/v1/responses' in m.get('endpoints',[]):
         print(m['id'])
-")
+" 2>/dev/null)
+
+if [ -z "$CHAT_MODELS" ] && [ -z "$RESP_MODELS" ]; then
+  echo "ERROR: No supported models found in catalog (JSON parse failure or empty catalog)"
+  exit 1
+fi
 
 echo "Chat completions models: $(echo $CHAT_MODELS | tr '\n' ', ')"
 echo "Responses models: $(echo $RESP_MODELS | tr '\n' ', ')"
@@ -99,7 +104,8 @@ PYEOF
 
 run_test() {
   local model=$1 endpoint=$2 stream=$3 task=$4
-  local fname="${model}__${endpoint}__stream-${stream}__${task}"
+  local safe_model="${model//\//_}"
+  local fname="${safe_model}__${endpoint}__stream-${stream}__${task}"
   echo "  $fname"
 
   local prompt="$SEARCH_Q"

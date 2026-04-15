@@ -20,6 +20,8 @@ def parse_nonstream(raw, endpoint):
         data = json.loads(raw)
     except (json.JSONDecodeError, ValueError):
         return None, None, f"invalid JSON: {raw[:200]}"
+    if not isinstance(data, dict):
+        return None, None, f"unexpected JSON type: {type(data).__name__}"
 
     err = data.get("error")
     if isinstance(err, dict) and err.get("message"):
@@ -83,6 +85,8 @@ def parse_stream(raw, endpoint):
         try:
             obj = json.loads(payload)
         except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(obj, dict):
             continue
 
         etype = obj.get("type", "")
