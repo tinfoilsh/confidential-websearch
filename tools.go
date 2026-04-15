@@ -33,7 +33,7 @@ type FetchResult struct {
 func newSearchHandler(service *engine.Service, cfg *config.Config) mcp.ToolHandlerFor[SearchArgs, SearchResult] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, args SearchArgs) (*mcp.CallToolResult, SearchResult, error) {
 		if args.Query == "" {
-			return nil, SearchResult{}, fmt.Errorf("query is required")
+			return nil, SearchResult{}, fmt.Errorf("the 'query' parameter is required: provide a non-empty search query string describing what you want to find")
 		}
 
 		outcome, err := service.Search(ctx, args.Query, engine.ToolOptions{
@@ -42,10 +42,10 @@ func newSearchHandler(service *engine.Service, cfg *config.Config) mcp.ToolHandl
 			InjectionCheckEnabled: cfg.EnableInjectionCheck,
 		})
 		if err != nil {
-			return nil, SearchResult{}, fmt.Errorf("search failed: %w", err)
+			return nil, SearchResult{}, fmt.Errorf("search request failed: %w — try rephrasing the query to be simpler or more specific, or retry after a short delay", err)
 		}
 		if outcome.BlockedReason != "" {
-			return nil, SearchResult{}, fmt.Errorf("query blocked: %s", outcome.BlockedReason)
+			return nil, SearchResult{}, fmt.Errorf("query was blocked by safety filters: %s — rephrase the query to remove personal information or sensitive content, then retry", outcome.BlockedReason)
 		}
 
 		return nil, SearchResult{Results: outcome.Results}, nil
@@ -55,7 +55,7 @@ func newSearchHandler(service *engine.Service, cfg *config.Config) mcp.ToolHandl
 func newFetchHandler(service *engine.Service, cfg *config.Config) mcp.ToolHandlerFor[FetchArgs, FetchResult] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, args FetchArgs) (*mcp.CallToolResult, FetchResult, error) {
 		if len(args.URLs) == 0 {
-			return nil, FetchResult{}, fmt.Errorf("at least one URL is required")
+			return nil, FetchResult{}, fmt.Errorf("the 'urls' parameter is required: provide at least one valid HTTP or HTTPS URL to fetch")
 		}
 
 		results := service.FetchDetailed(ctx, args.URLs, engine.ToolOptions{
