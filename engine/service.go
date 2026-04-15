@@ -2033,7 +2033,7 @@ func (s *Service) maybeCompactToolOutput(ctx context.Context, req *pipeline.Requ
 		return truncateForToolBudget(raw, maxChars)
 	}
 	summary = strings.TrimSpace(summary)
-	if summary == "" || !hasOnlyKnownCitationMarkers(summary, raw) {
+	if summary == "" {
 		return truncateForToolBudget(raw, maxChars)
 	}
 
@@ -2161,19 +2161,6 @@ func extractResponsesIntentTextFromItems(rawItems []map[string]json.RawMessage) 
 	}
 
 	return strings.Join(parts, "\n\n")
-}
-
-func hasOnlyKnownCitationMarkers(summary, raw string) bool {
-	allowed := make(map[string]struct{})
-	for _, match := range citationMarkerPattern.FindAllString(raw, -1) {
-		allowed[match] = struct{}{}
-	}
-	for _, match := range citationMarkerPattern.FindAllString(summary, -1) {
-		if _, ok := allowed[match]; !ok {
-			return false
-		}
-	}
-	return true
 }
 
 func truncateForToolBudget(content string, maxChars int) string {
