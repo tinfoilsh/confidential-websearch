@@ -308,6 +308,65 @@ func TestSSEEmitter_MultipleEvents(t *testing.T) {
 	}
 }
 
+func TestSSEEmitter_EmitMessageEnd(t *testing.T) {
+	w := httptest.NewRecorder()
+	emitter, _ := NewSSEEmitter(w, false)
+
+	// EmitMetadata captures stream identity
+	emitter.EmitMetadata("chatcmpl-abc", 9999, "gpt-oss-120b", nil)
+
+	annotations := []pipeline.Annotation{
+		{
+			Type: "url_citation",
+			URLCitation: pipeline.URLCitation{
+				StartIndex: 10,
+				EndIndex:   14,
+				URL:        "https://example.com/1",
+				Title:      "Example",
+			},
+		},
+	}
+
+	err := emitter.EmitMessageEnd("some text", annotations)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "chatcmpl-abc") {
+		t.Error("expected stream ID")
+	}
+	if !strings.Contains(body, "9999") {
+		t.Error("expected created timestamp")
+	}
+	if !strings.Contains(body, "gpt-oss-120b") {
+		t.Error("expected model")
+	}
+	if !strings.Contains(body, "url_citation") {
+		t.Error("expected annotation type")
+	}
+	if !strings.Contains(body, "https://example.com/1") {
+		t.Error("expected annotation URL")
+	}
+	if !strings.Contains(body, "Example") {
+		t.Error("expected annotation title")
+	}
+}
+
+func TestSSEEmitter_EmitMessageEnd_Empty(t *testing.T) {
+	w := httptest.NewRecorder()
+	emitter, _ := NewSSEEmitter(w, false)
+
+	err := emitter.EmitMessageEnd("text", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if w.Body.String() != "" {
+		t.Errorf("expected no output for nil annotations, got: %s", w.Body.String())
+	}
+}
+
 func TestSSEEmitter_EmitDoneWithUsage(t *testing.T) {
 	w := httptest.NewRecorder()
 	emitter, _ := NewSSEEmitter(w, true)
