@@ -220,6 +220,7 @@ type executionState struct {
 	fetchCalls     []FetchCall
 	blockedQueries []agent.BlockedQuery
 	sources        []CitationSource
+	seenURLs       map[string]int // URL -> citation index for deduplication
 	nextCitation   int
 	content        strings.Builder
 	previousID     string
@@ -514,6 +515,7 @@ func (s *Service) Run(ctx context.Context, req *pipeline.Request) (*Result, erro
 
 	state := &executionState{
 		nextCitation: 1,
+		seenURLs:     make(map[string]int),
 		previousID:   req.PreviousResponseID,
 	}
 	accumulated := prependContextMessage(req, input)
@@ -576,6 +578,7 @@ func (s *Service) Stream(ctx context.Context, req *pipeline.Request, emitter pip
 
 	state := &executionState{
 		nextCitation: 1,
+		seenURLs:     make(map[string]int),
 		previousID:   req.PreviousResponseID,
 	}
 	accumulated := prependContextMessage(req, input)
@@ -609,6 +612,7 @@ func (s *Service) runChatCompletions(ctx context.Context, req *pipeline.Request)
 
 	state := &executionState{
 		nextCitation: 1,
+		seenURLs:     make(map[string]int),
 	}
 	allowTools := req.WebSearchEnabled
 
@@ -663,6 +667,7 @@ func (s *Service) streamChatCompletions(ctx context.Context, req *pipeline.Reque
 
 	state := &executionState{
 		nextCitation: 1,
+		seenURLs:     make(map[string]int),
 	}
 	streamID := responseIDFor(req.Format, "")
 	created := time.Now().Unix()
@@ -1132,21 +1137,30 @@ func (s *Service) prepareToolOutputs(ctx context.Context, req *pipeline.Request,
 				continue
 			}
 
+			// Deduplicate results already seen in previous search calls
+			var uniqueResults []search.Result
+			for _, result := range exec.searchOutcome.Results {
+				if _, seen := state.seenURLs[result.URL]; !seen {
+					uniqueResults = append(uniqueResults, result)
+				}
+			}
+
 			state.searchResults = append(state.searchResults, agent.ToolCall{
 				ID:      call.id,
 				Query:   exec.query,
-				Results: exec.searchOutcome.Results,
+				Results: uniqueResults,
 			})
-			for _, result := range exec.searchOutcome.Results {
+			for i, result := range uniqueResults {
+				state.seenURLs[result.URL] = state.nextCitation + i
 				state.sources = append(state.sources, CitationSource{
 					Title: result.Title,
 					URL:   result.URL,
 				})
 			}
-			outputText := formatSearchToolOutput(state.nextCitation, exec.searchOutcome.Results)
+			outputText := formatSearchToolOutput(state.nextCitation, uniqueResults)
 			outputText = s.maybeCompactToolOutput(ctx, req, "search", outputText)
 			outputs = append(outputs, toolOutput{callID: call.id, text: outputText})
-			state.nextCitation += len(exec.searchOutcome.Results)
+			state.nextCitation += len(uniqueResults)
 
 		case "fetch":
 			if exec.err != nil {
@@ -1170,6 +1184,22 @@ func (s *Service) prepareToolOutputs(ctx context.Context, req *pipeline.Request,
 			}
 
 			page := exec.pages[0]
+
+			// Reuse existing citation if this URL was already fetched/seen
+			if existingIdx, seen := state.seenURLs[exec.url]; seen {
+				state.fetchCalls = append(state.fetchCalls, FetchCall{
+					ID:            call.id,
+					Status:        pipeline.EmitStatusCompleted,
+					URL:           exec.url,
+					Page:          &page,
+					CitationIndex: existingIdx,
+				})
+				outputText := formatFetchedPageOutput(existingIdx, page)
+				outputText = s.maybeCompactToolOutput(ctx, req, "fetch", outputText)
+				outputs = append(outputs, toolOutput{callID: call.id, text: outputText})
+				continue
+			}
+
 			citationIndex := state.nextCitation
 			state.fetchedPages = append(state.fetchedPages, page)
 			state.fetchCalls = append(state.fetchCalls, FetchCall{
@@ -1179,6 +1209,7 @@ func (s *Service) prepareToolOutputs(ctx context.Context, req *pipeline.Request,
 				Page:          &page,
 				CitationIndex: citationIndex,
 			})
+			state.seenURLs[exec.url] = citationIndex
 			state.sources = append(state.sources, CitationSource{
 				Title: page.URL,
 				URL:   page.URL,

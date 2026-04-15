@@ -378,6 +378,44 @@ func TestRun_MultiStepUsesPreviousResponseIDAndTracksSources(t *testing.T) {
 	}
 }
 
+func TestRun_DeduplicatesSearchResultsAcrossIterations(t *testing.T) {
+	client := &fakeResponsesClient{
+		responses: []*responses.Response{
+			mustResponse(t, `{"id":"resp_1","created_at":1,"model":"gpt-oss-120b","output":[{"id":"fc_1","type":"function_call","call_id":"call_s1","name":"search","arguments":"{\"query\":\"news\"}"}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`),
+			mustResponse(t, `{"id":"resp_2","created_at":2,"model":"gpt-oss-120b","output":[{"id":"fc_2","type":"function_call","call_id":"call_s2","name":"search","arguments":"{\"query\":\"latest news\"}"}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`),
+			mustResponse(t, `{"id":"resp_3","created_at":3,"model":"gpt-oss-120b","output":[{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Result【1】【2】","annotations":[]}]}],"usage":{"input_tokens":4,"output_tokens":6,"total_tokens":10}}`),
+		},
+	}
+	service := NewService(
+		client,
+		&fakeSearcher{results: map[string][]search.Result{
+			"news":        {{Title: "A", URL: "https://a.com", Content: "A"}, {Title: "B", URL: "https://b.com", Content: "B"}},
+			"latest news": {{Title: "A dup", URL: "https://a.com", Content: "A"}, {Title: "C", URL: "https://c.com", Content: "C"}},
+		}},
+		nil,
+		nil,
+	)
+
+	result, err := service.Run(context.Background(), chatRequest())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// First search: A(1), B(2). Second search: A is dup so skipped, C(3).
+	if len(result.SearchResults) != 2 {
+		t.Fatalf("expected 2 search result groups, got %d", len(result.SearchResults))
+	}
+	if len(result.SearchResults[0].Results) != 2 {
+		t.Fatalf("expected 2 results in first search, got %d", len(result.SearchResults[0].Results))
+	}
+	if len(result.SearchResults[1].Results) != 1 {
+		t.Fatalf("expected 1 unique result in second search (dup filtered), got %d", len(result.SearchResults[1].Results))
+	}
+	if result.SearchResults[1].Results[0].URL != "https://c.com" {
+		t.Fatalf("expected second search unique result to be C, got %s", result.SearchResults[1].Results[0].URL)
+	}
+}
+
 func TestRun_MixedTextAndFunctionCallContinuesCleanly(t *testing.T) {
 	client := &fakeResponsesClient{
 		responses: []*responses.Response{
