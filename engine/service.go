@@ -2042,7 +2042,8 @@ func (s *Service) maybeCompactToolOutput(ctx context.Context, req *pipeline.Requ
 
 func (s *Service) summarizeToolOutput(ctx context.Context, req *pipeline.Request, toolKind, raw string, maxChars int, maxTokens int64) (string, error) {
 	prompt := fmt.Sprintf(
-		"User request:\n%s\n\nTool kind: %s\nTarget maximum characters: %d\n\nTool output to compress:\n%s",
+		"Current date and time: %s\n\nUser request:\n%s\n\nTool kind: %s\nTarget maximum characters: %d\n\nTool output to compress:\n%s",
+		time.Now().Format("Monday, January 2, 2006 at 3:04 PM MST"),
 		requestIntentText(req),
 		toolKind,
 		maxChars,
