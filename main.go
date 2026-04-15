@@ -79,12 +79,12 @@ func main() {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "search",
-		Description: "Search the web using Exa AI. Returns titles, URLs, content snippets, and publication dates.",
+		Description: "Search the web for information using semantic search. Returns a ranked list of results, each containing a title, URL, content snippet, and publication date. Use this to find current information, research topics, verify facts, or discover relevant web pages. Results are ordered by relevance. Supports up to 30 results per query.",
 	}, newSearchHandler(service, cfg))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "fetch",
-		Description: "Fetch web pages as markdown content via Cloudflare Browser Rendering.",
+		Description: "Fetch one or more web pages and return their full content as clean markdown. Uses headless browser rendering, so JavaScript-heavy and dynamically-loaded pages are fully rendered before extraction. Each URL is fetched independently and returns its own status (completed or failed) along with the converted markdown content. Use this after searching to read the full text of a page, or to extract detailed information from known URLs. Maximum 5 URLs per request.",
 	}, newFetchHandler(service, cfg))
 
 	handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
