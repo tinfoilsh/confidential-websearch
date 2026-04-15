@@ -17,6 +17,11 @@ containers:
 shim:
   listen-port: 443
   upstream-port: 8089
+  authenticated: true
+  authenticated-endpoints:
+    - /mcp
+    - /v1/chat/completions
+    - /v1/responses
   paths:
     - /mcp
     - /v1/chat/completions
