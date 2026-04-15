@@ -10,7 +10,7 @@ const (
 
 	DefaultMaxSearchResults = 10
 	MaxSearchContentLength  = 2000
-	DefaultToolLoopMaxIter  = 3
+	DefaultToolLoopMaxIter  = 5
 )
 
 // Config holds the server configuration
