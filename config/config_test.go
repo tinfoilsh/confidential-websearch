@@ -182,7 +182,7 @@ func TestConstants(t *testing.T) {
 	if MaxSearchContentLength != 2000 {
 		t.Errorf("MaxSearchContentLength: expected 2000, got %d", MaxSearchContentLength)
 	}
-	if DefaultToolLoopMaxIter != 3 {
-		t.Errorf("DefaultToolLoopMaxIter: expected 3, got %d", DefaultToolLoopMaxIter)
+	if DefaultToolLoopMaxIter != 5 {
+		t.Errorf("DefaultToolLoopMaxIter: expected 5, got %d", DefaultToolLoopMaxIter)
 	}
 }
