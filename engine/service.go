@@ -513,6 +513,8 @@ func (s *Service) Run(ctx context.Context, req *pipeline.Request) (*Result, erro
 		return nil, err
 	}
 
+	log.WithFields(log.Fields{"model": req.Model, "format": req.Format, "web_search": req.WebSearchEnabled, "input_items": len(input)}).Info("responses: starting tool loop")
+
 	state := &executionState{
 		nextCitation: 1,
 		seenURLs:     make(map[string]int),
@@ -523,8 +525,10 @@ func (s *Service) Run(ctx context.Context, req *pipeline.Request) (*Result, erro
 
 	allowTools := req.WebSearchEnabled
 	for iteration := 0; iteration < s.toolLoopMaxIter; iteration++ {
+		log.WithFields(log.Fields{"model": req.Model, "iteration": iteration, "accumulated_items": len(accumulated), "allow_tools": allowTools}).Info("responses: sending request")
 		resp, err := s.responses.New(ctx, s.buildParams(req, accumulated, allowTools, clientPreviousID), requestOpts(req)...)
 		if err != nil {
+			log.WithFields(log.Fields{"model": req.Model, "iteration": iteration}).WithError(err).Error("responses: API call failed")
 			return nil, err
 		}
 		clientPreviousID = ""
@@ -532,9 +536,11 @@ func (s *Service) Run(ctx context.Context, req *pipeline.Request) (*Result, erro
 		state.addUsage(toCompletionUsage(resp.Usage))
 
 		functionCalls, continuationItems, text := parseResponse(resp)
+		log.WithFields(log.Fields{"model": req.Model, "iteration": iteration, "tool_calls": len(functionCalls), "text_len": len(text), "continuation_items": len(continuationItems), "output_items": len(resp.Output)}).Info("responses: parsed response")
 
 		if len(functionCalls) == 0 {
 			if text == "" {
+				log.WithFields(log.Fields{"model": req.Model, "iteration": iteration, "response_id": resp.ID}).Error("responses: model returned no tool calls or message content")
 				return nil, fmt.Errorf("model returned no message content")
 			}
 			return state.finalResult(req, responseIDFor(req.Format, resp.ID), objectFor(req.Format), int64(resp.CreatedAt), string(resp.Model), state.finalContent(text), state.usage), nil
@@ -546,9 +552,11 @@ func (s *Service) Run(ctx context.Context, req *pipeline.Request) (*Result, erro
 		allowTools = true
 	}
 
+	log.WithFields(log.Fields{"model": req.Model, "accumulated_items": len(accumulated)}).Info("responses: sending forced final answer request")
 	finalInput := append(accumulated, responses.ResponseInputItemParamOfMessage(finalAnswerInstruction, responses.EasyInputMessageRoleDeveloper))
 	resp, err := s.responses.New(ctx, s.buildParams(req, finalInput, false, ""), requestOpts(req)...)
 	if err != nil {
+		log.WithField("model", req.Model).WithError(err).Error("responses: final answer API call failed")
 		return nil, err
 	}
 	state.previousID = resp.ID
@@ -556,6 +564,7 @@ func (s *Service) Run(ctx context.Context, req *pipeline.Request) (*Result, erro
 
 	_, _, text := parseResponse(resp)
 	if text == "" {
+		log.WithFields(log.Fields{"model": req.Model, "response_id": resp.ID, "output_items": len(resp.Output)}).Error("responses: final answer returned no content")
 		return nil, fmt.Errorf("model returned no final answer")
 	}
 
@@ -576,6 +585,8 @@ func (s *Service) Stream(ctx context.Context, req *pipeline.Request, emitter pip
 		return nil, err
 	}
 
+	log.WithFields(log.Fields{"model": req.Model, "format": req.Format, "web_search": req.WebSearchEnabled, "input_items": len(input)}).Info("stream/responses: starting tool loop")
+
 	state := &executionState{
 		nextCitation: 1,
 		seenURLs:     make(map[string]int),
@@ -589,18 +600,22 @@ func (s *Service) Stream(ctx context.Context, req *pipeline.Request, emitter pip
 	allowTools := req.WebSearchEnabled
 
 	for iteration := 0; iteration < s.toolLoopMaxIter; iteration++ {
+		log.WithFields(log.Fields{"model": req.Model, "iteration": iteration, "accumulated_items": len(accumulated), "allow_tools": allowTools}).Info("stream/responses: starting iteration")
 		result, continuationInput, err := s.streamIteration(ctx, req, state, emitter, streamID, created, allowTools, accumulated, clientPreviousID)
 		if err != nil {
+			log.WithFields(log.Fields{"model": req.Model, "iteration": iteration}).WithError(err).Error("stream/responses: iteration failed")
 			return nil, err
 		}
 		clientPreviousID = ""
 		if result != nil {
+			log.WithFields(log.Fields{"model": req.Model, "iteration": iteration, "content_len": len(result.Content)}).Info("stream/responses: completed with final answer")
 			return result, nil
 		}
 		accumulated = continuationInput
 		allowTools = true
 	}
 
+	log.WithFields(log.Fields{"model": req.Model, "accumulated_items": len(accumulated)}).Info("stream/responses: sending forced final answer")
 	return s.streamFinalAnswer(ctx, req, state, emitter, streamID, created, accumulated)
 }
 
@@ -610,6 +625,8 @@ func (s *Service) runChatCompletions(ctx context.Context, req *pipeline.Request)
 		return nil, err
 	}
 
+	log.WithFields(log.Fields{"model": req.Model, "web_search": req.WebSearchEnabled, "messages": len(messages)}).Info("chat: starting tool loop")
+
 	state := &executionState{
 		nextCitation: 1,
 		seenURLs:     make(map[string]int),
@@ -617,19 +634,25 @@ func (s *Service) runChatCompletions(ctx context.Context, req *pipeline.Request)
 	allowTools := req.WebSearchEnabled
 
 	for iteration := 0; iteration < s.toolLoopMaxIter; iteration++ {
+		log.WithFields(log.Fields{"model": req.Model, "iteration": iteration, "messages": len(messages), "allow_tools": allowTools}).Info("chat: sending request")
 		resp, err := s.chatCompletions.New(ctx, s.buildChatParams(req, messages, allowTools, false), requestOpts(req)...)
 		if err != nil {
+			log.WithFields(log.Fields{"model": req.Model, "iteration": iteration}).WithError(err).Error("chat: API call failed")
 			return nil, err
 		}
 		if len(resp.Choices) == 0 {
+			log.WithFields(log.Fields{"model": req.Model, "iteration": iteration}).Error("chat: model returned no choices")
 			return nil, fmt.Errorf("model returned no choices")
 		}
 
 		choice := resp.Choices[0]
 		state.addUsage(resp.Usage)
 		functionCalls := parseChatToolCalls(choice.Message)
+		log.WithFields(log.Fields{"model": req.Model, "iteration": iteration, "tool_calls": len(functionCalls), "content_len": len(choice.Message.Content), "finish_reason": choice.FinishReason}).Info("chat: parsed response")
+
 		if len(functionCalls) == 0 {
 			if choice.Message.Content == "" {
+				log.WithFields(log.Fields{"model": req.Model, "iteration": iteration}).Error("chat: model returned no tool calls or content")
 				return nil, fmt.Errorf("model returned no message content")
 			}
 			return state.finalResult(req, responseIDFor(req.Format, resp.ID), objectFor(req.Format), resp.Created, resp.Model, state.finalContent(choice.Message.Content), state.usage), nil
@@ -641,18 +664,22 @@ func (s *Service) runChatCompletions(ctx context.Context, req *pipeline.Request)
 		allowTools = true
 	}
 
+	log.WithFields(log.Fields{"model": req.Model, "messages": len(messages)}).Info("chat: sending forced final answer request")
 	finalMessages := append(messages, openai.SystemMessage(finalAnswerInstruction))
 	resp, err := s.chatCompletions.New(ctx, s.buildChatParams(req, finalMessages, false, false), requestOpts(req)...)
 	if err != nil {
+		log.WithField("model", req.Model).WithError(err).Error("chat: final answer API call failed")
 		return nil, err
 	}
 	if len(resp.Choices) == 0 {
+		log.WithField("model", req.Model).Error("chat: final answer returned no choices")
 		return nil, fmt.Errorf("model returned no choices")
 	}
 
 	state.addUsage(resp.Usage)
 	finalText := resp.Choices[0].Message.Content
 	if finalText == "" {
+		log.WithFields(log.Fields{"model": req.Model, "finish_reason": resp.Choices[0].FinishReason}).Error("chat: final answer returned empty content")
 		return nil, fmt.Errorf("model returned no final answer")
 	}
 
@@ -665,6 +692,8 @@ func (s *Service) streamChatCompletions(ctx context.Context, req *pipeline.Reque
 		return nil, err
 	}
 
+	log.WithFields(log.Fields{"model": req.Model, "web_search": req.WebSearchEnabled, "messages": len(messages)}).Info("stream/chat: starting tool loop")
+
 	state := &executionState{
 		nextCitation: 1,
 		seenURLs:     make(map[string]int),
@@ -674,17 +703,21 @@ func (s *Service) streamChatCompletions(ctx context.Context, req *pipeline.Reque
 	allowTools := req.WebSearchEnabled
 
 	for iteration := 0; iteration < s.toolLoopMaxIter; iteration++ {
+		log.WithFields(log.Fields{"model": req.Model, "iteration": iteration, "messages": len(messages), "allow_tools": allowTools}).Info("stream/chat: starting iteration")
 		result, continuationMessages, err := s.streamChatCompletionIteration(ctx, req, state, emitter, streamID, created, allowTools, messages)
 		if err != nil {
+			log.WithFields(log.Fields{"model": req.Model, "iteration": iteration}).WithError(err).Error("stream/chat: iteration failed")
 			return nil, err
 		}
 		if result != nil {
+			log.WithFields(log.Fields{"model": req.Model, "iteration": iteration, "content_len": len(result.Content)}).Info("stream/chat: completed with final answer")
 			return result, nil
 		}
 		messages = continuationMessages
 		allowTools = true
 	}
 
+	log.WithFields(log.Fields{"model": req.Model, "messages": len(messages)}).Info("stream/chat: sending forced final answer")
 	return s.streamChatCompletionFinalAnswer(ctx, req, state, emitter, streamID, created, messages)
 }
 
@@ -724,6 +757,7 @@ func (s *Service) streamChatCompletionIteration(ctx context.Context, req *pipeli
 		}
 	}
 	if err := stream.Err(); err != nil {
+		log.WithField("model", req.Model).WithError(err).Error("stream/chat: stream consumption error")
 		return nil, nil, err
 	}
 	var message openai.ChatCompletionMessage
@@ -731,15 +765,20 @@ func (s *Service) streamChatCompletionIteration(ctx context.Context, req *pipeli
 		message = accumulator.Choices[0].Message
 	}
 	functionCalls := parseChatToolCalls(message)
+	log.WithFields(log.Fields{"model": req.Model, "streamed_text_len": parser.text.Len(), "accumulated_content_len": len(message.Content), "tool_calls": len(functionCalls), "accumulator_choices": len(accumulator.Choices)}).Info("stream/chat: stream consumed")
 	if parser.text.Len() == 0 && message.Content == "" && len(functionCalls) == 0 {
+		log.WithField("model", req.Model).Warn("stream/chat: empty stream, falling back to non-streaming request")
 		fallback, err := s.chatCompletions.New(ctx, s.buildChatParams(req, messages, allowTools, false), requestOpts(req)...)
 		if err != nil {
+			log.WithField("model", req.Model).WithError(err).Error("stream/chat: fallback non-streaming request failed")
 			return nil, nil, err
 		}
 		if len(fallback.Choices) == 0 {
+			log.WithField("model", req.Model).Error("stream/chat: fallback returned no choices")
 			return nil, nil, fmt.Errorf("model returned no choices")
 		}
 		message = fallback.Choices[0].Message
+		log.WithFields(log.Fields{"model": req.Model, "fallback_content_len": len(message.Content), "fallback_tool_calls": len(parseChatToolCalls(message))}).Info("stream/chat: fallback response received")
 		functionCalls = parseChatToolCalls(message)
 		usage = fallback.Usage
 	}
@@ -799,26 +838,33 @@ func (s *Service) streamChatCompletionFinalAnswer(ctx context.Context, req *pipe
 		}
 	}
 	if err := stream.Err(); err != nil {
+		log.WithField("model", req.Model).WithError(err).Error("stream/chat: final answer stream error")
 		return nil, err
 	}
 	finalText := ""
 	if len(accumulator.Choices) > 0 {
 		finalText = accumulator.Choices[0].Message.Content
 	}
+	log.WithFields(log.Fields{"model": req.Model, "streamed_text_len": parser.text.Len(), "accumulated_text_len": len(finalText)}).Info("stream/chat: final answer stream consumed")
 	if parser.text.Len() == 0 && finalText == "" {
+		log.WithField("model", req.Model).Warn("stream/chat: final answer stream empty, falling back to non-streaming")
 		fallback, err := s.chatCompletions.New(ctx, s.buildChatParams(req, finalMessages, false, false), requestOpts(req)...)
 		if err != nil {
+			log.WithField("model", req.Model).WithError(err).Error("stream/chat: final answer fallback failed")
 			return nil, err
 		}
 		if len(fallback.Choices) == 0 {
+			log.WithField("model", req.Model).Error("stream/chat: final answer fallback returned no choices")
 			return nil, fmt.Errorf("model returned no choices")
 		}
 		finalText = fallback.Choices[0].Message.Content
 		usage = fallback.Usage
+		log.WithFields(log.Fields{"model": req.Model, "fallback_text_len": len(finalText)}).Info("stream/chat: final answer fallback received")
 	}
 
 	state.addUsage(usage)
 	if finalText == "" {
+		log.WithField("model", req.Model).Error("stream/chat: final answer is empty after all attempts")
 		return nil, fmt.Errorf("model returned no final answer")
 	}
 
@@ -856,8 +902,12 @@ func (s *Service) streamIteration(ctx context.Context, req *pipeline.Request, st
 	}
 	state.addUsage(parser.usage)
 	finalText := parser.finalText()
-	if len(parser.parsedFunctionCalls()) == 0 {
+	parsedCalls := parser.parsedFunctionCalls()
+	log.WithFields(log.Fields{"model": req.Model, "response_id": parser.responseID, "tool_calls": len(parsedCalls), "text_len": len(finalText), "message_started": messageStarted, "has_completed_output": parser.hasCompletedOutput}).Info("stream/responses: iteration consumed")
+
+	if len(parsedCalls) == 0 {
 		if finalText == "" {
+			log.WithFields(log.Fields{"model": req.Model, "response_id": parser.responseID, "streamed_text_len": parser.text.Len()}).Error("stream/responses: model returned no tool calls or message content")
 			return nil, nil, fmt.Errorf("model returned no tool calls or message content")
 		}
 
@@ -869,7 +919,7 @@ func (s *Service) streamIteration(ctx context.Context, req *pipeline.Request, st
 	}
 
 	state.appendContent(finalText)
-	sortedCalls, executions := s.executeToolCalls(ctx, req, parser.parsedFunctionCalls(), emitter)
+	sortedCalls, executions := s.executeToolCalls(ctx, req, parsedCalls, emitter)
 	toolOutputs := s.applyToolExecutions(ctx, req, state, sortedCalls, executions)
 	accumulated := appendToolLoopItems(input, parser.continuationItems(), toolOutputs)
 
@@ -886,6 +936,7 @@ func (s *Service) streamFinalAnswer(ctx context.Context, req *pipeline.Request, 
 	}
 	messageStarted, err := s.consumeStreamEvents(stream, emitter, streamID, created, req.Model, streamingAnnotationsFromSources(state.sources), parser)
 	if err != nil {
+		log.WithField("model", req.Model).WithError(err).Error("stream/responses: final answer stream error")
 		return nil, err
 	}
 	if parser.responseID != "" {
@@ -893,7 +944,9 @@ func (s *Service) streamFinalAnswer(ctx context.Context, req *pipeline.Request, 
 	}
 	state.addUsage(parser.usage)
 	finalText := parser.finalText()
+	log.WithFields(log.Fields{"model": req.Model, "text_len": len(finalText), "response_id": parser.responseID, "message_started": messageStarted}).Info("stream/responses: final answer consumed")
 	if finalText == "" {
+		log.WithFields(log.Fields{"model": req.Model, "streamed_text_len": parser.text.Len(), "has_completed_output": parser.hasCompletedOutput}).Error("stream/responses: final answer is empty")
 		return nil, fmt.Errorf("model returned no final answer")
 	}
 
@@ -907,14 +960,18 @@ func (s *Service) streamFinalAnswer(ctx context.Context, req *pipeline.Request, 
 
 func (s *Service) consumeStreamEvents(stream ResponseStream, emitter pipeline.EventEmitter, streamID string, created int64, model string, streamingAnnotations []pipeline.Annotation, parser *streamState) (bool, error) {
 	messageStarted := false
+	eventCount := 0
 
 	for stream.Next() {
 		event := stream.Current()
+		eventCount++
 		switch event.Type {
 		case "response.created":
 			parser.responseID = event.Response.ID
+			log.WithFields(log.Fields{"model": model, "response_id": event.Response.ID}).Debug("stream event: response.created")
 		case "response.completed":
 			parser.usage = toCompletionUsage(event.Response.Usage)
+			log.WithFields(log.Fields{"model": model, "output_items": len(event.Response.Output), "status": event.Response.Status}).Debug("stream event: response.completed")
 			if len(event.Response.Output) > 0 {
 				parser.setCompletedOutput(event.Response.Output)
 			}
@@ -988,8 +1045,11 @@ func (s *Service) consumeStreamEvents(stream ResponseStream, emitter pipeline.Ev
 	}
 
 	if err := stream.Err(); err != nil {
+		log.WithFields(log.Fields{"model": model, "event_count": eventCount}).WithError(err).Error("stream: error after consuming events")
 		return false, err
 	}
+
+	log.WithFields(log.Fields{"model": model, "event_count": eventCount, "text_len": parser.text.Len(), "function_calls": len(parser.functionCalls), "message_texts": len(parser.messageTexts)}).Debug("stream: finished consuming events")
 
 	return messageStarted, nil
 }
@@ -1100,6 +1160,27 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 	}
 
 	wg.Wait()
+
+	for _, call := range sortedCalls {
+		exec := executions[call.id]
+		if exec == nil {
+			continue
+		}
+		fields := log.Fields{"model": req.Model, "tool": call.name, "call_id": call.id}
+		if call.name == "search" {
+			fields["query"] = exec.query
+			fields["results"] = len(exec.searchOutcome.Results)
+			fields["blocked"] = exec.searchOutcome.BlockedReason
+		} else if call.name == "fetch" {
+			fields["url"] = exec.url
+			fields["pages"] = len(exec.pages)
+		}
+		if exec.err != nil {
+			fields["error"] = exec.err.Error()
+		}
+		log.WithFields(fields).Info("tool execution completed")
+	}
+
 	return sortedCalls, executions
 }
 
@@ -2056,19 +2137,23 @@ func (s *Service) maybeCompactToolOutput(ctx context.Context, req *pipeline.Requ
 	if len([]rune(raw)) <= maxChars {
 		return raw
 	}
-	if s.responses == nil || s.toolSummaryModel == "" {
+	if s.chatCompletions == nil || s.toolSummaryModel == "" {
 		return truncateForToolBudget(raw, maxChars)
 	}
 
+	log.WithFields(log.Fields{"model": req.Model, "tool": toolKind, "raw_len": len([]rune(raw)), "max_chars": maxChars, "summary_model": s.toolSummaryModel}).Info("compacting tool output via summarization")
 	summary, err := s.summarizeToolOutput(ctx, req, toolKind, raw, maxChars, toolSummaryTokenBudget(size))
 	if err != nil {
+		log.WithFields(log.Fields{"model": req.Model, "tool": toolKind}).WithError(err).Warn("tool output summarization failed, falling back to truncation")
 		return truncateForToolBudget(raw, maxChars)
 	}
 	summary = strings.TrimSpace(summary)
 	if summary == "" {
+		log.WithFields(log.Fields{"model": req.Model, "tool": toolKind}).Warn("tool output summarization returned empty, falling back to truncation")
 		return truncateForToolBudget(raw, maxChars)
 	}
 
+	log.WithFields(log.Fields{"model": req.Model, "tool": toolKind, "summary_len": len([]rune(summary))}).Info("tool output compacted successfully")
 	return truncateForToolBudget(summary, maxChars)
 }
 
@@ -2081,27 +2166,26 @@ func (s *Service) summarizeToolOutput(ctx context.Context, req *pipeline.Request
 		maxChars,
 		raw,
 	)
-	input := []responses.ResponseInputItemUnionParam{
-		responses.ResponseInputItemParamOfMessage(toolSummaryInstructions, responses.EasyInputMessageRoleDeveloper),
-		responses.ResponseInputItemParamOfMessage(prompt, responses.EasyInputMessageRoleUser),
+	messages := []openai.ChatCompletionMessageParamUnion{
+		openai.SystemMessage(toolSummaryInstructions),
+		openai.UserMessage(prompt),
 	}
 
-	resp, err := s.responses.New(ctx, responses.ResponseNewParams{
-		Model:           shared.ResponsesModel(s.toolSummaryModel),
-		Input:           responses.ResponseNewParamsInputUnion{OfInputItemList: input},
-		Temperature:     openai.Float(0),
-		MaxOutputTokens: openai.Int(maxTokens),
-	})
+	resp, err := s.chatCompletions.New(ctx, openai.ChatCompletionNewParams{
+		Model:              shared.ChatModel(s.toolSummaryModel),
+		Messages:           messages,
+		Temperature:        openai.Float(0),
+		MaxCompletionTokens: openai.Int(maxTokens),
+	}, requestOpts(req)...)
 	if err != nil {
 		return "", err
 	}
 
-	_, _, text := parseResponse(resp)
-	if text == "" {
+	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
 		return "", fmt.Errorf("summary model returned no content")
 	}
 
-	return text, nil
+	return resp.Choices[0].Message.Content, nil
 }
 
 func toolSummaryCharacterBudget(size pipeline.SearchContextSize, toolKind string) int {
