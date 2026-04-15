@@ -264,6 +264,16 @@ func WithToolLoopMaxIter(n int) ServiceOption {
 	}
 }
 
+// requestOpts returns per-request options that forward the user's API key
+// for billing. If no auth header is present, no options are returned and the
+// client-level key is used as a fallback.
+func requestOpts(req *pipeline.Request) []option.RequestOption {
+	if req.AuthHeader != "" {
+		return []option.RequestOption{option.WithAPIKey(req.AuthHeader)}
+	}
+	return nil
+}
+
 func NewHTTPModelCatalog(client *http.Client) ModelCatalog {
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Second}
@@ -509,7 +519,7 @@ func (s *Service) Run(ctx context.Context, req *pipeline.Request) (*Result, erro
 
 	allowTools := req.WebSearchEnabled
 	for iteration := 0; iteration < s.toolLoopMaxIter; iteration++ {
-		resp, err := s.responses.New(ctx, s.buildParams(req, accumulated, allowTools, clientPreviousID))
+		resp, err := s.responses.New(ctx, s.buildParams(req, accumulated, allowTools, clientPreviousID), requestOpts(req)...)
 		if err != nil {
 			return nil, err
 		}
@@ -532,7 +542,7 @@ func (s *Service) Run(ctx context.Context, req *pipeline.Request) (*Result, erro
 		allowTools = true
 	}
 
-	resp, err := s.responses.New(ctx, s.buildParams(req, accumulated, false, ""))
+	resp, err := s.responses.New(ctx, s.buildParams(req, accumulated, false, ""), requestOpts(req)...)
 	if err != nil {
 		return nil, err
 	}
@@ -600,7 +610,7 @@ func (s *Service) runChatCompletions(ctx context.Context, req *pipeline.Request)
 	allowTools := req.WebSearchEnabled
 
 	for iteration := 0; iteration < s.toolLoopMaxIter; iteration++ {
-		resp, err := s.chatCompletions.New(ctx, s.buildChatParams(req, messages, allowTools, false))
+		resp, err := s.chatCompletions.New(ctx, s.buildChatParams(req, messages, allowTools, false), requestOpts(req)...)
 		if err != nil {
 			return nil, err
 		}
@@ -624,7 +634,7 @@ func (s *Service) runChatCompletions(ctx context.Context, req *pipeline.Request)
 		allowTools = true
 	}
 
-	resp, err := s.chatCompletions.New(ctx, s.buildChatParams(req, messages, false, false))
+	resp, err := s.chatCompletions.New(ctx, s.buildChatParams(req, messages, false, false), requestOpts(req)...)
 	if err != nil {
 		return nil, err
 	}
@@ -670,7 +680,7 @@ func (s *Service) streamChatCompletions(ctx context.Context, req *pipeline.Reque
 }
 
 func (s *Service) streamChatCompletionIteration(ctx context.Context, req *pipeline.Request, state *executionState, emitter pipeline.EventEmitter, streamID string, created int64, allowTools bool, messages []openai.ChatCompletionMessageParamUnion) (*Result, []openai.ChatCompletionMessageParamUnion, error) {
-	stream := s.chatCompletions.NewStreaming(ctx, s.buildChatParams(req, messages, allowTools, true))
+	stream := s.chatCompletions.NewStreaming(ctx, s.buildChatParams(req, messages, allowTools, true), requestOpts(req)...)
 	accumulator := openai.ChatCompletionAccumulator{}
 	parser := &streamState{
 		messageID: "msg_" + uuid.New().String()[:8],
@@ -713,7 +723,7 @@ func (s *Service) streamChatCompletionIteration(ctx context.Context, req *pipeli
 	}
 	functionCalls := parseChatToolCalls(message)
 	if parser.text.Len() == 0 && message.Content == "" && len(functionCalls) == 0 {
-		fallback, err := s.chatCompletions.New(ctx, s.buildChatParams(req, messages, allowTools, false))
+		fallback, err := s.chatCompletions.New(ctx, s.buildChatParams(req, messages, allowTools, false), requestOpts(req)...)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -744,7 +754,7 @@ func (s *Service) streamChatCompletionIteration(ctx context.Context, req *pipeli
 }
 
 func (s *Service) streamChatCompletionFinalAnswer(ctx context.Context, req *pipeline.Request, state *executionState, emitter pipeline.EventEmitter, streamID string, created int64, messages []openai.ChatCompletionMessageParamUnion) (*Result, error) {
-	stream := s.chatCompletions.NewStreaming(ctx, s.buildChatParams(req, messages, false, true))
+	stream := s.chatCompletions.NewStreaming(ctx, s.buildChatParams(req, messages, false, true), requestOpts(req)...)
 	accumulator := openai.ChatCompletionAccumulator{}
 	parser := &streamState{
 		messageID: "msg_" + uuid.New().String()[:8],
@@ -786,7 +796,7 @@ func (s *Service) streamChatCompletionFinalAnswer(ctx context.Context, req *pipe
 		finalText = accumulator.Choices[0].Message.Content
 	}
 	if parser.text.Len() == 0 && finalText == "" {
-		fallback, err := s.chatCompletions.New(ctx, s.buildChatParams(req, messages, false, false))
+		fallback, err := s.chatCompletions.New(ctx, s.buildChatParams(req, messages, false, false), requestOpts(req)...)
 		if err != nil {
 			return nil, err
 		}
@@ -822,7 +832,7 @@ func (s *Service) Validate(req *pipeline.Request) error {
 }
 
 func (s *Service) streamIteration(ctx context.Context, req *pipeline.Request, state *executionState, emitter pipeline.EventEmitter, streamID string, created int64, allowTools bool, input []responses.ResponseInputItemUnionParam, previousResponseID string) (*Result, []responses.ResponseInputItemUnionParam, error) {
-	stream := s.responses.NewStreaming(ctx, s.buildParams(req, input, allowTools, previousResponseID))
+	stream := s.responses.NewStreaming(ctx, s.buildParams(req, input, allowTools, previousResponseID), requestOpts(req)...)
 	parser := &streamState{
 		functionCalls: make(map[int]*functionCall),
 		messageTexts:  make(map[int]*strings.Builder),
@@ -857,7 +867,7 @@ func (s *Service) streamIteration(ctx context.Context, req *pipeline.Request, st
 }
 
 func (s *Service) streamFinalAnswer(ctx context.Context, req *pipeline.Request, state *executionState, emitter pipeline.EventEmitter, streamID string, created int64, input []responses.ResponseInputItemUnionParam) (*Result, error) {
-	stream := s.responses.NewStreaming(ctx, s.buildParams(req, input, false, ""))
+	stream := s.responses.NewStreaming(ctx, s.buildParams(req, input, false, ""), requestOpts(req)...)
 	parser := &streamState{
 		messageID:     "msg_" + uuid.New().String()[:8],
 		functionCalls: make(map[int]*functionCall),
@@ -1316,7 +1326,7 @@ func (s *Service) buildChatParams(req *pipeline.Request, messages []openai.ChatC
 		}
 	}
 
-	if allowTools {
+	if req.WebSearchEnabled {
 		searchTool := openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 			Name:        "search",
 			Description: openai.String("Search the web for current information. Results contain numbered source markers. " + citationInstructions + " " + toolOutputWarning),
@@ -1350,6 +1360,11 @@ func (s *Service) buildChatParams(req *pipeline.Request, messages []openai.ChatC
 			Strict: openai.Bool(true),
 		})
 		params.Tools = []openai.ChatCompletionToolUnionParam{searchTool, fetchTool}
+		if !allowTools {
+			params.ToolChoice = openai.ChatCompletionToolChoiceOptionUnionParam{
+				OfAuto: openai.String(string(openai.ChatCompletionToolChoiceOptionAutoNone)),
+			}
+		}
 	}
 
 	return params
