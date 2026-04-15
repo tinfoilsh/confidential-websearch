@@ -16,6 +16,15 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/pipeline"
 )
 
+// extractBearerToken returns the token from an "Authorization: Bearer <token>" header.
+func extractBearerToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	if len(h) > 7 && strings.EqualFold(h[:7], "bearer ") {
+		return h[7:]
+	}
+	return ""
+}
+
 type requestValidator interface {
 	Validate(*pipeline.Request) error
 }
@@ -376,6 +385,7 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		Temperature:           req.Temperature,
 		MaxTokens:             req.MaxTokens,
 		Format:                pipeline.FormatChatCompletion,
+		AuthHeader:            extractBearerToken(r),
 		WebSearchEnabled:      webSearchEnabled,
 		PIICheckEnabled:       piiCheckEnabled,
 		InjectionCheckEnabled: injectionCheckEnabled,
@@ -549,6 +559,7 @@ func (s *Server) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		PreviousResponseID:    s.resolvePreviousResponseID(req.PreviousResponseID),
 		Stream:                req.Stream,
 		Format:                pipeline.FormatResponses,
+		AuthHeader:            extractBearerToken(r),
 		WebSearchEnabled:      webSearchEnabled,
 		PIICheckEnabled:       piiCheckEnabled,
 		InjectionCheckEnabled: injectionCheckEnabled,
