@@ -961,21 +961,29 @@ func (s *Service) streamFinalAnswer(ctx context.Context, req *pipeline.Request, 
 func (s *Service) consumeStreamEvents(stream ResponseStream, emitter pipeline.EventEmitter, streamID string, created int64, model string, streamingAnnotations []pipeline.Annotation, parser *streamState) (bool, error) {
 	messageStarted := false
 	eventCount := 0
+	eventTypes := make(map[string]int)
 
 	for stream.Next() {
 		event := stream.Current()
 		eventCount++
+		eventTypes[string(event.Type)]++
 		switch event.Type {
 		case "response.created":
 			parser.responseID = event.Response.ID
-			log.WithFields(log.Fields{"model": model, "response_id": event.Response.ID}).Debug("stream event: response.created")
+			log.WithFields(log.Fields{"model": model, "response_id": event.Response.ID}).Info("stream event: response.created")
 		case "response.completed":
 			parser.usage = toCompletionUsage(event.Response.Usage)
-			log.WithFields(log.Fields{"model": model, "output_items": len(event.Response.Output), "status": event.Response.Status}).Debug("stream event: response.completed")
+			log.WithFields(log.Fields{"model": model, "output_items": len(event.Response.Output), "status": event.Response.Status, "response_id": event.Response.ID}).Info("stream event: response.completed")
+			for i, item := range event.Response.Output {
+				log.WithFields(log.Fields{"model": model, "index": i, "type": item.Type, "id": item.ID}).Info("stream event: response.completed output item")
+			}
 			if len(event.Response.Output) > 0 {
 				parser.setCompletedOutput(event.Response.Output)
 			}
+		case "response.failed":
+			log.WithFields(log.Fields{"model": model, "status": event.Response.Status, "response_id": event.Response.ID}).Error("stream event: response.failed")
 		case "response.output_item.added":
+			log.WithFields(log.Fields{"model": model, "item_type": event.Item.Type, "item_id": event.Item.ID, "output_index": event.OutputIndex}).Info("stream event: output_item.added")
 			switch event.Item.Type {
 			case "function_call":
 				if parser.functionCalls == nil {
@@ -987,18 +995,36 @@ func (s *Service) consumeStreamEvents(stream ResponseStream, emitter pipeline.Ev
 					id:    call.CallID,
 					name:  call.Name,
 				}
+				log.WithFields(log.Fields{"model": model, "call_id": call.CallID, "name": call.Name}).Info("stream event: function_call added")
 			case "message":
 				message := event.Item.AsMessage()
 				if message.ID != "" {
 					parser.messageID = message.ID
 				}
+				log.WithFields(log.Fields{"model": model, "message_id": message.ID, "role": message.Role}).Info("stream event: message added")
 				if parser.messageTexts != nil {
 					if _, ok := parser.messageTexts[int(event.OutputIndex)]; !ok {
 						parser.messageTexts[int(event.OutputIndex)] = &strings.Builder{}
 					}
 				}
+			case "mcp_call":
+				// vLLM may return mcp_call items instead of function_call for function tools; treat them equivalently
+				if parser.functionCalls == nil {
+					continue
+				}
+				mcpCall := event.Item.AsMcpCall()
+				parser.functionCalls[int(event.OutputIndex)] = &functionCall{
+					index: int(event.OutputIndex),
+					id:    mcpCall.ID,
+					name:  mcpCall.Name,
+				}
+				log.WithFields(log.Fields{"model": model, "call_id": mcpCall.ID, "name": mcpCall.Name}).Info("stream event: mcp_call added (treated as function_call)")
+			case "reasoning":
+				log.WithFields(log.Fields{"model": model, "item_id": event.Item.ID}).Info("stream event: reasoning item added")
 			}
-		case "response.function_call_arguments.delta":
+		case "response.output_item.done":
+			log.WithFields(log.Fields{"model": model, "item_type": event.Item.Type, "item_id": event.Item.ID, "output_index": event.OutputIndex}).Info("stream event: output_item.done")
+		case "response.mcp_call_arguments.delta", "response.function_call_arguments.delta":
 			if parser.functionCalls == nil {
 				continue
 			}
@@ -1006,7 +1032,7 @@ func (s *Service) consumeStreamEvents(stream ResponseStream, emitter pipeline.Ev
 			if call != nil {
 				call.arguments.WriteString(event.Delta)
 			}
-		case "response.function_call_arguments.done":
+		case "response.mcp_call_arguments.done", "response.function_call_arguments.done":
 			if parser.functionCalls == nil {
 				continue
 			}
@@ -1021,6 +1047,7 @@ func (s *Service) consumeStreamEvents(stream ResponseStream, emitter pipeline.Ev
 			}
 			call.arguments.Reset()
 			call.arguments.WriteString(event.Arguments)
+			log.WithFields(log.Fields{"model": model, "call_id": call.id, "name": call.name, "arguments": call.arguments.String()}).Info("stream event: function_call_arguments.done")
 		case "response.output_text.delta":
 			if !messageStarted {
 				if err := startLiveMessage(emitter, streamID, created, model, parser.messageID, streamingAnnotations); err != nil {
@@ -1041,15 +1068,19 @@ func (s *Service) consumeStreamEvents(stream ResponseStream, emitter pipeline.Ev
 			if err := emitter.EmitChunk(contentChunk); err != nil {
 				return false, err
 			}
+		case "response.output_text.done":
+			log.WithFields(log.Fields{"model": model, "output_index": event.OutputIndex, "total_text_len": parser.text.Len()}).Info("stream event: output_text.done")
+		default:
+			log.WithFields(log.Fields{"model": model, "event_type": event.Type}).Debug("stream event: unhandled type")
 		}
 	}
 
 	if err := stream.Err(); err != nil {
-		log.WithFields(log.Fields{"model": model, "event_count": eventCount}).WithError(err).Error("stream: error after consuming events")
+		log.WithFields(log.Fields{"model": model, "event_count": eventCount, "event_types": eventTypes}).WithError(err).Error("stream: error after consuming events")
 		return false, err
 	}
 
-	log.WithFields(log.Fields{"model": model, "event_count": eventCount, "text_len": parser.text.Len(), "function_calls": len(parser.functionCalls), "message_texts": len(parser.messageTexts)}).Debug("stream: finished consuming events")
+	log.WithFields(log.Fields{"model": model, "event_count": eventCount, "event_types": eventTypes, "text_len": parser.text.Len(), "function_calls": len(parser.functionCalls), "message_texts": len(parser.messageTexts), "has_completed_output": parser.hasCompletedOutput}).Info("stream: finished consuming events")
 
 	return messageStarted, nil
 }
@@ -1060,6 +1091,11 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 		sortedCalls = append(sortedCalls, call)
 	}
 	sortFunctionCalls(sortedCalls)
+
+	log.WithFields(log.Fields{"model": req.Model, "num_calls": len(sortedCalls)}).Info("executeToolCalls: starting")
+	for _, call := range sortedCalls {
+		log.WithFields(log.Fields{"model": req.Model, "tool": call.name, "call_id": call.id, "arguments": call.arguments.String()}).Info("executeToolCalls: queued tool call")
+	}
 
 	executions := make(map[string]*toolExecution, len(sortedCalls))
 	var mu sync.Mutex
@@ -1086,6 +1122,7 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 				exec.query = query
 				if query == "" {
 					exec.err = fmt.Errorf("query is required")
+					log.WithFields(log.Fields{"model": req.Model, "call_id": call.id}).Warn("executeToolCalls: search with empty query")
 					if emitter != nil {
 						emitterMu.Lock()
 						_ = emitter.EmitSearchCall(call.id, "failed", "", exec.err.Error(), 0, req.Model)
@@ -1094,6 +1131,7 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 					break
 				}
 
+				log.WithFields(log.Fields{"model": req.Model, "call_id": call.id, "query": query}).Info("executeToolCalls: executing search")
 				if emitter != nil {
 					emitterMu.Lock()
 					_ = emitter.EmitSearchCall(call.id, "in_progress", query, "", 0, req.Model)
@@ -1107,6 +1145,13 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 				outcome, err := s.Search(ctx, query, toolOpts)
 				exec.searchOutcome = outcome
 				exec.err = err
+				if err != nil {
+					log.WithFields(log.Fields{"model": req.Model, "call_id": call.id, "query": query}).WithError(err).Error("executeToolCalls: search failed")
+				} else if outcome.BlockedReason != "" {
+					log.WithFields(log.Fields{"model": req.Model, "call_id": call.id, "query": query, "blocked": outcome.BlockedReason}).Warn("executeToolCalls: search blocked")
+				} else {
+					log.WithFields(log.Fields{"model": req.Model, "call_id": call.id, "query": query, "results": len(outcome.Results)}).Info("executeToolCalls: search completed")
+				}
 				if emitter != nil {
 					emitterMu.Lock()
 					switch {
@@ -1125,6 +1170,7 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 				exec.url = url
 				if url == "" {
 					exec.err = fmt.Errorf("url is required")
+					log.WithFields(log.Fields{"model": req.Model, "call_id": call.id}).Warn("executeToolCalls: fetch with empty url")
 					if emitter != nil {
 						emitterMu.Lock()
 						_ = emitter.EmitFetchCall(call.id, "failed", "", 0, req.Model)
@@ -1133,12 +1179,18 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 					break
 				}
 
+				log.WithFields(log.Fields{"model": req.Model, "call_id": call.id, "url": url}).Info("executeToolCalls: executing fetch")
 				if emitter != nil {
 					emitterMu.Lock()
 					_ = emitter.EmitFetchCall(call.id, "in_progress", url, 0, req.Model)
 					emitterMu.Unlock()
 				}
 				exec.pages = s.Fetch(ctx, []string{url}, toolOpts)
+				if len(exec.pages) == 0 {
+					log.WithFields(log.Fields{"model": req.Model, "call_id": call.id, "url": url}).Warn("executeToolCalls: fetch returned no pages")
+				} else {
+					log.WithFields(log.Fields{"model": req.Model, "call_id": call.id, "url": url, "content_len": len(exec.pages[0].Content)}).Info("executeToolCalls: fetch completed")
+				}
 				if emitter != nil {
 					status := "completed"
 					if len(exec.pages) == 0 {
@@ -1151,6 +1203,7 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 
 			default:
 				exec.err = fmt.Errorf("unsupported tool %q", call.name)
+				log.WithFields(log.Fields{"model": req.Model, "call_id": call.id, "tool": call.name}).Error("executeToolCalls: unsupported tool")
 			}
 
 			mu.Lock()
@@ -1160,6 +1213,7 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 	}
 
 	wg.Wait()
+	log.WithFields(log.Fields{"model": req.Model, "num_calls": len(sortedCalls)}).Info("executeToolCalls: all calls finished")
 
 	return sortedCalls, executions
 }
@@ -1174,16 +1228,19 @@ func (s *Service) applyToolExecutions(ctx context.Context, req *pipeline.Request
 }
 
 func (s *Service) prepareToolOutputs(ctx context.Context, req *pipeline.Request, state *executionState, sortedCalls []*functionCall, executions map[string]*toolExecution) []toolOutput {
+	log.WithFields(log.Fields{"model": req.Model, "num_calls": len(sortedCalls)}).Info("prepareToolOutputs: starting")
 	var outputs []toolOutput
 	for _, call := range sortedCalls {
 		exec := executions[call.id]
 		if exec == nil {
+			log.WithFields(log.Fields{"model": req.Model, "call_id": call.id}).Warn("prepareToolOutputs: nil execution for call")
 			continue
 		}
 
 		switch call.name {
 		case "search":
 			if exec.searchOutcome.BlockedReason != "" {
+				log.WithFields(log.Fields{"model": req.Model, "call_id": call.id, "query": exec.query, "reason": exec.searchOutcome.BlockedReason}).Info("prepareToolOutputs: search blocked")
 				state.blockedQueries = append(state.blockedQueries, agent.BlockedQuery{
 					ID:     call.id,
 					Query:  exec.query,
@@ -1194,6 +1251,7 @@ func (s *Service) prepareToolOutputs(ctx context.Context, req *pipeline.Request,
 			}
 
 			if exec.err != nil {
+				log.WithFields(log.Fields{"model": req.Model, "call_id": call.id, "query": exec.query}).WithError(exec.err).Info("prepareToolOutputs: search error output")
 				outputs = append(outputs, toolOutput{callID: call.id, text: "Search failed: " + exec.err.Error()})
 				continue
 			}
@@ -1205,6 +1263,7 @@ func (s *Service) prepareToolOutputs(ctx context.Context, req *pipeline.Request,
 					uniqueResults = append(uniqueResults, result)
 				}
 			}
+			log.WithFields(log.Fields{"model": req.Model, "call_id": call.id, "query": exec.query, "total_results": len(exec.searchOutcome.Results), "unique_results": len(uniqueResults), "next_citation": state.nextCitation}).Info("prepareToolOutputs: search results deduped")
 
 			state.searchResults = append(state.searchResults, agent.ToolCall{
 				ID:      call.id,
@@ -1219,12 +1278,15 @@ func (s *Service) prepareToolOutputs(ctx context.Context, req *pipeline.Request,
 				})
 			}
 			outputText := formatSearchToolOutput(state.nextCitation, uniqueResults)
+			rawLen := len(outputText)
 			outputText = s.maybeCompactToolOutput(ctx, req, "search", outputText)
+			log.WithFields(log.Fields{"model": req.Model, "call_id": call.id, "raw_output_len": rawLen, "final_output_len": len(outputText)}).Info("prepareToolOutputs: search output ready")
 			outputs = append(outputs, toolOutput{callID: call.id, text: outputText})
 			state.nextCitation += len(uniqueResults)
 
 		case "fetch":
 			if exec.err != nil {
+				log.WithFields(log.Fields{"model": req.Model, "call_id": call.id, "url": exec.url}).WithError(exec.err).Info("prepareToolOutputs: fetch error output")
 				state.fetchCalls = append(state.fetchCalls, FetchCall{
 					ID:     call.id,
 					Status: pipeline.EmitStatusFailed,
@@ -1235,6 +1297,7 @@ func (s *Service) prepareToolOutputs(ctx context.Context, req *pipeline.Request,
 			}
 
 			if len(exec.pages) == 0 {
+				log.WithFields(log.Fields{"model": req.Model, "call_id": call.id, "url": exec.url}).Warn("prepareToolOutputs: fetch returned no pages")
 				state.fetchCalls = append(state.fetchCalls, FetchCall{
 					ID:     call.id,
 					Status: pipeline.EmitStatusFailed,
@@ -1248,6 +1311,7 @@ func (s *Service) prepareToolOutputs(ctx context.Context, req *pipeline.Request,
 
 			// Reuse existing citation if this URL was already fetched/seen
 			if existingIdx, seen := state.seenURLs[exec.url]; seen {
+				log.WithFields(log.Fields{"model": req.Model, "call_id": call.id, "url": exec.url, "existing_citation": existingIdx}).Info("prepareToolOutputs: reusing existing citation for fetch")
 				state.fetchCalls = append(state.fetchCalls, FetchCall{
 					ID:            call.id,
 					Status:        pipeline.EmitStatusCompleted,
@@ -1262,6 +1326,7 @@ func (s *Service) prepareToolOutputs(ctx context.Context, req *pipeline.Request,
 			}
 
 			citationIndex := state.nextCitation
+			log.WithFields(log.Fields{"model": req.Model, "call_id": call.id, "url": exec.url, "citation_index": citationIndex, "page_content_len": len(page.Content)}).Info("prepareToolOutputs: new fetch citation")
 			state.fetchedPages = append(state.fetchedPages, page)
 			state.fetchCalls = append(state.fetchCalls, FetchCall{
 				ID:            call.id,
@@ -1276,12 +1341,15 @@ func (s *Service) prepareToolOutputs(ctx context.Context, req *pipeline.Request,
 				URL:   page.URL,
 			})
 			outputText := formatFetchedPageOutput(citationIndex, page)
+			rawLen := len(outputText)
 			outputText = s.maybeCompactToolOutput(ctx, req, "fetch", outputText)
+			log.WithFields(log.Fields{"model": req.Model, "call_id": call.id, "raw_output_len": rawLen, "final_output_len": len(outputText)}).Info("prepareToolOutputs: fetch output ready")
 			outputs = append(outputs, toolOutput{callID: call.id, text: outputText})
 			state.nextCitation++
 		}
 	}
 
+	log.WithFields(log.Fields{"model": req.Model, "total_outputs": len(outputs)}).Info("prepareToolOutputs: done")
 	return outputs
 }
 
@@ -1304,6 +1372,7 @@ func appendChatToolLoopItems(accumulated []openai.ChatCompletionMessageParamUnio
 
 func (s *executionState) finalResult(req *pipeline.Request, id, object string, created int64, model, content string, usage openai.CompletionUsage) *Result {
 	annotations := buildAnnotationsFromContent(content, s.sources)
+	log.WithFields(log.Fields{"model": model, "id": id, "content_len": len(content), "annotations": len(annotations), "search_results": len(s.searchResults), "fetched_pages": len(s.fetchedPages), "fetch_calls": len(s.fetchCalls), "blocked_queries": len(s.blockedQueries), "sources": len(s.sources)}).Info("finalResult: building result")
 	return &Result{
 		ID:             id,
 		Object:         object,
@@ -1810,6 +1879,7 @@ func decodeContentParts(content json.RawMessage) (responses.ResponseInputMessage
 }
 
 func parseResponse(resp *responses.Response) (map[int]*functionCall, []responses.ResponseInputItemUnionParam, string) {
+	log.WithFields(log.Fields{"response_id": resp.ID, "status": resp.Status, "output_items": len(resp.Output), "model": resp.Model}).Info("parseResponse: parsing response")
 	return parseOutputItems(resp.Output)
 }
 
@@ -1819,6 +1889,7 @@ func parseOutputItems(output []responses.ResponseOutputItemUnion) (map[int]*func
 	var text strings.Builder
 
 	for i, item := range output {
+		log.WithFields(log.Fields{"index": i, "type": item.Type, "id": item.ID}).Debug("parseOutputItems: processing item")
 		switch item.Type {
 		case "function_call":
 			call := item.AsFunctionCall()
@@ -1829,18 +1900,48 @@ func parseOutputItems(output []responses.ResponseOutputItemUnion) (map[int]*func
 			}
 			functionCalls[i].arguments.WriteString(call.Arguments)
 			continuationItems = append(continuationItems, responses.ResponseInputItemParamOfFunctionCall(call.Arguments, call.CallID, call.Name))
+			log.WithFields(log.Fields{"index": i, "call_id": call.CallID, "name": call.Name, "arguments": call.Arguments}).Info("parseOutputItems: function_call")
 		case "reasoning":
-			continuationItems = append(continuationItems, buildReasoningInputItem(item.AsReasoning()))
+			reasoning := item.AsReasoning()
+			summaryLen := 0
+			for _, s := range reasoning.Summary {
+				summaryLen += len(s.Text)
+			}
+			contentLen := 0
+			for _, c := range reasoning.Content {
+				contentLen += len(c.Text)
+			}
+			log.WithFields(log.Fields{"index": i, "id": reasoning.ID, "summary_parts": len(reasoning.Summary), "summary_len": summaryLen, "content_parts": len(reasoning.Content), "content_len": contentLen}).Info("parseOutputItems: reasoning item")
+			continuationItems = append(continuationItems, buildReasoningInputItem(reasoning))
 		case "message":
 			message := item.AsMessage()
 			messageText := extractOutputText(message)
 			text.WriteString(messageText)
+			log.WithFields(log.Fields{"index": i, "id": message.ID, "role": message.Role, "status": message.Status, "text_len": len(messageText), "content_parts": len(message.Content)}).Info("parseOutputItems: message item")
+			for j, content := range message.Content {
+				log.WithFields(log.Fields{"index": i, "content_index": j, "content_type": content.Type, "text_len": len(content.Text), "refusal_len": len(content.Refusal)}).Debug("parseOutputItems: message content part")
+			}
 			if messageText != "" {
 				continuationItems = append(continuationItems, responses.ResponseInputItemParamOfMessage(messageText, responses.EasyInputMessageRoleAssistant))
 			}
+		case "mcp_call":
+			// vLLM may return mcp_call items instead of function_call for function tools; treat them equivalently
+			mcpCall := item.AsMcpCall()
+			functionCalls[i] = &functionCall{
+				index: i,
+				id:    mcpCall.ID,
+				name:  mcpCall.Name,
+			}
+			functionCalls[i].arguments.WriteString(mcpCall.Arguments)
+			continuationItems = append(continuationItems, responses.ResponseInputItemParamOfFunctionCall(mcpCall.Arguments, mcpCall.ID, mcpCall.Name))
+			log.WithFields(log.Fields{"index": i, "call_id": mcpCall.ID, "name": mcpCall.Name, "arguments": mcpCall.Arguments, "server_label": mcpCall.ServerLabel}).Info("parseOutputItems: mcp_call (treated as function_call)")
+		default:
+			rawJSON, _ := json.Marshal(item)
+			log.WithFields(log.Fields{"index": i, "type": item.Type, "raw": string(rawJSON)}).Warn("parseOutputItems: unknown item type")
 		}
 	}
 
+	log.WithFields(log.Fields{"function_calls": len(functionCalls), "continuation_items": len(continuationItems), "text_len": text.Len()}).Info("parseOutputItems: done")
 	return functionCalls, continuationItems, text.String()
 }
 
@@ -1853,6 +1954,10 @@ func parseChatToolCalls(message openai.ChatCompletionMessage) map[int]*functionC
 			name:  toolCall.Function.Name,
 		}
 		functionCalls[i].arguments.WriteString(toolCall.Function.Arguments)
+		log.WithFields(log.Fields{"index": i, "call_id": toolCall.ID, "name": toolCall.Function.Name, "arguments": toolCall.Function.Arguments}).Info("parseChatToolCalls: parsed tool call")
+	}
+	if len(functionCalls) == 0 && len(message.ToolCalls) == 0 {
+		log.WithFields(log.Fields{"content_len": len(message.Content), "role": message.Role, "refusal": message.Refusal}).Debug("parseChatToolCalls: no tool calls in message")
 	}
 	return functionCalls
 }
@@ -1956,8 +2061,10 @@ func (s *streamState) finalText() string {
 }
 
 func (s *streamState) setCompletedOutput(output []responses.ResponseOutputItemUnion) {
+	log.WithFields(log.Fields{"output_items": len(output)}).Info("setCompletedOutput: parsing completed output from response.completed event")
 	s.completedFunctionCalls, s.completedContinuationItems, s.completedText = parseOutputItems(output)
 	s.hasCompletedOutput = true
+	log.WithFields(log.Fields{"function_calls": len(s.completedFunctionCalls), "continuation_items": len(s.completedContinuationItems), "text_len": len(s.completedText)}).Info("setCompletedOutput: done")
 }
 
 func extractOutputText(message responses.ResponseOutputMessage) string {
