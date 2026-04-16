@@ -1161,26 +1161,6 @@ func (s *Service) executeToolCalls(ctx context.Context, req *pipeline.Request, c
 
 	wg.Wait()
 
-	for _, call := range sortedCalls {
-		exec := executions[call.id]
-		if exec == nil {
-			continue
-		}
-		fields := log.Fields{"model": req.Model, "tool": call.name, "call_id": call.id}
-		if call.name == "search" {
-			fields["query"] = exec.query
-			fields["results"] = len(exec.searchOutcome.Results)
-			fields["blocked"] = exec.searchOutcome.BlockedReason
-		} else if call.name == "fetch" {
-			fields["url"] = exec.url
-			fields["pages"] = len(exec.pages)
-		}
-		if exec.err != nil {
-			fields["error"] = exec.err.Error()
-		}
-		log.WithFields(fields).Info("tool execution completed")
-	}
-
 	return sortedCalls, executions
 }
 
