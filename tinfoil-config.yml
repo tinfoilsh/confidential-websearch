@@ -5,7 +5,7 @@ memory: 16384
 
 containers:
   - name: "websearch-mcp"
-    image: "ghcr.io/tinfoilsh/confidential-websearch@sha256:d603e28e80c1163d3b6a1124f891967420058384cc91cde62310a14d2fd0e8b2" # v0.3.4
+    image: "ghcr.io/tinfoilsh/confidential-websearch@sha256:02421ca2f829daa8bd070dbdc9d361c59dd0d8e6e086876283569d10d8a2e71b" # v0.3.5
     env:
       - SAFEGUARD_MODEL: "gpt-oss-safeguard-120b"
     secrets:
