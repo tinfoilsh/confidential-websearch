@@ -1,68 +1,40 @@
-# Confidential Web Search Proxy
+# Confidential Web Search MCP Server
 
-A secure web search and URL fetch service for LLM applications, running inside a Tinfoil enclave.
+A secure Model Context Protocol (MCP) server that exposes `search` and `fetch` tools backed by Exa and Cloudflare Browser Rendering, running inside a Tinfoil enclave.
 
-The service exposes three surfaces:
+The server exposes two surfaces:
 
-- `POST /v1/chat/completions`
-- `POST /v1/responses`
-- `POST /mcp`
+- `POST /mcp` - MCP Streamable HTTP endpoint
+- `GET /health` - health check
 
-It uses a single tool-capable model loop to decide whether to answer directly or call server-side `search` and `fetch` tools. Search and fetch outputs can be filtered for safety and compacted before the model produces a final answer with citations.
+Clients (typically an upstream router that owns its own model and tool loop) call `search` to discover sources and `fetch` to read specific pages. Queries and results can be filtered by an in-enclave safeguard model before leaving or re-entering the trusted boundary.
 
 Uses the [Tinfoil Go SDK](https://github.com/tinfoilsh/tinfoil-go) for secure, attested communication with Tinfoil enclaves.
 
 ## Architecture
 
 ```text
-User Request
-  │ model: "<tool-capable-model>"
+MCP Client (e.g. router, agent runtime)
+  │  MCP tool call: search / fetch
   ▼
 ┌──────────────────────────────────────────────┐
-│         Compatibility / MCP Surface          │
-│  - /v1/chat/completions                      │
-│  - /v1/responses                             │
-│  - /mcp                                      │
+│             MCP Streamable HTTP              │
+│                     /mcp                     │
 └──────────────────────┬───────────────────────┘
                        ▼
-┌──────────────────────────────────────────────┐
-│          Single Model Orchestrator           │
-│                                              │
-│  One model decides whether to:               │
-│  - answer directly                           │
-│  - call search(query)                        │
-│  - call fetch(url)                           │
-│                                              │
-│  The loop carries forward provider-side      │
-│  state with previous_response_id.            │
-└───────────────┬───────────────────────┬──────┘
-                │                       │
-                ▼                       ▼
-        ┌───────────────┐      ┌───────────────────┐
-        │ Exa Search    │      │ Cloudflare Render │
-        └──────┬────────┘      └─────────┬─────────┘
-               │                         │
-               └──────────┬──────────────┘
-                          ▼
         ┌──────────────────────────────────────┐
         │ Optional safeguard checks            │
-        │ - PII filtering for search queries   │
-        │ - Prompt injection filtering for     │
+        │ - PII filtering on search queries    │
+        │ - Prompt injection filtering on      │
         │   search results and fetched pages   │
         └──────────────────┬───────────────────┘
                            ▼
-        ┌──────────────────────────────────────┐
-        │ Optional tool-output compaction      │
-        │ - Large search/fetch outputs are     │
-        │   summarized by TOOL_SUMMARY_MODEL   │
-        │ - Source markers like 【1】 are       │
-        │   preserved for citation fidelity    │
-        └──────────────────┬───────────────────┘
-                           ▼
-        ┌──────────────────────────────────────┐
-        │ Final model answer + annotations     │
-        └──────────────────────────────────────┘
+                ┌───────────────┐      ┌───────────────────┐
+                │ Exa Search    │      │ Cloudflare Render │
+                └───────────────┘      └───────────────────┘
 ```
+
+The server also advertises one MCP prompt, `openai_web_search`, containing the system instructions a caller should hand its own model when wiring these tools up.
 
 ## Quick Start
 
@@ -71,109 +43,53 @@ export TINFOIL_API_KEY="your-tinfoil-api-key"
 export EXA_API_KEY="your-exa-api-key"
 export CLOUDFLARE_ACCOUNT_ID="your-cloudflare-account-id"
 export CLOUDFLARE_API_TOKEN="your-cloudflare-api-token"
+export USAGE_REPORTER_SECRET="your-usage-reporter-secret"
 
-# optional
-export TOOL_SUMMARY_MODEL="llama3-3-70b"
-
-# run the proxy
 go run .
 
 # with verbose logging
 go run . -v
 ```
 
+For local development without real upstream providers, set `LOCAL_TEST_MODE=1` to use built-in deterministic fixtures instead of Exa and Cloudflare.
+
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TINFOIL_API_KEY` | - | Tinfoil API key for enclave model access |
+| `TINFOIL_API_KEY` | - | Tinfoil API key for the in-enclave safeguard model |
 | `EXA_API_KEY` | - | Exa search API key |
 | `CLOUDFLARE_ACCOUNT_ID` | - | Cloudflare account ID for Browser Rendering |
 | `CLOUDFLARE_API_TOKEN` | - | Cloudflare API token for Browser Rendering |
 | `SAFEGUARD_MODEL` | `gpt-oss-safeguard-120b` | Model used for safety filtering |
-| `TOOL_SUMMARY_MODEL` | `llama3-3-70b` | Model used to compact oversized search/fetch outputs |
-| `ENABLE_PII_CHECK` | `true` | Default for PII filtering on outgoing search queries |
-| `ENABLE_INJECTION_CHECK` | `false` | Default for prompt injection filtering on search/fetch output |
+| `ENABLE_PII_CHECK` | `true` | Run PII filtering on outgoing search queries |
+| `ENABLE_INJECTION_CHECK` | `false` | Run prompt-injection filtering on search/fetch output |
 | `LISTEN_ADDR` | `:8089` | Address to listen on |
+| `CONTROL_PLANE_URL` | `https://api.tinfoil.sh` | Base URL for the usage reporter |
+| `USAGE_REPORTER_ID` | `websearch-mcp` | Identifier reported with usage events |
+| `USAGE_REPORTER_SECRET` | - | Shared secret for signing usage reports |
+| `LOCAL_TEST_MODE` | - | Set to `1` to serve static fixtures instead of calling Exa/Cloudflare |
 
-## Request Flow
+## Tools
 
-Each request follows a single-model server-side tool loop:
+### `search`
 
-1. Validate the request and normalize web search options
-2. Ask the model to answer directly or call `search` / `fetch`
-3. Execute tool calls server-side
-4. Apply optional PII and prompt-injection safeguards
-5. Compact oversized tool output when needed while preserving source markers
-6. Continue the loop with `previous_response_id`
-7. Return the final answer with citations, reasoning, blocked searches, and fetch status
+Search the web and return ranked results with titles, URLs, snippets, and publication dates.
 
-## API Endpoints
+Arguments:
 
-This server provides OpenAI-compatible compatibility endpoints plus MCP.
+- `query` (string, required) - natural language search query
+- `max_results` (int, optional) - number of results to return; defaults to 8
 
-### Chat Completions
+### `fetch`
 
-`POST /v1/chat/completions`
+Fetch one or more web pages via Cloudflare Browser Rendering and return the rendered markdown.
 
-```bash
-curl http://localhost:8089/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-oss-120b",
-    "messages": [{"role": "user", "content": "What is the latest news about SpaceX?"}],
-    "web_search_options": {"search_context_size": "medium"},
-    "stream": true
-  }'
-```
+Arguments:
 
-This endpoint is OpenAI-compatible, but web search and fetch metadata are exposed as custom extensions.
+- `urls` (string array, required) - one or more HTTP/HTTPS URLs; capped at 20 per request
 
-Non-streaming responses include standard OpenAI fields plus:
-
-- `choices[0].message.annotations` - URL citations
-- `choices[0].message.fetch_calls` - fetched URLs with status
-- `choices[0].message.blocked_searches` - queries blocked by safety filters
-
-Streaming responses are delivered through the same SSE stream as the completion chunks:
-
-1. Custom `web_search_call` chunks for search and fetch progress (`type: "web_search_call"` with empty `choices`)
-2. One metadata chunk carrying `delta.annotations` when available
-3. Standard chat completion content chunks
-4. The final stop chunk and `data: [DONE]`
-
-`web_search_options.search_context_size` and `web_search_options.user_location` are optional.
-
-### Responses API
-
-`POST /v1/responses`
-`GET /v1/responses/{id}`
-`DELETE /v1/responses/{id}`
-
-```bash
-curl http://localhost:8089/v1/responses \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-oss-120b",
-    "input": "What is the latest news about SpaceX?",
-    "tools": [{"type": "web_search", "search_context_size": "medium"}],
-    "stream": true
-  }'
-```
-
-This endpoint supports OpenAI-style Responses create and stream flows, plus cached retrieval and deletion for responses created through this server.
-
-Responses output uses standard `message` items and `response.*` streaming events where possible. Web search and fetch activity are represented as `web_search_call` output items.
-
-### MCP
-
-`POST /mcp`
-
-The MCP surface exposes `search` and `fetch` tools directly.
-
-### Health Check
-
-`GET /health` returns `{"status":"ok"}`.
+The response contains a per-URL `results` list that preserves input order (including failures) plus a `pages` list with just the successfully fetched content.
 
 ## Safety Features
 
@@ -183,7 +99,7 @@ Blocks outgoing search queries that would leak sensitive personally identifiable
 
 ### Prompt Injection Detection
 
-Filters search results and fetched pages that contain prompt injection attempts before they are passed back into the answering loop.
+Filters search results and fetched pages that contain prompt injection attempts before they are returned to the caller.
 
 ### Fetch Target Validation
 
@@ -192,25 +108,26 @@ Rejects unsafe fetch targets before they reach Cloudflare Browser Rendering, inc
 ## Docker
 
 ```bash
-docker build -t websearch-proxy .
+docker build -t websearch-mcp .
 docker run -p 8089:8089 \
   -e TINFOIL_API_KEY=$TINFOIL_API_KEY \
   -e EXA_API_KEY=$EXA_API_KEY \
   -e CLOUDFLARE_ACCOUNT_ID=$CLOUDFLARE_ACCOUNT_ID \
   -e CLOUDFLARE_API_TOKEN=$CLOUDFLARE_API_TOKEN \
-  websearch-proxy
+  -e USAGE_REPORTER_SECRET=$USAGE_REPORTER_SECRET \
+  websearch-mcp
 ```
 
 ## Security
 
-This proxy uses the Tinfoil Go SDK which provides:
+This service uses the Tinfoil Go SDK which provides:
 
 - Automatic attestation validation to ensure enclave integrity
 - TLS certificate pinning with attested certificates
 - Direct-to-enclave encrypted communication
-- Service-held credentials for model, search, and fetch providers inside the enclave
+- Service-held credentials for the safeguard model, search, and fetch providers inside the enclave
 
-All processing occurs within secure enclaves, so search queries, results, and responses remain encrypted outside the trusted execution environment.
+All processing occurs within secure enclaves, so search queries, results, and fetched page content remain encrypted outside the trusted execution environment.
 
 ## Reporting Vulnerabilities
 
