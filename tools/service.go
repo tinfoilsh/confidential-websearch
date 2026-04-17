@@ -35,6 +35,8 @@ type Options struct {
 	MaxResults            int
 	PIICheckEnabled       bool
 	InjectionCheckEnabled bool
+	UserLocationCountry   string
+	AllowedDomains        []string
 }
 
 type SearchOutcome struct {
@@ -79,6 +81,8 @@ func (s *Service) Search(ctx context.Context, query string, opts Options) (Searc
 		MaxResults:           maxResults,
 		MaxContentCharacters: defaultMaxContentChars,
 		ContentMode:          search.ContentModeHighlights,
+		UserLocationCountry:  opts.UserLocationCountry,
+		AllowedDomains:       opts.AllowedDomains,
 	})
 	if err != nil {
 		return SearchOutcome{}, err
