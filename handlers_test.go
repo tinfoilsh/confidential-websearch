@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -359,5 +360,26 @@ func mustJSON(t *testing.T, v any) map[string]any {
 	default:
 		t.Fatalf("unsupported type for mustJSON: %T", v)
 		return nil
+	}
+}
+
+func TestWebSearchPromptIncludesDateAndCitationGuidance(t *testing.T) {
+	result, err := webSearchPromptHandler(context.Background(), &mcp.GetPromptRequest{})
+	if err != nil {
+		t.Fatalf("webSearchPromptHandler returned error: %v", err)
+	}
+	if len(result.Messages) != 1 {
+		t.Fatalf("expected 1 prompt message, got %d", len(result.Messages))
+	}
+
+	content, ok := result.Messages[0].Content.(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("expected text content, got %#v", result.Messages[0].Content)
+	}
+	if !strings.Contains(content.Text, "Current date and time:") {
+		t.Fatalf("expected current date guidance, got %q", content.Text)
+	}
+	if !strings.Contains(content.Text, "using the exact numbered source markers") {
+		t.Fatalf("expected citation guidance, got %q", content.Text)
 	}
 }
