@@ -1,81 +1,53 @@
 # Websearch Evaluation
 
-Tests all supported model/endpoint/stream/task combinations against a running websearch server.
+This harness evaluates the current router-owned websearch flow, not the MCP server directly.
 
-## Setup
+For manual local bring-up and one-off probes, use the `local_testing.md` files
+in the two repos:
 
-Start the websearch server locally:
+- `../local_testing.md` for standalone `confidential-websearch` MCP debugging
+- `../../model-router/local_testing.md` for router-owned end-to-end testing
 
-```bash
-source .env
-LISTEN_ADDR=:8089 go run .
-```
+This file only covers the automated matrix driver.
+
+## Requirements
+
+- a running router endpoint that exposes `/v1/chat/completions` and `/v1/responses`
+- `TINFOIL_API_KEY`
+- optional: `USE_LOCAL_FIXTURES=1` when that router is pointed at a local `websearch` server running with `LOCAL_TEST_MODE=1`
 
 ## Run
 
 ```bash
-# Default (localhost:8089)
-./evals/run_websearch_eval.sh
+# Default local router
+TINFOIL_API_KEY=... ./evals/run_websearch_eval.sh
 
-# Custom server URL
-./evals/run_websearch_eval.sh http://localhost:8091
+# Custom router URL
+TINFOIL_API_KEY=... ./evals/run_websearch_eval.sh http://localhost:8090
 
-# Against a deployed server
-./evals/run_websearch_eval.sh https://websearch.example.com
+# Deterministic local MCP fixtures
+TINFOIL_API_KEY=... USE_LOCAL_FIXTURES=1 ./evals/run_websearch_eval.sh
 ```
 
 ## What it tests
 
 The script queries `https://api.tinfoil.sh/v1/models` to discover which chat models support `/v1/chat/completions` and `/v1/responses`, then runs every valid combination of:
 
-- **Endpoint**: chat completions, responses (only for models that list it)
+- **Endpoint**: chat completions, responses
 - **Streaming**: true, false
-- **Task**: search (current news query), fetch (Wikipedia URL fetch)
+- **Task**: search, fetch
 
 ## Output
 
-Results are saved to `evals/results/<timestamp>/`:
+Results are saved to `evals/results/<timestamp>/` and include:
 
-```
-results/
-  20260415_103500/
-    results.json          # Structured analysis of all tests
-    raw/                  # Raw response files
-      gpt-oss-120b__chat__stream-false__search.json
-      gpt-oss-120b__chat__stream-true__search.sse
-      gpt-oss-120b__chat__stream-false__search.elapsed
-      ...
-```
+- `raw/*.json` and `raw/*.sse` response captures
+- per-case `.elapsed` timing files
+- `results.json` with the analyzed matrix
 
-`results.json` contains an array of objects, one per test:
-
-```json
-{
-  "model": "gpt-oss-120b",
-  "endpoint": "chat",
-  "stream": false,
-  "task": "search",
-  "elapsed_seconds": 12,
-  "content_length": 899,
-  "citation_markers": 3,
-  "annotations": 3,
-  "quality": "EXCELLENT",
-  "error": null
-}
-```
-
-Quality grades:
-- **EXCELLENT**: citation markers and annotations present, counts match
-- **GOOD**: both present but counts differ
-- **PARTIAL_MARKERS**: markers in text but no annotation objects
-- **PARTIAL_ANNOTATIONS**: annotation objects but no markers in text
-- **NO_CITATIONS**: content returned but no citations
-- **ERROR**: request failed
-- **EMPTY**: no content returned
+The analyzer treats either source markers, direct URLs, or annotation objects as citations so local fixture runs and deployed runs are graded consistently.
 
 ## Re-analyze
-
-To re-run analysis on existing results without re-running the server:
 
 ```bash
 python3 evals/analyze_websearch_eval.py evals/results/<timestamp>
