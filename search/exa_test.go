@@ -47,6 +47,7 @@ func TestExaProvider_Search_Success(t *testing.T) {
 				Title         string `json:"title"`
 				URL           string `json:"url"`
 				Text          string `json:"text"`
+				Highlights    any    `json:"highlights"`
 				Favicon       string `json:"favicon"`
 				PublishedDate string `json:"publishedDate"`
 			}{
@@ -98,6 +99,54 @@ func TestExaProvider_Search_Success(t *testing.T) {
 	}
 }
 
+func TestExaProvider_Search_HighlightsMode(t *testing.T) {
+	var receivedReq exaRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedReq)
+		resp := map[string]any{
+			"results": []map[string]any{
+				{
+					"title":      "Result 1",
+					"url":        "https://example.com/1",
+					"highlights": []string{"First highlight", "Second highlight"},
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	provider := newTestProvider(server.URL)
+	results, err := provider.Search(context.Background(), "test query", Options{
+		MaxResults:           3,
+		MaxContentCharacters: 400,
+		ContentMode:          ContentModeHighlights,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if receivedReq.Contents == nil || receivedReq.Contents.Highlights == nil {
+		t.Fatal("expected contents.highlights to be set")
+	}
+	if receivedReq.Contents.Text != nil {
+		t.Fatal("expected contents.text to be omitted in highlights mode")
+	}
+	if receivedReq.Contents.Highlights.Query != "test query" {
+		t.Fatalf("expected highlight query to mirror search query, got %q", receivedReq.Contents.Highlights.Query)
+	}
+	if receivedReq.Contents.Highlights.MaxCharacters != 400 {
+		t.Fatalf("expected highlight maxCharacters 400, got %d", receivedReq.Contents.Highlights.MaxCharacters)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Content != "First highlight\n\nSecond highlight" {
+		t.Fatalf("unexpected highlights content: %q", results[0].Content)
+	}
+}
+
 func TestExaProvider_Search_EmptyResults(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := exaResponse{
@@ -105,6 +154,7 @@ func TestExaProvider_Search_EmptyResults(t *testing.T) {
 				Title         string `json:"title"`
 				URL           string `json:"url"`
 				Text          string `json:"text"`
+				Highlights    any    `json:"highlights"`
 				Favicon       string `json:"favicon"`
 				PublishedDate string `json:"publishedDate"`
 			}{},
@@ -272,5 +322,8 @@ func TestExaProvider_Search_RequestBody(t *testing.T) {
 	}
 	if receivedReq.Contents != nil && receivedReq.Contents.Text != nil && receivedReq.Contents.Text.MaxCharacters != 1234 {
 		t.Errorf("expected maxCharacters 1234, got %d", receivedReq.Contents.Text.MaxCharacters)
+	}
+	if receivedReq.Contents != nil && receivedReq.Contents.Highlights != nil {
+		t.Errorf("expected highlights to be omitted in text mode")
 	}
 }

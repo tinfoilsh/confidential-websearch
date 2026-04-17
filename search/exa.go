@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/tinfoilsh/confidential-websearch/config"
 )
@@ -36,11 +37,17 @@ type exaRequest struct {
 }
 
 type exaContentsParam struct {
-	Text *exaTextParam `json:"text,omitempty"`
+	Text       *exaTextParam       `json:"text,omitempty"`
+	Highlights *exaHighlightsParam `json:"highlights,omitempty"`
 }
 
 type exaTextParam struct {
 	MaxCharacters int `json:"maxCharacters,omitempty"`
+}
+
+type exaHighlightsParam struct {
+	Query         string `json:"query,omitempty"`
+	MaxCharacters int    `json:"maxCharacters,omitempty"`
 }
 
 // exaResponse represents the Exa API response structure
@@ -49,6 +56,7 @@ type exaResponse struct {
 		Title         string `json:"title"`
 		URL           string `json:"url"`
 		Text          string `json:"text"`
+		Highlights    any    `json:"highlights"`
 		Favicon       string `json:"favicon"`
 		PublishedDate string `json:"publishedDate"`
 	} `json:"results"`
@@ -67,15 +75,23 @@ func (p *ExaProvider) Search(ctx context.Context, query string, opts Options) ([
 		maxCharacters = config.MaxSearchContentLength
 	}
 
+	contents := &exaContentsParam{}
+	if opts.ContentMode == ContentModeHighlights {
+		contents.Highlights = &exaHighlightsParam{
+			Query:         query,
+			MaxCharacters: maxCharacters,
+		}
+	} else {
+		contents.Text = &exaTextParam{
+			MaxCharacters: maxCharacters,
+		}
+	}
+
 	reqBody := exaRequest{
 		Query:      query,
 		Type:       "fast", // Use fast type to guarantee ZDR (Exa maintains the index)
 		NumResults: maxResults,
-		Contents: &exaContentsParam{
-			Text: &exaTextParam{
-				MaxCharacters: maxCharacters,
-			},
-		},
+		Contents:   contents,
 	}
 	if opts.UserLocationCountry != "" {
 		reqBody.UserLocation = opts.UserLocationCountry
@@ -126,11 +142,50 @@ func (p *ExaProvider) Search(ctx context.Context, query string, opts Options) ([
 		results = append(results, Result{
 			Title:         item.Title,
 			URL:           item.URL,
-			Content:       item.Text,
+			Content:       exaResultContent(item.Text, item.Highlights),
 			Favicon:       item.Favicon,
 			PublishedDate: item.PublishedDate,
 		})
 	}
 
 	return results, nil
+}
+
+func exaResultContent(text string, highlights any) string {
+	if content := parseExaHighlights(highlights); content != "" {
+		return content
+	}
+	return text
+}
+
+func parseExaHighlights(raw any) string {
+	if raw == nil {
+		return ""
+	}
+
+	switch highlights := raw.(type) {
+	case []any:
+		parts := make([]string, 0, len(highlights))
+		for _, highlight := range highlights {
+			switch value := highlight.(type) {
+			case string:
+				value = strings.TrimSpace(value)
+				if value != "" {
+					parts = append(parts, value)
+				}
+			case map[string]any:
+				if text, ok := value["text"].(string); ok {
+					text = strings.TrimSpace(text)
+					if text != "" {
+						parts = append(parts, text)
+					}
+				}
+			}
+		}
+		return strings.Join(parts, "\n\n")
+	case string:
+		return strings.TrimSpace(highlights)
+	default:
+		return ""
+	}
 }

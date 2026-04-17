@@ -7,9 +7,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/tinfoilsh/confidential-websearch/config"
-	"github.com/tinfoilsh/confidential-websearch/engine"
 	"github.com/tinfoilsh/confidential-websearch/fetch"
 	"github.com/tinfoilsh/confidential-websearch/search"
+	"github.com/tinfoilsh/confidential-websearch/tools"
 )
 
 type SearchArgs struct {
@@ -22,7 +22,7 @@ type SearchResult struct {
 }
 
 type FetchArgs struct {
-	URLs []string `json:"urls" jsonschema:"One or more HTTP/HTTPS URLs to fetch. Each page is rendered in a headless browser and converted to clean markdown. Maximum 5 URLs per request."`
+	URLs []string `json:"urls" jsonschema:"One or more HTTP/HTTPS URLs to fetch. Each page is rendered in a headless browser and converted to clean markdown. Maximum 20 URLs per request."`
 }
 
 type FetchResult struct {
@@ -30,13 +30,13 @@ type FetchResult struct {
 	Results []fetch.URLResult   `json:"results"`
 }
 
-func newSearchHandler(service *engine.Service, cfg *config.Config) mcp.ToolHandlerFor[SearchArgs, SearchResult] {
+func newSearchHandler(svc *tools.Service, cfg *config.Config) mcp.ToolHandlerFor[SearchArgs, SearchResult] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, args SearchArgs) (*mcp.CallToolResult, SearchResult, error) {
 		if args.Query == "" {
 			return nil, SearchResult{}, fmt.Errorf("the 'query' parameter is required: provide a non-empty search query string describing what you want to find")
 		}
 
-		outcome, err := service.Search(ctx, args.Query, engine.ToolOptions{
+		outcome, err := svc.Search(ctx, args.Query, tools.Options{
 			MaxResults:            args.MaxResults,
 			PIICheckEnabled:       cfg.EnablePIICheck,
 			InjectionCheckEnabled: cfg.EnableInjectionCheck,
@@ -52,13 +52,13 @@ func newSearchHandler(service *engine.Service, cfg *config.Config) mcp.ToolHandl
 	}
 }
 
-func newFetchHandler(service *engine.Service, cfg *config.Config) mcp.ToolHandlerFor[FetchArgs, FetchResult] {
+func newFetchHandler(svc *tools.Service, cfg *config.Config) mcp.ToolHandlerFor[FetchArgs, FetchResult] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, args FetchArgs) (*mcp.CallToolResult, FetchResult, error) {
 		if len(args.URLs) == 0 {
 			return nil, FetchResult{}, fmt.Errorf("the 'urls' parameter is required: provide at least one valid HTTP or HTTPS URL to fetch")
 		}
 
-		results := service.FetchDetailed(ctx, args.URLs, engine.ToolOptions{
+		results := svc.FetchDetailed(ctx, args.URLs, tools.Options{
 			PIICheckEnabled:       false,
 			InjectionCheckEnabled: cfg.EnableInjectionCheck,
 		})

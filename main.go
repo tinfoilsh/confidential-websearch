@@ -6,22 +6,21 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
-	"github.com/openai/openai-go/v3/responses"
 	log "github.com/sirupsen/logrus"
 	"github.com/tinfoilsh/tinfoil-go"
 
-	"github.com/tinfoilsh/confidential-websearch/api"
 	"github.com/tinfoilsh/confidential-websearch/config"
-	"github.com/tinfoilsh/confidential-websearch/engine"
 	"github.com/tinfoilsh/confidential-websearch/fetch"
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
 	"github.com/tinfoilsh/confidential-websearch/search"
+	"github.com/tinfoilsh/confidential-websearch/tools"
+	"github.com/tinfoilsh/confidential-websearch/usage"
 )
 
 var (
@@ -36,68 +35,57 @@ func main() {
 	}
 
 	cfg := config.Load()
-
-	client, err := tinfoil.NewClient(option.WithAPIKey(cfg.TinfoilAPIKey))
+	reporter, err := usage.NewReporter(
+		strings.TrimRight(cfg.ControlPlaneURL, "/")+"/api/internal/usage-reports",
+		cfg.UsageReporterID,
+		cfg.UsageReporterSecret,
+	)
 	if err != nil {
-		log.Fatalf("Failed to create Tinfoil client: %v", err)
+		log.Fatalf("Failed to create usage reporter: %v", err)
 	}
+	defer reporter.Close(context.Background())
 
-	searcher, err := search.NewProvider(search.Config{
-		ExaAPIKey: cfg.ExaAPIKey,
-	})
-	if err != nil {
-		log.Fatalf("Failed to create search provider: %v", err)
-	}
-
-	if cfg.CloudflareAccountID == "" || cfg.CloudflareAPIToken == "" {
-		log.Fatal("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must be set")
-	}
-	fetcher := fetch.NewFetcher(cfg.CloudflareAccountID, cfg.CloudflareAPIToken)
-
-	safeguardClient := safeguard.NewClient(client, cfg.SafeguardModel)
-	service := engine.NewService(
-		responsesClient{inner: &client.Responses},
-		searcher,
-		fetcher,
-		safeguardClient,
-		engine.WithChatCompletionsClient(chatCompletionsClient{inner: &client.Chat.Completions}),
-		engine.WithModelCatalog(engine.NewHTTPModelCatalog(nil)),
-		engine.WithToolSummaryModel(cfg.ToolSummaryModel),
-		engine.WithToolLoopMaxIter(cfg.ToolLoopMaxIter),
+	var (
+		svc          *tools.Service
+		searcherName string
 	)
 
-	apiServer := &api.Server{
-		Runner:                       service,
-		DefaultPIICheckEnabled:       cfg.EnablePIICheck,
-		DefaultInjectionCheckEnabled: cfg.EnableInjectionCheck,
+	if isLocalTestMode() {
+		svc = newLocalTestService()
+		searcherName = "local-test"
+	} else {
+		client, err := tinfoil.NewClient(option.WithAPIKey(cfg.TinfoilAPIKey))
+		if err != nil {
+			log.Fatalf("Failed to create Tinfoil client: %v", err)
+		}
+
+		searcher, err := search.NewProvider(search.Config{
+			ExaAPIKey: cfg.ExaAPIKey,
+		})
+		if err != nil {
+			log.Fatalf("Failed to create search provider: %v", err)
+		}
+
+		if cfg.CloudflareAccountID == "" || cfg.CloudflareAPIToken == "" {
+			log.Fatal("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must be set")
+		}
+		fetcher := fetch.NewFetcher(cfg.CloudflareAccountID, cfg.CloudflareAPIToken)
+
+		safeguardClient := safeguard.NewClient(client, cfg.SafeguardModel)
+		svc = tools.NewService(searcher, fetcher, safeguardClient)
+		searcherName = searcher.Name()
 	}
 
-	server := mcp.NewServer(&mcp.Implementation{
-		Name:    "confidential-websearch",
-		Version: version,
-	}, nil)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "search",
-		Description: "Search the web for information using semantic search. Returns a ranked list of results, each containing a title, URL, content snippet, and publication date. Use this to find current information, research topics, verify facts, or discover relevant web pages. Results are ordered by relevance. Supports up to 30 results per query.",
-	}, newSearchHandler(service, cfg))
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "fetch",
-		Description: "Fetch one or more web pages and return their full content as clean markdown. Uses headless browser rendering, so JavaScript-heavy and dynamically-loaded pages are fully rendered before extraction. Each URL is fetched independently and returns its own status (completed or failed) along with the converted markdown content. Use this after searching to read the full text of a page, or to extract detailed information from known URLs. Maximum 5 URLs per request.",
-	}, newFetchHandler(service, cfg))
-
 	handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
-		return server
+		return newMCPServer(svc, cfg, reporter, r)
 	}, &mcp.StreamableHTTPOptions{Stateless: true})
 
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", handler)
-	mux.HandleFunc("/v1/chat/completions", api.RecoveryMiddleware(apiServer.HandleChatCompletions))
-	mux.HandleFunc("/v1/responses", api.RecoveryMiddleware(apiServer.HandleResponses))
-	mux.HandleFunc("/v1/responses/", api.RecoveryMiddleware(apiServer.HandleResponseResource))
-	mux.HandleFunc("/health", apiServer.HandleHealth)
-	mux.HandleFunc("/", apiServer.HandleRoot)
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	})
 
 	httpServer := &http.Server{
 		Addr:         cfg.ListenAddr,
@@ -110,7 +98,7 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Infof("Starting websearch server on %s (search: %s)", cfg.ListenAddr, searcher.Name())
+		log.Infof("Starting websearch server on %s (search: %s)", cfg.ListenAddr, searcherName)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
@@ -121,29 +109,4 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	httpServer.Shutdown(ctx)
-	apiServer.Close()
-}
-
-type responsesClient struct {
-	inner *responses.ResponseService
-}
-
-func (c responsesClient) New(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) (*responses.Response, error) {
-	return c.inner.New(ctx, body, opts...)
-}
-
-func (c responsesClient) NewStreaming(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) engine.ResponseStream {
-	return c.inner.NewStreaming(ctx, body, opts...)
-}
-
-type chatCompletionsClient struct {
-	inner *openai.ChatCompletionService
-}
-
-func (c chatCompletionsClient) New(ctx context.Context, body openai.ChatCompletionNewParams, opts ...option.RequestOption) (*openai.ChatCompletion, error) {
-	return c.inner.New(ctx, body, opts...)
-}
-
-func (c chatCompletionsClient) NewStreaming(ctx context.Context, body openai.ChatCompletionNewParams, opts ...option.RequestOption) engine.ChatCompletionStream {
-	return c.inner.NewStreaming(ctx, body, opts...)
 }

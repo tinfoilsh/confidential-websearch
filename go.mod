@@ -10,6 +10,7 @@ require (
 	github.com/openai/openai-go/v3 v3.16.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/tinfoilsh/tinfoil-go v0.11.3
+	github.com/tinfoilsh/usage-reporting-go v0.0.2
 )
 
 require (

@@ -23,9 +23,17 @@ type Result struct {
 	PublishedDate string `json:"published_date,omitempty"`
 }
 
+type ContentMode string
+
+const (
+	ContentModeText       ContentMode = "text"
+	ContentModeHighlights ContentMode = "highlights"
+)
+
 type Options struct {
 	MaxResults           int
 	MaxContentCharacters int
+	ContentMode          ContentMode
 	UserLocationCountry  string
 	AllowedDomains       []string
 }
