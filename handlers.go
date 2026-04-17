@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -13,6 +14,40 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/search"
 	"github.com/tinfoilsh/confidential-websearch/tools"
 )
+
+// Per-request safety override headers set by the model-router when the caller
+// sends `pii_check_options` or `prompt_injection_check_options` on the
+// originating OpenAI request. When the header is absent the server falls back
+// to its env-driven defaults, so self-hosted deployments keep working without
+// the router in front of them.
+const (
+	headerPIICheck       = "X-Tinfoil-Tool-PII-Check"
+	headerInjectionCheck = "X-Tinfoil-Tool-Injection-Check"
+)
+
+// resolveSafetyFlag picks between a per-request header override and the
+// server-level default. An empty header means the caller (router) said nothing
+// and the env-backed config value wins; any other value is parsed as a bool
+// with the same semantics as `strconv.ParseBool`. Unparseable header values
+// fall back to the default so a malformed header can never silently weaken
+// filtering compared to what the operator configured.
+func resolveSafetyFlag(req *http.Request, header string, fallback bool) bool {
+	if req == nil {
+		return fallback
+	}
+	value := strings.TrimSpace(req.Header.Get(header))
+	if value == "" {
+		return fallback
+	}
+	switch strings.ToLower(value) {
+	case "true", "1":
+		return true
+	case "false", "0":
+		return false
+	default:
+		return fallback
+	}
+}
 
 // ExternalWebAccessDisabledError is the deterministic error message callers
 // (including the model-router) can match on to detect that the caller
@@ -42,7 +77,7 @@ type FetchResult struct {
 	Results []fetch.URLResult   `json:"results"`
 }
 
-func newSearchHandler(svc *tools.Service, cfg *config.Config) mcp.ToolHandlerFor[SearchArgs, SearchResult] {
+func newSearchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Request) mcp.ToolHandlerFor[SearchArgs, SearchResult] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, args SearchArgs) (*mcp.CallToolResult, SearchResult, error) {
 		if args.Query == "" {
 			return nil, SearchResult{}, fmt.Errorf("the 'query' parameter is required: provide a non-empty search query string describing what you want to find")
@@ -53,8 +88,8 @@ func newSearchHandler(svc *tools.Service, cfg *config.Config) mcp.ToolHandlerFor
 
 		outcome, err := svc.Search(ctx, args.Query, tools.Options{
 			MaxResults:            args.MaxResults,
-			PIICheckEnabled:       cfg.EnablePIICheck,
-			InjectionCheckEnabled: cfg.EnableInjectionCheck,
+			PIICheckEnabled:       resolveSafetyFlag(httpReq, headerPIICheck, cfg.EnablePIICheck),
+			InjectionCheckEnabled: resolveSafetyFlag(httpReq, headerInjectionCheck, cfg.EnableInjectionCheck),
 			UserLocationCountry:   strings.ToUpper(strings.TrimSpace(args.UserLocationCountry)),
 			AllowedDomains:        normalizeDomains(args.AllowedDomains),
 		})
@@ -69,7 +104,7 @@ func newSearchHandler(svc *tools.Service, cfg *config.Config) mcp.ToolHandlerFor
 	}
 }
 
-func newFetchHandler(svc *tools.Service, cfg *config.Config) mcp.ToolHandlerFor[FetchArgs, FetchResult] {
+func newFetchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Request) mcp.ToolHandlerFor[FetchArgs, FetchResult] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, args FetchArgs) (*mcp.CallToolResult, FetchResult, error) {
 		if len(args.URLs) == 0 {
 			return nil, FetchResult{}, fmt.Errorf("the 'urls' parameter is required: provide at least one valid HTTP or HTTPS URL to fetch")
@@ -85,7 +120,7 @@ func newFetchHandler(svc *tools.Service, cfg *config.Config) mcp.ToolHandlerFor[
 
 		results := svc.FetchDetailed(ctx, urls, tools.Options{
 			PIICheckEnabled:       false,
-			InjectionCheckEnabled: cfg.EnableInjectionCheck,
+			InjectionCheckEnabled: resolveSafetyFlag(httpReq, headerInjectionCheck, cfg.EnableInjectionCheck),
 		})
 		results = append(results, rejected...)
 
