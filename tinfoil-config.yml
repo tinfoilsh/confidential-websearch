@@ -8,17 +8,18 @@ containers:
     image: "ghcr.io/tinfoilsh/confidential-websearch@sha256:02421ca2f829daa8bd070dbdc9d361c59dd0d8e6e086876283569d10d8a2e71b" # v0.3.5
     env:
       - SAFEGUARD_MODEL: "gpt-oss-safeguard-120b"
+      - CONTROL_PLANE_URL: "https://api.tinfoil.sh"
+      - USAGE_REPORTER_ID: "websearch-mcp"
     secrets:
       - EXA_API_KEY
       - TINFOIL_API_KEY
       - CLOUDFLARE_ACCOUNT_ID
       - CLOUDFLARE_API_TOKEN
+      - USAGE_REPORTER_SECRET
 
 shim:
   listen-port: 443
   upstream-port: 8089
   paths:
     - /mcp
-    - /v1/chat/completions
-    - /v1/responses
     - /health

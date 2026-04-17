@@ -6,11 +6,8 @@ import (
 )
 
 const (
-	SafeguardTemperature = 0.0
-
 	DefaultMaxSearchResults = 10
 	MaxSearchContentLength  = 2000
-	DefaultToolLoopMaxIter  = 5
 )
 
 // Config holds the server configuration
@@ -19,10 +16,11 @@ type Config struct {
 	ExaAPIKey            string
 	CloudflareAccountID  string
 	CloudflareAPIToken   string
+	ControlPlaneURL      string
+	UsageReporterID      string
+	UsageReporterSecret  string
 	ListenAddr           string
 	SafeguardModel       string
-	ToolSummaryModel     string
-	ToolLoopMaxIter      int
 	EnablePIICheck       bool
 	EnableInjectionCheck bool
 }
@@ -34,10 +32,11 @@ func Load() *Config {
 		ExaAPIKey:            os.Getenv("EXA_API_KEY"),
 		CloudflareAccountID:  os.Getenv("CLOUDFLARE_ACCOUNT_ID"),
 		CloudflareAPIToken:   os.Getenv("CLOUDFLARE_API_TOKEN"),
+		ControlPlaneURL:      getEnv("CONTROL_PLANE_URL", "https://api.tinfoil.sh"),
+		UsageReporterID:      getEnv("USAGE_REPORTER_ID", "websearch-mcp"),
+		UsageReporterSecret:  os.Getenv("USAGE_REPORTER_SECRET"),
 		ListenAddr:           getEnv("LISTEN_ADDR", ":8089"),
 		SafeguardModel:       getEnv("SAFEGUARD_MODEL", "gpt-oss-safeguard-120b"),
-		ToolSummaryModel:     getEnv("TOOL_SUMMARY_MODEL", "llama3-3-70b"),
-		ToolLoopMaxIter:      getEnvInt("TOOL_LOOP_MAX_ITER", DefaultToolLoopMaxIter),
 		EnablePIICheck:       getEnvBool("ENABLE_PII_CHECK", true),
 		EnableInjectionCheck: getInjectionCheckEnvBool(false),
 	}
@@ -48,18 +47,6 @@ func getEnv(key, fallback string) string {
 		return val
 	}
 	return fallback
-}
-
-func getEnvInt(key string, fallback int) int {
-	val := os.Getenv(key)
-	if val == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(val)
-	if err != nil || parsed < 1 {
-		return fallback
-	}
-	return parsed
 }
 
 func getEnvBool(key string, fallback bool) bool {

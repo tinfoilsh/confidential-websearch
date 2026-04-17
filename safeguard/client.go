@@ -9,12 +9,13 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 	log "github.com/sirupsen/logrus"
 	"github.com/tinfoilsh/tinfoil-go"
-
-	"github.com/tinfoilsh/confidential-websearch/config"
 )
 
 // DefaultModel is the default safeguard model
 const DefaultModel = "gpt-oss-safeguard-120b"
+
+// safeguardTemperature forces deterministic classification responses.
+const safeguardTemperature = 0.0
 
 // CheckResult contains the result of a safety check
 type CheckResult struct {
@@ -61,7 +62,7 @@ func (c *Client) Check(ctx context.Context, policy, content string) (*CheckResul
 			openai.SystemMessage(policy),
 			openai.UserMessage(content),
 		},
-		Temperature: openai.Float(config.SafeguardTemperature),
+		Temperature: openai.Float(safeguardTemperature),
 		ResponseFormat: openai.ChatCompletionNewParamsResponseFormatUnion{
 			OfJSONSchema: &openai.ResponseFormatJSONSchemaParam{
 				JSONSchema: openai.ResponseFormatJSONSchemaJSONSchemaParam{

@@ -6,7 +6,7 @@ import (
 )
 
 func TestLoad_Defaults(t *testing.T) {
-	envVars := []string{"EXA_API_KEY", "LISTEN_ADDR", "SAFEGUARD_MODEL", "TOOL_SUMMARY_MODEL", "ENABLE_PII_CHECK", "ENABLE_INJECTION_CHECK", "ENABLE_FETCH_INJECTION_CHECK", "TOOL_LOOP_MAX_ITER"}
+	envVars := []string{"EXA_API_KEY", "LISTEN_ADDR", "SAFEGUARD_MODEL", "ENABLE_PII_CHECK", "ENABLE_INJECTION_CHECK", "ENABLE_FETCH_INJECTION_CHECK", "CONTROL_PLANE_URL", "USAGE_REPORTER_ID", "USAGE_REPORTER_SECRET"}
 	originalValues := make(map[string]string)
 	for _, key := range envVars {
 		originalValues[key] = os.Getenv(key)
@@ -28,12 +28,6 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.SafeguardModel != "gpt-oss-safeguard-120b" {
 		t.Errorf("SafeguardModel: expected 'gpt-oss-safeguard-120b', got '%s'", cfg.SafeguardModel)
 	}
-	if cfg.ToolSummaryModel != "llama3-3-70b" {
-		t.Errorf("ToolSummaryModel: expected 'llama3-3-70b', got '%s'", cfg.ToolSummaryModel)
-	}
-	if cfg.ToolLoopMaxIter != DefaultToolLoopMaxIter {
-		t.Errorf("ToolLoopMaxIter: expected %d, got %d", DefaultToolLoopMaxIter, cfg.ToolLoopMaxIter)
-	}
 	if !cfg.EnablePIICheck {
 		t.Error("EnablePIICheck: expected true by default")
 	}
@@ -43,24 +37,32 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.ExaAPIKey != "" {
 		t.Errorf("ExaAPIKey: expected empty, got '%s'", cfg.ExaAPIKey)
 	}
+	if cfg.ControlPlaneURL != "https://api.tinfoil.sh" {
+		t.Errorf("ControlPlaneURL: expected default control plane URL, got '%s'", cfg.ControlPlaneURL)
+	}
+	if cfg.UsageReporterID != "websearch-mcp" {
+		t.Errorf("UsageReporterID: expected default reporter id, got '%s'", cfg.UsageReporterID)
+	}
 }
 
 func TestLoad_CustomValues(t *testing.T) {
 	os.Setenv("EXA_API_KEY", "test-api-key")
 	os.Setenv("LISTEN_ADDR", ":9000")
 	os.Setenv("SAFEGUARD_MODEL", "custom-safeguard")
-	os.Setenv("TOOL_SUMMARY_MODEL", "custom-summary")
-	os.Setenv("TOOL_LOOP_MAX_ITER", "5")
 	os.Setenv("ENABLE_PII_CHECK", "false")
 	os.Setenv("ENABLE_INJECTION_CHECK", "true")
+	os.Setenv("CONTROL_PLANE_URL", "https://controlplane.example")
+	os.Setenv("USAGE_REPORTER_ID", "reporter-id")
+	os.Setenv("USAGE_REPORTER_SECRET", "secret")
 	defer func() {
 		os.Unsetenv("EXA_API_KEY")
 		os.Unsetenv("LISTEN_ADDR")
 		os.Unsetenv("SAFEGUARD_MODEL")
-		os.Unsetenv("TOOL_SUMMARY_MODEL")
-		os.Unsetenv("TOOL_LOOP_MAX_ITER")
 		os.Unsetenv("ENABLE_PII_CHECK")
 		os.Unsetenv("ENABLE_INJECTION_CHECK")
+		os.Unsetenv("CONTROL_PLANE_URL")
+		os.Unsetenv("USAGE_REPORTER_ID")
+		os.Unsetenv("USAGE_REPORTER_SECRET")
 	}()
 
 	cfg := Load()
@@ -74,17 +76,20 @@ func TestLoad_CustomValues(t *testing.T) {
 	if cfg.SafeguardModel != "custom-safeguard" {
 		t.Errorf("SafeguardModel: expected 'custom-safeguard', got '%s'", cfg.SafeguardModel)
 	}
-	if cfg.ToolSummaryModel != "custom-summary" {
-		t.Errorf("ToolSummaryModel: expected 'custom-summary', got '%s'", cfg.ToolSummaryModel)
-	}
-	if cfg.ToolLoopMaxIter != 5 {
-		t.Errorf("ToolLoopMaxIter: expected 5, got %d", cfg.ToolLoopMaxIter)
-	}
 	if cfg.EnablePIICheck {
 		t.Error("EnablePIICheck: expected false")
 	}
 	if !cfg.EnableInjectionCheck {
 		t.Error("EnableInjectionCheck: expected true")
+	}
+	if cfg.ControlPlaneURL != "https://controlplane.example" {
+		t.Errorf("ControlPlaneURL: expected custom control plane URL, got '%s'", cfg.ControlPlaneURL)
+	}
+	if cfg.UsageReporterID != "reporter-id" {
+		t.Errorf("UsageReporterID: expected custom reporter id, got '%s'", cfg.UsageReporterID)
+	}
+	if cfg.UsageReporterSecret != "secret" {
+		t.Errorf("UsageReporterSecret: expected custom reporter secret, got '%s'", cfg.UsageReporterSecret)
 	}
 }
 
@@ -173,16 +178,10 @@ func TestGetEnvBool_Unset(t *testing.T) {
 }
 
 func TestConstants(t *testing.T) {
-	if SafeguardTemperature != 0.0 {
-		t.Errorf("SafeguardTemperature: expected 0.0, got %f", SafeguardTemperature)
-	}
 	if DefaultMaxSearchResults != 10 {
 		t.Errorf("DefaultMaxSearchResults: expected 10, got %d", DefaultMaxSearchResults)
 	}
 	if MaxSearchContentLength != 2000 {
 		t.Errorf("MaxSearchContentLength: expected 2000, got %d", MaxSearchContentLength)
-	}
-	if DefaultToolLoopMaxIter != 5 {
-		t.Errorf("DefaultToolLoopMaxIter: expected 5, got %d", DefaultToolLoopMaxIter)
 	}
 }
