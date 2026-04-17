@@ -10,12 +10,10 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
 
-	tld "github.com/bombsimon/tld-validator"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -24,7 +22,6 @@ const (
 	maxResponseBytes   = 512 * 1024 // 512KB max API response body
 	fetchTimeout       = 60 * time.Second
 	maxConcurrentURLs  = 5
-	maxURLsPerMessage  = 10
 	allowedSchemeHTTP  = "http"
 	allowedSchemeHTTPS = "https"
 )
@@ -95,63 +92,6 @@ func NewFetcher(accountID, apiToken string) *Fetcher {
 		apiURL:   fmt.Sprintf(cloudflareAPIURLFormat, accountID),
 		apiToken: apiToken,
 	}
-}
-
-// urlPattern matches http/https URLs in text
-var urlPattern = regexp.MustCompile(`https?://[^\s<>"'\)\]\}]+`)
-
-// bareDomainPattern matches bare domains like example.com or sub.example.com/path
-// Must have a valid TLD (2+ alpha chars) and not be preceded by :// (already matched above)
-var bareDomainPattern = regexp.MustCompile(`(?:^|[\s(])([a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}(?:/[^\s<>"'\)\]\}]*)?)`)
-
-// ExtractURLs finds all URLs in the given text
-func ExtractURLs(text string) []string {
-	seen := make(map[string]bool)
-	var unique []string
-
-	add := func(u string) {
-		u = strings.TrimRight(u, ".,;:!?")
-		if !seen[u] {
-			seen[u] = true
-			unique = append(unique, u)
-		}
-	}
-
-	// Match explicit http/https URLs first
-	for _, u := range urlPattern.FindAllString(text, -1) {
-		add(u)
-	}
-
-	// Match bare domains (e.g. example.com, example.com/path) and prepend https://
-	for _, m := range bareDomainPattern.FindAllStringSubmatch(text, -1) {
-		bare := strings.TrimRight(m[1], ".,;:!?")
-		if !hasValidTLD(bare) {
-			continue
-		}
-		full := "https://" + bare
-		if seen[full] || seen["http://"+bare] {
-			continue
-		}
-		add(full)
-	}
-
-	if len(unique) > maxURLsPerMessage {
-		unique = unique[:maxURLsPerMessage]
-	}
-	return unique
-}
-
-// hasValidTLD checks if the domain portion of a bare domain (with optional path) has a valid IANA TLD.
-func hasValidTLD(bare string) bool {
-	domain := bare
-	if idx := strings.Index(bare, "/"); idx != -1 {
-		domain = bare[:idx]
-	}
-	lastDot := strings.LastIndex(domain, ".")
-	if lastDot == -1 {
-		return false
-	}
-	return tld.IsValid(domain[lastDot+1:])
 }
 
 func validateTargetURL(ctx context.Context, rawURL string) error {
