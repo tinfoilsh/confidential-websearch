@@ -15,11 +15,13 @@ import (
 )
 
 type mockSearchProvider struct {
-	results []search.Result
-	err     error
+	results  []search.Result
+	err      error
+	lastOpts search.Options
 }
 
 func (m *mockSearchProvider) Search(ctx context.Context, query string, opts search.Options) ([]search.Result, error) {
+	m.lastOpts = opts
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -174,6 +176,46 @@ func TestSearchHandler_InjectionCheckEnabled(t *testing.T) {
 	}
 }
 
+func TestSearchHandler_ForwardsUserLocationAndAllowedDomains(t *testing.T) {
+	searcher := &mockSearchProvider{results: []search.Result{{Title: "r"}}}
+	svc := tools.NewService(searcher, nil, nil)
+	handler := newSearchHandler(svc, &config.Config{})
+
+	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{
+		Query:               "news",
+		UserLocationCountry: " gb ",
+		AllowedDomains:      []string{"BBC.co.uk", "bbc.co.uk", " theguardian.com "},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if searcher.lastOpts.UserLocationCountry != "GB" {
+		t.Fatalf("expected user_location_country GB, got %q", searcher.lastOpts.UserLocationCountry)
+	}
+	expected := []string{"bbc.co.uk", "theguardian.com"}
+	if !stringSlicesEqual(searcher.lastOpts.AllowedDomains, expected) {
+		t.Fatalf("expected allowed_domains %v, got %v", expected, searcher.lastOpts.AllowedDomains)
+	}
+}
+
+func TestSearchHandler_ExternalWebAccessDisabled(t *testing.T) {
+	searcher := &mockSearchProvider{results: []search.Result{{Title: "r"}}}
+	svc := tools.NewService(searcher, nil, nil)
+	handler := newSearchHandler(svc, &config.Config{})
+
+	disabled := false
+	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{
+		Query:             "whatever",
+		ExternalWebAccess: &disabled,
+	})
+	if err == nil || err.Error() != ExternalWebAccessDisabledError {
+		t.Fatalf("expected external web access disabled error, got %v", err)
+	}
+	if searcher.lastOpts.MaxResults != 0 {
+		t.Fatalf("expected searcher not to be invoked when external access disabled, got lastOpts=%+v", searcher.lastOpts)
+	}
+}
+
 func TestFetchHandler_EmptyURLs(t *testing.T) {
 	realFetcher := fetch.NewFetcher("test-account", "test-token")
 	svc := tools.NewService(nil, realFetcher, nil)
@@ -183,6 +225,105 @@ func TestFetchHandler_EmptyURLs(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty URLs")
 	}
+}
+
+func TestFetchHandler_ExternalWebAccessDisabled(t *testing.T) {
+	svc := tools.NewService(nil, &mockFetcher{}, nil)
+	handler := newFetchHandler(svc, &config.Config{})
+
+	disabled := false
+	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, FetchArgs{
+		URLs:              []string{"https://example.com/a"},
+		ExternalWebAccess: &disabled,
+	})
+	if err == nil || err.Error() != ExternalWebAccessDisabledError {
+		t.Fatalf("expected external web access disabled error, got %v", err)
+	}
+}
+
+func TestFetchHandler_AllowedDomainsRejectsOutsideHosts(t *testing.T) {
+	svc := tools.NewService(nil, &mockFetcher{
+		results: []fetch.URLResult{
+			{URL: "https://docs.python.org/3/tutorial", Status: fetch.FetchStatusCompleted, Content: "# Tutorial"},
+		},
+	}, nil)
+	handler := newFetchHandler(svc, &config.Config{})
+
+	_, result, err := handler(context.Background(), &mcp.CallToolRequest{}, FetchArgs{
+		URLs: []string{
+			"https://docs.python.org/3/tutorial",
+			"https://evil.example.com/takeover",
+		},
+		AllowedDomains: []string{"python.org"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Results) != 2 {
+		t.Fatalf("expected 2 per-url results, got %d", len(result.Results))
+	}
+	statusByURL := map[string]string{}
+	for _, r := range result.Results {
+		statusByURL[r.URL] = r.Status
+	}
+	if statusByURL["https://docs.python.org/3/tutorial"] != fetch.FetchStatusCompleted {
+		t.Fatalf("expected allowed URL to be fetched, got %+v", statusByURL)
+	}
+	if statusByURL["https://evil.example.com/takeover"] != fetch.FetchStatusFailed {
+		t.Fatalf("expected out-of-domain URL to be rejected, got %+v", statusByURL)
+	}
+}
+
+func TestFetchHandler_AllowedDomainsAllRejected(t *testing.T) {
+	svc := tools.NewService(nil, &mockFetcher{}, nil)
+	handler := newFetchHandler(svc, &config.Config{})
+
+	_, result, err := handler(context.Background(), &mcp.CallToolRequest{}, FetchArgs{
+		URLs:           []string{"https://evil.example.com/takeover"},
+		AllowedDomains: []string{"python.org"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Results) != 1 || result.Results[0].Status != fetch.FetchStatusFailed {
+		t.Fatalf("expected single rejected result, got %+v", result.Results)
+	}
+	if len(result.Pages) != 0 {
+		t.Fatalf("expected no pages when all URLs rejected, got %d", len(result.Pages))
+	}
+}
+
+func TestHostAllowed(t *testing.T) {
+	cases := []struct {
+		url      string
+		allowed  []string
+		expected bool
+	}{
+		{"https://python.org/about", []string{"python.org"}, true},
+		{"https://docs.python.org/tutorial", []string{"python.org"}, true},
+		{"https://python.org.attacker.com", []string{"python.org"}, false},
+		{"https://evil.example.com", []string{"python.org"}, false},
+		{"https://api.bbc.co.uk/news", []string{"bbc.co.uk"}, true},
+		{"not a url", []string{"python.org"}, false},
+	}
+	for _, tc := range cases {
+		got := hostAllowed(tc.url, tc.allowed)
+		if got != tc.expected {
+			t.Errorf("hostAllowed(%q, %v) = %v, want %v", tc.url, tc.allowed, got, tc.expected)
+		}
+	}
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestFetchHandler_PreservesPerURLResultsInOrder(t *testing.T) {
