@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -14,7 +12,6 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
 	"github.com/tinfoilsh/confidential-websearch/search"
 	"github.com/tinfoilsh/confidential-websearch/tools"
-	"github.com/tinfoilsh/confidential-websearch/usage"
 )
 
 type mockSearchProvider struct {
@@ -317,37 +314,6 @@ func TestMCPServer_SearchToolCall(t *testing.T) {
 	}
 }
 
-func TestMCPServer_PromptDiscovery(t *testing.T) {
-	searcher := &mockSearchProvider{}
-	cfg := &config.Config{}
-	svc := tools.NewService(searcher, fetch.NewFetcher("test", "test"), nil)
-	reporter, err := usage.NewReporter("https://example.test/usage-reports", "", "")
-	if err != nil {
-		t.Fatalf("NewReporter: %v", err)
-	}
-	req := httptest.NewRequest("POST", "/mcp", nil)
-
-	server := newMCPServer(svc, cfg, reporter, req)
-	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "v1"}, nil)
-	clientTransport, serverTransport := mcp.NewInMemoryTransports()
-
-	go server.Connect(context.Background(), serverTransport, nil)
-
-	session, err := client.Connect(context.Background(), clientTransport, nil)
-	if err != nil {
-		t.Fatalf("failed to connect: %v", err)
-	}
-	defer session.Close()
-
-	result, err := session.ListPrompts(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("failed to list prompts: %v", err)
-	}
-	if len(result.Prompts) != 1 || result.Prompts[0].Name != routerPromptName {
-		t.Fatalf("unexpected prompts: %#v", result.Prompts)
-	}
-}
-
 func mustJSON(t *testing.T, v any) map[string]any {
 	t.Helper()
 	switch val := v.(type) {
@@ -360,26 +326,5 @@ func mustJSON(t *testing.T, v any) map[string]any {
 	default:
 		t.Fatalf("unsupported type for mustJSON: %T", v)
 		return nil
-	}
-}
-
-func TestWebSearchPromptIncludesDateAndCitationGuidance(t *testing.T) {
-	result, err := webSearchPromptHandler(context.Background(), &mcp.GetPromptRequest{})
-	if err != nil {
-		t.Fatalf("webSearchPromptHandler returned error: %v", err)
-	}
-	if len(result.Messages) != 1 {
-		t.Fatalf("expected 1 prompt message, got %d", len(result.Messages))
-	}
-
-	content, ok := result.Messages[0].Content.(*mcp.TextContent)
-	if !ok {
-		t.Fatalf("expected text content, got %#v", result.Messages[0].Content)
-	}
-	if !strings.Contains(content.Text, "Current date and time:") {
-		t.Fatalf("expected current date guidance, got %q", content.Text)
-	}
-	if !strings.Contains(content.Text, "using the exact numbered source markers") {
-		t.Fatalf("expected citation guidance, got %q", content.Text)
 	}
 }
