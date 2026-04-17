@@ -37,7 +37,7 @@ func Load() *Config {
 		UsageReporterSecret:  os.Getenv("USAGE_REPORTER_SECRET"),
 		ListenAddr:           getEnv("LISTEN_ADDR", ":8089"),
 		SafeguardModel:       getEnv("SAFEGUARD_MODEL", "gpt-oss-safeguard-120b"),
-		EnablePIICheck:       getEnvBool("ENABLE_PII_CHECK", true),
+		EnablePIICheck:       getEnvBool("ENABLE_PII_CHECK", false),
 		EnableInjectionCheck: getInjectionCheckEnvBool(false),
 	}
 }
