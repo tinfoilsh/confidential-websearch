@@ -171,3 +171,78 @@ If the server is still running in the background:
 ```bash
 lsof -ti tcp:8091 | xargs kill
 ```
+
+## 8. Run the automated eval matrix
+
+Once the MCP server and a local model-router are both up (see section 6), the
+repo ships an end-to-end eval harness under `evals/`. Use it instead of
+hand-curling one-off prompts whenever you want a fresh signal on router +
+websearch quality.
+
+### 8.1 Quickstart
+
+```bash
+TINFOIL_API_KEY=... ./evals/run_websearch_eval.sh
+```
+
+Point it at a non-default router URL, or run against deterministic local
+fixtures:
+
+```bash
+TINFOIL_API_KEY=... ./evals/run_websearch_eval.sh http://localhost:8090
+TINFOIL_API_KEY=... USE_LOCAL_FIXTURES=1 ./evals/run_websearch_eval.sh
+```
+
+Useful environment overrides:
+
+- `CONTEXT_SIZES` — space-separated retrieval-depth buckets to exercise.
+  Defaults to `"low medium high"`; set to `"medium"` for a quick smoke run.
+- `TASKS` — space-separated task list; defaults to the full set
+  (`depth-low depth-medium depth-high search fetch location domains external-off`).
+- `SKIP_LLM_JUDGE=1` — skip the LLM-as-judge grading step (useful when running
+  offline or to keep costs down).
+- `JUDGE_MODEL`, `JUDGE_ENDPOINT`, `JUDGE_CONCURRENCY`, `JUDGE_TIMEOUT` — tune
+  the judge. Default model is `glm-5-1`, default endpoint is
+  `https://inference.tinfoil.sh/v1/chat/completions`.
+
+Results are written to `evals/results/<timestamp>/`:
+
+- `raw/*.json` and `raw/*.sse` response captures
+- per-case `.elapsed` timing files
+- `results.json` with the analyzed matrix (heuristic grade, LLM verdict,
+  parameter-assertion pass/fail, streaming parity)
+
+Re-run the analyzer on a prior result directory:
+
+```bash
+python3 evals/analyze_websearch_eval.py evals/results/<timestamp>
+```
+
+### 8.2 What the matrix covers
+
+Every `(model, endpoint, stream, context_size, task)` tuple is captured and
+graded on three axes:
+
+1. **Retrieval-depth buckets.** Three prompt classes — `depth-low`
+   (single-fact), `depth-medium` (multi-source synthesis), `depth-high`
+   (deep research) — exercised at `search_context_size` low / medium / high
+   so regressions in how the router maps context size to tool-call breadth
+   are visible.
+2. **Parameter-assertion tasks.** Three dedicated prompts verify that
+   OpenAI's web search options propagate end-to-end:
+   - `location` — sets `user_location.approximate.country=GB`; passes if a
+     search ran and UK context appears in the answer or annotations
+     (soft-passes when the upstream search index ignores the hint).
+   - `domains` — sets `filters.allowed_domains=["python.org"]`; every
+     annotation URL must be under `python.org`.
+   - `external-off` — sets `external_web_access=false`; the answer must
+     admit the access is disabled or produce no annotations.
+3. **Qualitative LLM-as-judge grading.** Each response is sent to Tinfoil
+   (`glm-5-1` by default) with a compact rubric scoring correctness,
+   cited-source support, and helpfulness (0–3 each) plus an overall
+   `excellent|good|partial|poor` verdict. The aggregate is printed by
+   retrieval-depth bucket so you can spot quality changes as depth grows.
+
+The analyzer also cross-checks streaming vs non-streaming parity (content,
+annotations, and `web_search_call` events should match) and flags mismatches
+per `(model, endpoint, ctx, task)`.
