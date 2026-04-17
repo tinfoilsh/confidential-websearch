@@ -10,9 +10,9 @@ import json
 import os
 import re
 import sys
-from collections import defaultdict
 
 CITATION_PATTERN = re.compile(r"\u3010(\d+)\u3011")
+URL_CITATION_PATTERN = re.compile(r"https?://[^\s\]\)】]+")
 
 
 def parse_nonstream(raw, endpoint):
@@ -156,20 +156,21 @@ def analyze_file(results_dir, fname):
     content = content or ""
     annotations = annotations or []
     markers = CITATION_PATTERN.findall(content)
+    urls = URL_CITATION_PATTERN.findall(content)
+    unique_references = len(set(markers)) + len(set(urls))
 
     # Quality grade
     if error:
         quality = "ERROR"
     elif not content.strip():
         quality = "EMPTY"
-    elif markers and annotations:
-        unique_markers = len(set(markers))
-        if unique_markers == len(annotations):
+    elif unique_references and annotations:
+        if unique_references == len(annotations):
             quality = "EXCELLENT"
         else:
             quality = "GOOD"
-    elif markers:
-        quality = "PARTIAL_MARKERS"
+    elif unique_references:
+        quality = "GOOD"
     elif annotations:
         quality = "PARTIAL_ANNOTATIONS"
     else:
@@ -184,7 +185,7 @@ def analyze_file(results_dir, fname):
         "content_length": len(content),
         "content_snippet": content[:300].replace("\n", " "),
         "citation_markers": len(markers),
-        "unique_markers": len(set(markers)),
+        "url_citations": len(set(urls)),
         "annotations": len(annotations),
         "quality": quality,
         "error": error,
@@ -214,21 +215,21 @@ def main():
         json.dump(results, f, indent=2)
 
     # Console summary
-    print(f"{'=' * 130}")
+    print(f"{'=' * 140}")
     print(f"  WEBSEARCH EVAL RESULTS ({len(results)} tests)")
-    print(f"{'=' * 130}")
+    print(f"{'=' * 140}")
     print(
         f"  {'Model':<16} {'API':<12} {'Stream':<8} {'Task':<7} "
-        f"{'Time':>5} {'Len':>6} {'Mkrs':>5} {'Anns':>5} {'Quality':<20} {'Error'}"
+        f"{'Time':>5} {'Len':>6} {'Mkrs':>5} {'URLs':>5} {'Anns':>5} {'Quality':<20} {'Error'}"
     )
-    print(f"  {'-' * 120}")
+    print(f"  {'-' * 130}")
 
     for r in results:
         stream_s = "yes" if r["stream"] else "no"
         err_s = (r["error"] or "")[:50]
         print(
             f"  {r['model']:<16} {r['endpoint']:<12} {stream_s:<8} {r['task']:<7} "
-            f"{r['elapsed_seconds']:>4}s {r['content_length']:>6} {r['citation_markers']:>5} "
+            f"{r['elapsed_seconds']:>4}s {r['content_length']:>6} {r['citation_markers']:>5} {r['url_citations']:>5} "
             f"{r['annotations']:>5} {r['quality']:<20} {err_s}"
         )
 
@@ -291,7 +292,7 @@ def main():
     partial = sum(
         1
         for r in results
-        if r["quality"] in ("PARTIAL_MARKERS", "PARTIAL_ANNOTATIONS")
+        if r["quality"] == "PARTIAL_ANNOTATIONS"
     )
     no_cit = sum(1 for r in results if r["quality"] == "NO_CITATIONS")
 

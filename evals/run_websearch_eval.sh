@@ -1,13 +1,14 @@
 #!/bin/bash
 #
-# Websearch server evaluation matrix.
+# Websearch via router evaluation matrix.
 #
 # Runs all supported model/endpoint/stream/task combinations and saves
 # raw responses as JSON/SSE files plus a summary results.json.
 #
 # Usage:
-#   ./evals/run_websearch_eval.sh                         # default: http://localhost:8089
-#   ./evals/run_websearch_eval.sh http://localhost:8091    # custom base URL
+#   TINFOIL_API_KEY=... ./evals/run_websearch_eval.sh
+#   TINFOIL_API_KEY=... ./evals/run_websearch_eval.sh http://localhost:8090
+#   TINFOIL_API_KEY=... USE_LOCAL_FIXTURES=1 ./evals/run_websearch_eval.sh
 #
 # The model catalog at https://api.tinfoil.sh/v1/models is queried to
 # determine which models support /v1/chat/completions vs /v1/responses.
@@ -16,17 +17,35 @@
 
 set -uo pipefail
 
-BASE="${1:-http://localhost:8089}"
+BASE="${1:-http://localhost:8090}"
 CATALOG_URL="https://api.tinfoil.sh/v1/models"
+API_KEY="${TINFOIL_API_KEY:-}"
+USE_LOCAL_FIXTURES="${USE_LOCAL_FIXTURES:-0}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OUT="${SCRIPT_DIR}/results/${TIMESTAMP}"
 mkdir -p "$OUT/raw"
 
-SEARCH_Q='What were the top 3 news headlines today? Cite every claim with source markers. Be thorough but concise.'
-FETCH_Q='Fetch https://en.wikipedia.org/wiki/Python_(programming_language) and give me a 3-sentence summary of what Python is, citing the page.'
+if [ -z "$API_KEY" ]; then
+  echo "ERROR: TINFOIL_API_KEY must be set"
+  exit 1
+fi
 
-echo "Websearch eval: $BASE"
+if [ "$USE_LOCAL_FIXTURES" = "1" ]; then
+  SEARCH_Q='Search the web and answer in one sentence: According to the Neighborhood Cat Gazette, which cushions do the cats in the sunroom prefer? Cite the source.'
+  FETCH_Q='Fetch https://local.test/cats/almanac and answer in one sentence: According to the page, what does Nimbus do after breakfast? Cite the source.'
+  CHAT_MAX_TOKENS=120
+  RESP_MAX_TOKENS=120
+else
+  SEARCH_Q='What were the top 3 news headlines today? Cite every claim with source markers. Be thorough but concise.'
+  FETCH_Q='Fetch https://en.wikipedia.org/wiki/Python_(programming_language) and give me a 3-sentence summary of what Python is, citing the page.'
+  CHAT_MAX_TOKENS=220
+  RESP_MAX_TOKENS=220
+fi
+
+RESP_STREAM_MAX_TOKENS=400
+
+echo "Websearch eval (router): $BASE"
 echo "Output: $OUT"
 echo ""
 
@@ -69,6 +88,7 @@ do_curl() {
   local start=$(date +%s)
   curl -sS --max-time 300 "$url" \
     -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $API_KEY" \
     -d "$body" > "$OUT/raw/${fname}.${ext}" 2>"$OUT/raw/${fname}.err"
   local end=$(date +%s)
   echo $((end - start)) > "$OUT/raw/${fname}.elapsed"
@@ -76,28 +96,36 @@ do_curl() {
 
 make_body_chat() {
   local model=$1 stream_bool=$2 prompt=$3
-  python3 << PYEOF
+  MODEL="$model" STREAM_BOOL="$stream_bool" PROMPT="$prompt" CHAT_MAX_TOKENS="$CHAT_MAX_TOKENS" python3 <<'PYEOF'
 import json
-stream_val = True if "$stream_bool" == "true" else False
+import os
+
+stream_val = os.environ["STREAM_BOOL"] == "true"
 print(json.dumps({
-    "model": "$model",
-    "messages": [{"role": "user", "content": "$prompt"}],
+    "model": os.environ["MODEL"],
+    "messages": [{"role": "user", "content": os.environ["PROMPT"]}],
     "stream": stream_val,
-    "web_search_options": {"enabled": True}
+    "web_search_options": {},
+    "temperature": 0,
+    "max_tokens": int(os.environ["CHAT_MAX_TOKENS"])
 }))
 PYEOF
 }
 
 make_body_responses() {
   local model=$1 stream_bool=$2 prompt=$3
-  python3 << PYEOF
+  MODEL="$model" STREAM_BOOL="$stream_bool" PROMPT="$prompt" RESP_MAX_TOKENS="$RESP_MAX_TOKENS" RESP_STREAM_MAX_TOKENS="$RESP_STREAM_MAX_TOKENS" python3 <<'PYEOF'
 import json
-stream_val = True if "$stream_bool" == "true" else False
+import os
+
+stream_val = os.environ["STREAM_BOOL"] == "true"
 print(json.dumps({
-    "model": "$model",
-    "input": "$prompt",
+    "model": os.environ["MODEL"],
+    "input": os.environ["PROMPT"],
     "stream": stream_val,
-    "tools": [{"type": "web_search"}]
+    "tools": [{"type": "web_search"}],
+    "temperature": 0,
+    "max_output_tokens": int(os.environ["RESP_STREAM_MAX_TOKENS"] if stream_val else os.environ["RESP_MAX_TOKENS"])
 }))
 PYEOF
 }
