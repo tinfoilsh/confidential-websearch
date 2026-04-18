@@ -5,11 +5,6 @@ import (
 	"strconv"
 )
 
-const (
-	DefaultMaxSearchResults = 10
-	MaxSearchContentLength  = 2000
-)
-
 // Config holds the server configuration
 type Config struct {
 	TinfoilAPIKey        string
@@ -37,7 +32,7 @@ func Load() *Config {
 		UsageReporterSecret:  os.Getenv("USAGE_REPORTER_SECRET"),
 		ListenAddr:           getEnv("LISTEN_ADDR", ":8089"),
 		SafeguardModel:       getEnv("SAFEGUARD_MODEL", "gpt-oss-safeguard-120b"),
-		EnablePIICheck:       getEnvBool("ENABLE_PII_CHECK", false),
+		EnablePIICheck:       getEnvBool("ENABLE_PII_CHECK", true),
 		EnableInjectionCheck: getInjectionCheckEnvBool(false),
 	}
 }
