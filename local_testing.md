@@ -182,15 +182,26 @@ websearch quality.
 ### 8.1 Quickstart
 
 ```bash
-TINFOIL_API_KEY=... ./evals/run_websearch_eval.sh
+TINFOIL_API_KEY=... python3 evals/run_websearch_eval.py
 ```
 
 Point it at a non-default router URL, or run against deterministic local
 fixtures:
 
 ```bash
-TINFOIL_API_KEY=... ./evals/run_websearch_eval.sh http://localhost:8090
-TINFOIL_API_KEY=... USE_LOCAL_FIXTURES=1 ./evals/run_websearch_eval.sh
+TINFOIL_API_KEY=... python3 evals/run_websearch_eval.py --base http://localhost:8090
+TINFOIL_API_KEY=... python3 evals/run_websearch_eval.py --local-fixtures
+```
+
+When the local fixture MCP server is also running, pass its base URL so the
+harness can snapshot `/debug/last-call` and grade the `location`/`domains`
+assertions against the actual MCP request shape:
+
+```bash
+TINFOIL_API_KEY=... python3 evals/run_websearch_eval.py \
+  --local-fixtures \
+  --base http://localhost:8090 \
+  --mcp-base http://127.0.0.1:8091
 ```
 
 Useful environment overrides:
