@@ -34,20 +34,12 @@ DEFAULT_JUDGE_TIMEOUT = 60
 
 LOCATION_PATTERN = re.compile(r"\b(london|uk|united kingdom|england|britain)\b", re.IGNORECASE)
 LOCATION_DOMAIN_PATTERN = re.compile(r"\.uk(/|$)|bbc\.|theguardian\.|metoffice\.|sky\.com", re.IGNORECASE)
-EXTERNAL_OFF_PATTERN = re.compile(
-    r"external web access is disabled|cannot access the (web|internet)|unable to browse|no internet access",
-    re.IGNORECASE,
-)
 
 # Parameter-assertion configuration: task name -> assertion description.
 # Each task's assertion is graded by `run_assertion` below.
 ASSERTION_TASKS = {
     "location": "response references London or the UK",
     "domains": "all annotations come from python.org",
-    "external-off": (
-        "response admits external web access is disabled and did not produce "
-        "grounded citations"
-    ),
 }
 
 
@@ -349,27 +341,6 @@ def run_assertion(task, content, annotations, web_search_calls, error):
                 "reason": f"annotations outside python.org: {off_domain[:3]}",
             }
         return {"pass": True, "reason": "all annotations rooted at python.org"}
-
-    if task == "external-off":
-        # The intent of external_web_access=false is that no grounded answer
-        # should reach the user. The router still emits web_search_call events
-        # for attempted tool calls even when the MCP server rejects them, so
-        # we don't penalize that here. Pass if the response explicitly admits
-        # it couldn't access the web, OR if no annotations were produced.
-        if EXTERNAL_OFF_PATTERN.search(content or ""):
-            return {"pass": True, "reason": "response admits external access disabled"}
-        if not annotations:
-            return {
-                "pass": True,
-                "reason": "no annotations produced; no grounded web content reached the user",
-            }
-        return {
-            "pass": False,
-            "reason": (
-                f"response surfaced grounded web content despite external access "
-                f"disabled: annotations={len(annotations)}"
-            ),
-        }
 
     return None
 

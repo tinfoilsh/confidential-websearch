@@ -49,17 +49,11 @@ func resolveSafetyFlag(req *http.Request, header string, fallback bool) bool {
 	}
 }
 
-// ExternalWebAccessDisabledError is the deterministic error message callers
-// (including the model-router) can match on to detect that the caller
-// explicitly disabled external web access.
-const ExternalWebAccessDisabledError = "external web access is disabled for this request"
-
 type SearchArgs struct {
 	Query               string   `json:"query" jsonschema:"Natural language search query. Be specific and descriptive for better results. Max ~400 characters."`
 	MaxResults          int      `json:"max_results,omitempty" jsonschema:"Number of results to return (1-30). Defaults to 10 if omitted. Use fewer for focused queries and more for broad research."`
 	UserLocationCountry string   `json:"user_location_country,omitempty" jsonschema:"ISO 3166-1 alpha-2 country code to bias results toward (e.g. 'US', 'GB', 'DE'). Maps to OpenAI web_search_options.user_location.approximate.country."`
 	AllowedDomains      []string `json:"allowed_domains,omitempty" jsonschema:"If set, only return results from these domains. Maps to OpenAI filters.allowed_domains."`
-	ExternalWebAccess   *bool    `json:"external_web_access,omitempty" jsonschema:"If explicitly false, reject the request instead of hitting the internet. Defaults to true."`
 }
 
 type SearchResult struct {
@@ -67,9 +61,8 @@ type SearchResult struct {
 }
 
 type FetchArgs struct {
-	URLs              []string `json:"urls" jsonschema:"One or more HTTP/HTTPS URLs to fetch. Each page is rendered in a headless browser and converted to clean markdown. Maximum 20 URLs per request."`
-	AllowedDomains    []string `json:"allowed_domains,omitempty" jsonschema:"If set, reject any URL whose host is not in the list. Maps to OpenAI filters.allowed_domains."`
-	ExternalWebAccess *bool    `json:"external_web_access,omitempty" jsonschema:"If explicitly false, reject the request instead of hitting the internet. Defaults to true."`
+	URLs           []string `json:"urls" jsonschema:"One or more HTTP/HTTPS URLs to fetch. Each page is rendered in a headless browser and converted to clean markdown. Maximum 20 URLs per request."`
+	AllowedDomains []string `json:"allowed_domains,omitempty" jsonschema:"If set, reject any URL whose host is not in the list. Maps to OpenAI filters.allowed_domains."`
 }
 
 type FetchResult struct {
@@ -81,9 +74,6 @@ func newSearchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Requ
 	return func(ctx context.Context, req *mcp.CallToolRequest, args SearchArgs) (*mcp.CallToolResult, SearchResult, error) {
 		if args.Query == "" {
 			return nil, SearchResult{}, fmt.Errorf("the 'query' parameter is required: provide a non-empty search query string describing what you want to find")
-		}
-		if args.ExternalWebAccess != nil && !*args.ExternalWebAccess {
-			return nil, SearchResult{}, fmt.Errorf("%s", ExternalWebAccessDisabledError)
 		}
 
 		outcome, err := svc.Search(ctx, args.Query, tools.Options{
@@ -108,9 +98,6 @@ func newFetchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Reque
 	return func(ctx context.Context, req *mcp.CallToolRequest, args FetchArgs) (*mcp.CallToolResult, FetchResult, error) {
 		if len(args.URLs) == 0 {
 			return nil, FetchResult{}, fmt.Errorf("the 'urls' parameter is required: provide at least one valid HTTP or HTTPS URL to fetch")
-		}
-		if args.ExternalWebAccess != nil && !*args.ExternalWebAccess {
-			return nil, FetchResult{}, fmt.Errorf("%s", ExternalWebAccessDisabledError)
 		}
 
 		urls, rejected := splitAllowedURLs(args.URLs, normalizeDomains(args.AllowedDomains))

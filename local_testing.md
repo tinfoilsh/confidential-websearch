@@ -198,7 +198,7 @@ Useful environment overrides:
 - `CONTEXT_SIZES` — space-separated retrieval-depth buckets to exercise.
   Defaults to `"low medium high"`; set to `"medium"` for a quick smoke run.
 - `TASKS` — space-separated task list; defaults to the full set
-  (`depth-low depth-medium depth-high search fetch location domains external-off`).
+  (`depth-low depth-medium depth-high search fetch location domains`).
 - `SKIP_LLM_JUDGE=1` — skip the LLM-as-judge grading step (useful when running
   offline or to keep costs down).
 - `JUDGE_MODEL`, `JUDGE_ENDPOINT`, `JUDGE_CONCURRENCY`, `JUDGE_TIMEOUT` — tune
@@ -228,15 +228,13 @@ graded on three axes:
    (deep research) — exercised at `search_context_size` low / medium / high
    so regressions in how the router maps context size to tool-call breadth
    are visible.
-2. **Parameter-assertion tasks.** Three dedicated prompts verify that
+2. **Parameter-assertion tasks.** Two dedicated prompts verify that
    OpenAI's web search options propagate end-to-end:
    - `location` — sets `user_location.approximate.country=GB`; passes if a
      search ran and UK context appears in the answer or annotations
      (soft-passes when the upstream search index ignores the hint).
    - `domains` — sets `filters.allowed_domains=["python.org"]`; every
      annotation URL must be under `python.org`.
-   - `external-off` — sets `external_web_access=false`; the answer must
-     admit the access is disabled or produce no annotations.
 3. **Qualitative LLM-as-judge grading.** Each response is sent to Tinfoil
    (`glm-5-1` by default) with a compact rubric scoring correctness,
    cited-source support, and helpfulness (0–3 each) plus an overall
