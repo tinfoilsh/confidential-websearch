@@ -8,11 +8,20 @@ import (
 	"io"
 	"net/http"
 	"strings"
-
-	"github.com/tinfoilsh/confidential-websearch/config"
 )
 
-const defaultExaBaseURL = "https://api.exa.ai"
+const (
+	defaultExaBaseURL = "https://api.exa.ai"
+
+	// fallbackExaMaxResults is the last-resort result count applied when
+	// callers reach the Exa layer with a zero/negative MaxResults. The
+	// tools.Service layer normally sets this before the request arrives.
+	fallbackExaMaxResults = 8
+
+	// fallbackExaMaxContentCharacters is the matching last-resort per-result
+	// character budget.
+	fallbackExaMaxContentCharacters = 700
+)
 
 // ExaProvider handles web searches using Exa AI
 type ExaProvider struct {
@@ -72,12 +81,12 @@ type exaResponse struct {
 func (p *ExaProvider) Search(ctx context.Context, query string, opts Options) ([]Result, error) {
 	maxResults := opts.MaxResults
 	if maxResults <= 0 {
-		maxResults = config.DefaultMaxSearchResults
+		maxResults = fallbackExaMaxResults
 	}
 
 	maxCharacters := opts.MaxContentCharacters
 	if maxCharacters <= 0 {
-		maxCharacters = config.MaxSearchContentLength
+		maxCharacters = fallbackExaMaxContentCharacters
 	}
 
 	contents := &exaContentsParam{}

@@ -18,10 +18,15 @@ import (
 )
 
 const (
-	maxContentLength   = 50000      // 50K chars max output per page
-	maxResponseBytes   = 512 * 1024 // 512KB max API response body
-	fetchTimeout       = 60 * time.Second
-	maxConcurrentURLs  = 5
+	// maxContentLength caps the per-page markdown returned to callers.
+	maxContentLength = 50000
+	// maxResponseBytes caps how much of the Cloudflare API response we read.
+	maxResponseBytes = 512 * 1024
+	// fetchTimeout is the per-URL HTTP deadline for the Cloudflare call.
+	fetchTimeout = 60 * time.Second
+	// maxConcurrentURLs bounds the fan-out of FetchURLResults.
+	maxConcurrentURLs = 5
+
 	allowedSchemeHTTP  = "http"
 	allowedSchemeHTTPS = "https"
 )

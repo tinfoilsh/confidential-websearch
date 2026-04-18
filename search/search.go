@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// HTTP client tuning for calls to the Exa API.
 const (
 	httpMaxIdleConns        = 100
 	httpMaxIdleConnsPerHost = 100
