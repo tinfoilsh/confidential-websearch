@@ -11,12 +11,17 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/search"
 )
 
-const maxFetchURLs = 20
-
 const (
-	defaultMaxResults          = 8
-	defaultMaxContentChars     = 700
-	defaultSearchResultPreview = 500
+	// maxFetchURLs caps how many URLs a single fetch tool call may process.
+	maxFetchURLs = 20
+
+	// defaultMaxResults is the search result count applied when the caller
+	// does not specify max_results.
+	defaultMaxResults = 8
+
+	// defaultMaxContentChars is the per-result snippet/text budget applied
+	// when the caller does not specify max_content_chars.
+	defaultMaxContentChars = 700
 )
 
 type URLFetcher interface {
