@@ -186,7 +186,8 @@ def parse_filename(base):
 def analyze_file(results_dir, fname):
     path = os.path.join(results_dir, "raw", fname)
     base, ext = os.path.splitext(fname)
-    if ext in (".err", ".elapsed"):
+    # Skip sidecar files; they're consumed via explicit lookups below.
+    if ext in (".err", ".elapsed", ".prompt") or base.endswith(".last_call"):
         return None
 
     parsed = parse_filename(base)
@@ -214,6 +215,30 @@ def analyze_file(results_dir, fname):
         except OSError:
             question = ""
 
+    # .err is written by the Python driver when the HTTP layer itself fails
+    # (timeout, connection reset, non-2xx). Treat that as a distinct
+    # `transport_error` so the analyzer can tell a broken network from a
+    # broken model.
+    err_path = os.path.join(results_dir, "raw", f"{base}.err")
+    transport_error = ""
+    if os.path.exists(err_path):
+        try:
+            transport_error = open(err_path).read().strip()[:300]
+        except OSError:
+            transport_error = ""
+
+    # .last_call.json is only written by run_websearch_eval.py when
+    # LOCAL_WEBSEARCH_MCP_BASE is set (fixture mode). When present it is the
+    # ground truth for the parameter-assertion tasks.
+    last_call_path = os.path.join(results_dir, "raw", f"{base}.last_call.json")
+    last_call = None
+    if os.path.exists(last_call_path):
+        try:
+            with open(last_call_path, "r") as fh:
+                last_call = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            last_call = None
+
     if ext == ".json":
         content, annotations, web_search_calls, error = parse_nonstream(raw, endpoint)
     elif ext == ".sse":
@@ -230,7 +255,11 @@ def analyze_file(results_dir, fname):
 
     # Heuristic quality grade; the LLM-as-judge score is attached separately
     # under the "judge" key so both signals are visible side by side.
-    if error:
+    # Transport errors outrank model errors so we can separate infra from
+    # model-quality regressions in the aggregate.
+    if transport_error:
+        heuristic = "TRANSPORT_ERROR"
+    elif error:
         heuristic = "ERROR"
     elif not content.strip():
         heuristic = "EMPTY"
@@ -246,7 +275,9 @@ def analyze_file(results_dir, fname):
     else:
         heuristic = "NO_CITATIONS"
 
-    assertion = run_assertion(task, content, annotations, web_search_calls, error)
+    assertion = run_assertion(
+        task, content, annotations, web_search_calls, error, last_call
+    )
 
     return {
         "model": model,
@@ -269,6 +300,8 @@ def analyze_file(results_dir, fname):
         "heuristic_grade": heuristic,
         "assertion": assertion,
         "error": error,
+        "transport_error": transport_error or None,
+        "last_call": last_call,
     }
 
 
@@ -282,18 +315,38 @@ def _flatten_annotation(annotation):
     return {"url": annotation.get("url", ""), "title": annotation.get("title", "")}
 
 
-def run_assertion(task, content, annotations, web_search_calls, error):
-    """Evaluate the task's parameter-assertion; return None for non-assertion tasks."""
+def run_assertion(task, content, annotations, web_search_calls, error, last_call):
+    """Evaluate the task's parameter-assertion; return None for non-assertion tasks.
+
+    When a /debug/last-call snapshot is available (fixture mode against a
+    local MCP server), assertions grade directly against the SearchArgs the
+    server observed. That makes the test fail fast when a request-shaping
+    field is dropped between the router and the MCP tool call, independent
+    of whether the upstream index actually honors the hint.
+
+    When no snapshot is available (real-web runs), assertions fall back to
+    heuristics on the answer text and annotations.
+    """
     if task not in ASSERTION_TASKS:
         return None
 
     if task == "location":
-        # The flag is forwarded through the router to Exa, but Exa's "fast"
-        # index is known to ignore userLocation biasing. So we grade the
-        # end-to-end behavior: the request must succeed, some search activity
-        # must have happened (annotations or streamed web_search_call events),
-        # and if the model or annotations do reflect the UK context we mark
-        # it strong; otherwise we soft-pass.
+        snapshot = _last_search_snapshot(last_call)
+        if snapshot is not None:
+            country = (snapshot.get("user_location_country") or "").upper()
+            if country == "GB":
+                return {
+                    "pass": True,
+                    "reason": "MCP search observed user_location_country=GB",
+                }
+            return {
+                "pass": False,
+                "reason": (
+                    "MCP search did not observe user_location_country=GB "
+                    f"(got {country!r})"
+                ),
+            }
+
         if error:
             return {
                 "pass": False,
@@ -322,6 +375,23 @@ def run_assertion(task, content, annotations, web_search_calls, error):
         }
 
     if task == "domains":
+        snapshot = _last_search_snapshot(last_call)
+        if snapshot is not None:
+            observed = _normalize_domain_list(snapshot.get("allowed_domains"))
+            expected = {"python.org"}
+            if observed == expected:
+                return {
+                    "pass": True,
+                    "reason": "MCP search observed allowed_domains=['python.org']",
+                }
+            return {
+                "pass": False,
+                "reason": (
+                    "MCP search observed allowed_domains="
+                    f"{sorted(observed)}, expected ['python.org']"
+                ),
+            }
+
         if error:
             return {"pass": False, "reason": f"request errored: {error[:100]}"}
         if not annotations:
@@ -343,6 +413,37 @@ def run_assertion(task, content, annotations, web_search_calls, error):
         return {"pass": True, "reason": "all annotations rooted at python.org"}
 
     return None
+
+
+def _last_search_snapshot(last_call):
+    """Return the `search` block of a /debug/last-call payload if it reflects
+    a search that was actually observed (non-empty `observed_at`), else None.
+
+    A zero observed_at marks "no search call has been recorded yet" and must
+    not be treated as a passing assertion.
+    """
+    if not isinstance(last_call, dict):
+        return None
+    search_block = last_call.get("search")
+    if not isinstance(search_block, dict):
+        return None
+    observed_at = (search_block.get("observed_at") or "").strip()
+    if not observed_at or observed_at.startswith("0001-01-01"):
+        return None
+    return search_block
+
+
+def _normalize_domain_list(raw):
+    """Coerce an allowed/excluded domain field into a lowercase set."""
+    if not raw:
+        return set()
+    if isinstance(raw, str):
+        items = [raw]
+    elif isinstance(raw, (list, tuple)):
+        items = list(raw)
+    else:
+        return set()
+    return {str(item).strip().lower() for item in items if str(item).strip()}
 
 
 def build_judge_prompt(result):
