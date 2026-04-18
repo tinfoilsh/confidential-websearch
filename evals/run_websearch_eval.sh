@@ -4,8 +4,8 @@
 #
 # Exercises the router-owned websearch flow across models, endpoints, streaming
 # modes, retrieval-depth buckets (search_context_size low|medium|high), and
-# dedicated parameter-assertion tasks that verify user_location, allowed_domains,
-# and external_web_access are honored end-to-end.
+# dedicated parameter-assertion tasks that verify user_location and
+# allowed_domains are honored end-to-end.
 #
 # Usage:
 #   TINFOIL_API_KEY=... ./evals/run_websearch_eval.sh
@@ -19,7 +19,7 @@
 #                       "low medium high"; set to "medium" for a quick smoke run).
 #   TASKS               space-separated tasks to run; defaults to the full set
 #                       (depth-low depth-medium depth-high search fetch
-#                        location domains external-off).
+#                        location domains).
 #   SKIP_LLM_JUDGE      when 1, skip the LLM-as-judge step in the analyzer.
 #
 # Results are saved to evals/results/<timestamp>/.
@@ -31,7 +31,7 @@ CATALOG_URL="https://api.tinfoil.sh/v1/models"
 API_KEY="${TINFOIL_API_KEY:-}"
 USE_LOCAL_FIXTURES="${USE_LOCAL_FIXTURES:-0}"
 CONTEXT_SIZES="${CONTEXT_SIZES:-low medium high}"
-TASKS="${TASKS:-depth-low depth-medium depth-high search fetch location domains external-off}"
+TASKS="${TASKS:-depth-low depth-medium depth-high search fetch location domains}"
 SKIP_LLM_JUDGE="${SKIP_LLM_JUDGE:-0}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -69,9 +69,6 @@ prompt_for_task() {
       domains)
         echo 'Where should I learn Python? Cite only the official site.'
         ;;
-      external-off)
-        echo 'Find the latest news headlines. Cite sources.'
-        ;;
     esac
     return
   fi
@@ -96,9 +93,6 @@ prompt_for_task() {
       ;;
     domains)
       echo 'What is Python? Cite only official sources.'
-      ;;
-    external-off)
-      echo 'Find the latest news headlines. Cite sources.'
       ;;
   esac
 }
@@ -164,8 +158,8 @@ save_prompt() {
 
 # Build a Chat Completions request body. Parameter forwarding happens via
 # web_search_options: search_context_size always, plus task-specific fields for
-# user_location, allowed_domains, and external_web_access so we can verify that
-# the router + MCP server honor each flag end-to-end.
+# user_location and allowed_domains so we can verify that the router + MCP
+# server honor each flag end-to-end.
 make_body_chat() {
   local model=$1 stream_bool=$2 prompt=$3 ctx=$4 task=$5
   MODEL="$model" STREAM_BOOL="$stream_bool" PROMPT="$prompt" CTX="$ctx" TASK="$task" \
@@ -185,8 +179,6 @@ if task == "location":
     }
 if task == "domains":
     web_opts["filters"] = {"allowed_domains": ["python.org"]}
-if task == "external-off":
-    web_opts["external_web_access"] = False
 
 print(json.dumps({
     "model": os.environ["MODEL"],
@@ -218,8 +210,6 @@ if task == "location":
     }
 if task == "domains":
     tool["filters"] = {"allowed_domains": ["python.org"]}
-if task == "external-off":
-    tool["external_web_access"] = False
 
 print(json.dumps({
     "model": os.environ["MODEL"],
@@ -260,7 +250,7 @@ run_test() {
 # Assertion tasks only need a single context bucket to validate flag passthrough.
 is_assertion_task() {
   case "$1" in
-    location|domains|external-off) return 0 ;;
+    location|domains) return 0 ;;
     *) return 1 ;;
   esac
 }

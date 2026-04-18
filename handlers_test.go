@@ -200,24 +200,6 @@ func TestSearchHandler_ForwardsUserLocationAndAllowedDomains(t *testing.T) {
 	}
 }
 
-func TestSearchHandler_ExternalWebAccessDisabled(t *testing.T) {
-	searcher := &mockSearchProvider{results: []search.Result{{Title: "r"}}}
-	svc := tools.NewService(searcher, nil, nil)
-	handler := newSearchHandler(svc, &config.Config{}, nil)
-
-	disabled := false
-	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{
-		Query:             "whatever",
-		ExternalWebAccess: &disabled,
-	})
-	if err == nil || err.Error() != ExternalWebAccessDisabledError {
-		t.Fatalf("expected external web access disabled error, got %v", err)
-	}
-	if searcher.lastOpts.MaxResults != 0 {
-		t.Fatalf("expected searcher not to be invoked when external access disabled, got lastOpts=%+v", searcher.lastOpts)
-	}
-}
-
 func TestFetchHandler_EmptyURLs(t *testing.T) {
 	realFetcher := fetch.NewFetcher("test-account", "test-token")
 	svc := tools.NewService(nil, realFetcher, nil)
@@ -226,20 +208,6 @@ func TestFetchHandler_EmptyURLs(t *testing.T) {
 	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, FetchArgs{URLs: []string{}})
 	if err == nil {
 		t.Fatal("expected error for empty URLs")
-	}
-}
-
-func TestFetchHandler_ExternalWebAccessDisabled(t *testing.T) {
-	svc := tools.NewService(nil, &mockFetcher{}, nil)
-	handler := newFetchHandler(svc, &config.Config{}, nil)
-
-	disabled := false
-	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, FetchArgs{
-		URLs:              []string{"https://example.com/a"},
-		ExternalWebAccess: &disabled,
-	})
-	if err == nil || err.Error() != ExternalWebAccessDisabledError {
-		t.Fatalf("expected external web access disabled error, got %v", err)
 	}
 }
 
