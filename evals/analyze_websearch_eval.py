@@ -820,19 +820,72 @@ def render_overall_summary(results):
     print(f"\n  {'=' * 120}")
     print(f"  SUMMARY")
     print(f"  {'=' * 120}")
-    total = len(results)
-    ok = sum(1 for r in results if r["content_length"] > 0 and not r["error"])
-    errors = sum(1 for r in results if r["error"])
-    excellent = sum(1 for r in results if r["heuristic_grade"] == "EXCELLENT")
-    good = sum(1 for r in results if r["heuristic_grade"] == "GOOD")
-    partial = sum(1 for r in results if r["heuristic_grade"] == "PARTIAL_ANNOTATIONS")
-    no_cit = sum(1 for r in results if r["heuristic_grade"] == "NO_CITATIONS")
 
-    print(f"  Total: {total}  OK: {ok}  Errors: {errors}")
+    counts = _overall_counts(results)
     print(
-        f"  Heuristic: EXCELLENT={excellent}  GOOD={good}  "
-        f"PARTIAL={partial}  NONE={no_cit}"
+        f"  Total: {counts['total']}  OK: {counts['ok']}  "
+        f"ModelErrors: {counts['model_errors']}  "
+        f"TransportErrors: {counts['transport_errors']}"
     )
+    print(
+        f"  Heuristic: EXCELLENT={counts['excellent']}  "
+        f"GOOD={counts['good']}  PARTIAL={counts['partial']}  "
+        f"NONE={counts['no_citations']}  "
+        f"TRANSPORT_ERROR={counts['transport_error_grade']}"
+    )
+    if counts["assertion_total"]:
+        print(
+            f"  Assertions: {counts['assertion_passed']}/"
+            f"{counts['assertion_total']} passed"
+        )
+
+
+def _overall_counts(results):
+    """Single source of truth for top-line aggregate counts.
+
+    Returned keys:
+        total, ok, model_errors, transport_errors,
+        excellent, good, partial, no_citations, transport_error_grade,
+        assertion_total, assertion_passed
+    """
+    counts = {
+        "total": len(results),
+        "ok": 0,
+        "model_errors": 0,
+        "transport_errors": 0,
+        "excellent": 0,
+        "good": 0,
+        "partial": 0,
+        "no_citations": 0,
+        "transport_error_grade": 0,
+        "assertion_total": 0,
+        "assertion_passed": 0,
+    }
+    grade_keys = {
+        "EXCELLENT": "excellent",
+        "GOOD": "good",
+        "PARTIAL_ANNOTATIONS": "partial",
+        "NO_CITATIONS": "no_citations",
+        "TRANSPORT_ERROR": "transport_error_grade",
+    }
+    for r in results:
+        if r.get("transport_error"):
+            counts["transport_errors"] += 1
+        elif r.get("error"):
+            counts["model_errors"] += 1
+        elif r.get("content_length", 0) > 0:
+            counts["ok"] += 1
+
+        key = grade_keys.get(r.get("heuristic_grade"))
+        if key is not None:
+            counts[key] += 1
+
+        assertion = r.get("assertion")
+        if assertion is not None:
+            counts["assertion_total"] += 1
+            if assertion.get("pass"):
+                counts["assertion_passed"] += 1
+    return counts
 
 
 if __name__ == "__main__":
