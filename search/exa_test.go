@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -287,6 +288,85 @@ func TestExaProvider_Search_Timeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
+}
+
+func TestExaProvider_Search_NewKnobsForwardedToRequest(t *testing.T) {
+	var receivedReq exaRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedReq)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(exaResponse{})
+	}))
+	defer server.Close()
+
+	zero := 0
+	provider := newTestProvider(server.URL)
+	_, err := provider.Search(context.Background(), "q", Options{
+		MaxResults:         5,
+		ExcludedDomains:    []string{"aggregator.example", "spam.example"},
+		Category:           CategoryNews,
+		StartPublishedDate: "2024-01-01T00:00:00Z",
+		EndPublishedDate:   "2024-12-31T00:00:00Z",
+		MaxAgeHours:        &zero,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !stringSliceEqual(receivedReq.ExcludeDomains, []string{"aggregator.example", "spam.example"}) {
+		t.Errorf("excludeDomains not forwarded: got %v", receivedReq.ExcludeDomains)
+	}
+	if receivedReq.Category != "news" {
+		t.Errorf("expected category 'news', got %q", receivedReq.Category)
+	}
+	if receivedReq.StartPublishedDate != "2024-01-01T00:00:00Z" {
+		t.Errorf("startPublishedDate not forwarded, got %q", receivedReq.StartPublishedDate)
+	}
+	if receivedReq.EndPublishedDate != "2024-12-31T00:00:00Z" {
+		t.Errorf("endPublishedDate not forwarded, got %q", receivedReq.EndPublishedDate)
+	}
+	if receivedReq.Contents == nil || receivedReq.Contents.MaxAgeHours == nil || *receivedReq.Contents.MaxAgeHours != 0 {
+		t.Errorf("maxAgeHours=0 not forwarded, got %+v", receivedReq.Contents)
+	}
+}
+
+func TestExaProvider_Search_NewKnobsOmittedWhenUnset(t *testing.T) {
+	var raw map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &raw)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(exaResponse{})
+	}))
+	defer server.Close()
+
+	provider := newTestProvider(server.URL)
+	_, err := provider.Search(context.Background(), "q", Options{MaxResults: 1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, key := range []string{"excludeDomains", "category", "startPublishedDate", "endPublishedDate"} {
+		if _, present := raw[key]; present {
+			t.Errorf("expected %q to be omitted when unset, but it was sent", key)
+		}
+	}
+	contents, _ := raw["contents"].(map[string]any)
+	if _, present := contents["maxAgeHours"]; present {
+		t.Error("expected contents.maxAgeHours to be omitted when unset")
+	}
+}
+
+func stringSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestExaProvider_Search_RequestBody(t *testing.T) {

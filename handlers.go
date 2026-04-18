@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -54,6 +55,13 @@ type SearchArgs struct {
 	MaxResults          int      `json:"max_results,omitempty" jsonschema:"Number of results to return (1-30). Defaults to 10 if omitted. Use fewer for focused queries and more for broad research."`
 	UserLocationCountry string   `json:"user_location_country,omitempty" jsonschema:"ISO 3166-1 alpha-2 country code to bias results toward (e.g. 'US', 'GB', 'DE'). Maps to OpenAI web_search_options.user_location.approximate.country."`
 	AllowedDomains      []string `json:"allowed_domains,omitempty" jsonschema:"If set, only return results from these domains. Maps to OpenAI filters.allowed_domains."`
+	ExcludedDomains     []string `json:"excluded_domains,omitempty" jsonschema:"If set, drop results from these domains. Useful for filtering out aggregators, SEO farms, or known-low-quality sources."`
+	ContentMode         string   `json:"content_mode,omitempty" jsonschema:"Per-result content granularity: 'highlights' (default) returns key excerpts relevant to the query; 'text' returns the full page text as markdown."`
+	MaxContentChars     int      `json:"max_content_chars,omitempty" jsonschema:"Per-result character budget for the snippet/text returned in each hit. Defaults to 700. Higher values return more context at the cost of more tokens."`
+	Category            string   `json:"category,omitempty" jsonschema:"Restrict results to one of: 'company', 'people', 'research paper', 'news', 'personal site', 'financial report'. Note: 'company' and 'people' disable date filters and excluded_domains."`
+	StartPublishedDate  string   `json:"start_published_date,omitempty" jsonschema:"Only include results published at or after this ISO-8601 date (e.g. '2024-01-01' or '2024-01-01T00:00:00Z')."`
+	EndPublishedDate    string   `json:"end_published_date,omitempty" jsonschema:"Only include results published at or before this ISO-8601 date."`
+	MaxAgeHours         *int     `json:"max_age_hours,omitempty" jsonschema:"Cache freshness control. 0 forces livecrawl on every result (freshest, slowest). -1 disables livecrawl (cache-only, fastest). Omit for Exa's default (livecrawl only when uncached)."`
 }
 
 type SearchResult struct {
@@ -76,12 +84,44 @@ func newSearchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Requ
 			return nil, SearchResult{}, fmt.Errorf("the 'query' parameter is required: provide a non-empty search query string describing what you want to find")
 		}
 
+		contentMode, err := parseContentMode(args.ContentMode)
+		if err != nil {
+			return nil, SearchResult{}, err
+		}
+
+		category, err := parseCategory(args.Category)
+		if err != nil {
+			return nil, SearchResult{}, err
+		}
+
+		startPublishedDate, err := normalizeDate("start_published_date", args.StartPublishedDate)
+		if err != nil {
+			return nil, SearchResult{}, err
+		}
+		endPublishedDate, err := normalizeDate("end_published_date", args.EndPublishedDate)
+		if err != nil {
+			return nil, SearchResult{}, err
+		}
+
+		excludedDomains := normalizeDomains(args.ExcludedDomains)
+
+		if err := validateCategoryCompatibility(category, startPublishedDate, endPublishedDate, excludedDomains); err != nil {
+			return nil, SearchResult{}, err
+		}
+
 		outcome, err := svc.Search(ctx, args.Query, tools.Options{
 			MaxResults:            args.MaxResults,
+			MaxContentCharacters:  args.MaxContentChars,
+			ContentMode:           contentMode,
 			PIICheckEnabled:       resolveSafetyFlag(httpReq, headerPIICheck, cfg.EnablePIICheck),
 			InjectionCheckEnabled: resolveSafetyFlag(httpReq, headerInjectionCheck, cfg.EnableInjectionCheck),
 			UserLocationCountry:   strings.ToUpper(strings.TrimSpace(args.UserLocationCountry)),
 			AllowedDomains:        normalizeDomains(args.AllowedDomains),
+			ExcludedDomains:       excludedDomains,
+			Category:              category,
+			StartPublishedDate:    startPublishedDate,
+			EndPublishedDate:      endPublishedDate,
+			MaxAgeHours:           args.MaxAgeHours,
 		})
 		if err != nil {
 			return nil, SearchResult{}, fmt.Errorf("search request failed: %w — try rephrasing the query to be simpler or more specific, or retry after a short delay", err)
@@ -124,6 +164,75 @@ func newFetchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Reque
 
 		return nil, FetchResult{Pages: pages, Results: results}, nil
 	}
+}
+
+// parseContentMode normalizes the optional content_mode argument into the
+// search package's enum. An empty string means "use the service default"
+// (highlights) so existing callers keep their current behavior.
+func parseContentMode(raw string) (search.ContentMode, error) {
+	trimmed := strings.ToLower(strings.TrimSpace(raw))
+	switch trimmed {
+	case "":
+		return "", nil
+	case string(search.ContentModeText):
+		return search.ContentModeText, nil
+	case string(search.ContentModeHighlights):
+		return search.ContentModeHighlights, nil
+	default:
+		return "", fmt.Errorf("invalid content_mode %q: expected 'text' or 'highlights'", raw)
+	}
+}
+
+// parseCategory validates the category argument against Exa's enum. Empty
+// means no category filter.
+func parseCategory(raw string) (search.Category, error) {
+	trimmed := strings.ToLower(strings.TrimSpace(raw))
+	if trimmed == "" {
+		return "", nil
+	}
+	switch search.Category(trimmed) {
+	case search.CategoryCompany,
+		search.CategoryPeople,
+		search.CategoryResearchPaper,
+		search.CategoryNews,
+		search.CategoryPersonalSite,
+		search.CategoryFinancialReport:
+		return search.Category(trimmed), nil
+	default:
+		return "", fmt.Errorf("invalid category %q: expected one of 'company', 'people', 'research paper', 'news', 'personal site', 'financial report'", raw)
+	}
+}
+
+// normalizeDate validates an ISO-8601 date/datetime. Accepts both the date-only
+// (YYYY-MM-DD) and full RFC 3339 shapes Exa documents. Returns the canonical
+// RFC 3339 form with a UTC midnight when only a date was supplied.
+func normalizeDate(field, raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", nil
+	}
+	if t, err := time.Parse(time.RFC3339, trimmed); err == nil {
+		return t.UTC().Format(time.RFC3339), nil
+	}
+	if t, err := time.Parse("2006-01-02", trimmed); err == nil {
+		return t.UTC().Format(time.RFC3339), nil
+	}
+	return "", fmt.Errorf("invalid %s %q: expected ISO-8601 date (YYYY-MM-DD) or RFC 3339 datetime", field, raw)
+}
+
+// validateCategoryCompatibility rejects filter combinations that Exa will 400
+// on, so callers get a clear error rather than an opaque provider failure.
+func validateCategoryCompatibility(category search.Category, startPublished, endPublished string, excludedDomains []string) error {
+	if category != search.CategoryCompany && category != search.CategoryPeople {
+		return nil
+	}
+	if startPublished != "" || endPublished != "" {
+		return fmt.Errorf("category %q does not support date filters: remove start_published_date / end_published_date", category)
+	}
+	if len(excludedDomains) > 0 {
+		return fmt.Errorf("category %q does not support excluded_domains: remove excluded_domains", category)
+	}
+	return nil
 }
 
 // normalizeDomains trims whitespace and lowercases each entry, dropping empties

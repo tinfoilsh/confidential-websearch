@@ -28,17 +28,22 @@ func (p *ExaProvider) Name() string {
 // exaRequest represents the Exa API request body
 // See: https://docs.exa.ai/reference/search
 type exaRequest struct {
-	Query          string            `json:"query"`
-	Type           string            `json:"type,omitempty"`
-	NumResults     int               `json:"numResults,omitempty"`
-	UserLocation   string            `json:"userLocation,omitempty"`
-	IncludeDomains []string          `json:"includeDomains,omitempty"`
-	Contents       *exaContentsParam `json:"contents,omitempty"`
+	Query              string            `json:"query"`
+	Type               string            `json:"type,omitempty"`
+	NumResults         int               `json:"numResults,omitempty"`
+	UserLocation       string            `json:"userLocation,omitempty"`
+	IncludeDomains     []string          `json:"includeDomains,omitempty"`
+	ExcludeDomains     []string          `json:"excludeDomains,omitempty"`
+	Category           string            `json:"category,omitempty"`
+	StartPublishedDate string            `json:"startPublishedDate,omitempty"`
+	EndPublishedDate   string            `json:"endPublishedDate,omitempty"`
+	Contents           *exaContentsParam `json:"contents,omitempty"`
 }
 
 type exaContentsParam struct {
-	Text       *exaTextParam       `json:"text,omitempty"`
-	Highlights *exaHighlightsParam `json:"highlights,omitempty"`
+	Text        *exaTextParam       `json:"text,omitempty"`
+	Highlights  *exaHighlightsParam `json:"highlights,omitempty"`
+	MaxAgeHours *int                `json:"maxAgeHours,omitempty"`
 }
 
 type exaTextParam struct {
@@ -86,6 +91,9 @@ func (p *ExaProvider) Search(ctx context.Context, query string, opts Options) ([
 			MaxCharacters: maxCharacters,
 		}
 	}
+	if opts.MaxAgeHours != nil {
+		contents.MaxAgeHours = opts.MaxAgeHours
+	}
 
 	reqBody := exaRequest{
 		Query:      query,
@@ -98,6 +106,18 @@ func (p *ExaProvider) Search(ctx context.Context, query string, opts Options) ([
 	}
 	if len(opts.AllowedDomains) > 0 {
 		reqBody.IncludeDomains = opts.AllowedDomains
+	}
+	if len(opts.ExcludedDomains) > 0 {
+		reqBody.ExcludeDomains = opts.ExcludedDomains
+	}
+	if opts.Category != "" {
+		reqBody.Category = string(opts.Category)
+	}
+	if opts.StartPublishedDate != "" {
+		reqBody.StartPublishedDate = opts.StartPublishedDate
+	}
+	if opts.EndPublishedDate != "" {
+		reqBody.EndPublishedDate = opts.EndPublishedDate
 	}
 
 	jsonBody, err := json.Marshal(reqBody)

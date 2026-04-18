@@ -200,6 +200,142 @@ func TestSearchHandler_ForwardsUserLocationAndAllowedDomains(t *testing.T) {
 	}
 }
 
+func TestSearchHandler_ForwardsContentModeAndMaxContentChars(t *testing.T) {
+	searcher := &mockSearchProvider{results: []search.Result{{Title: "r"}}}
+	svc := tools.NewService(searcher, nil, nil)
+	handler := newSearchHandler(svc, &config.Config{}, nil)
+
+	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{
+		Query:           "test",
+		ContentMode:     "text",
+		MaxContentChars: 2500,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if searcher.lastOpts.ContentMode != search.ContentModeText {
+		t.Fatalf("expected content_mode=text forwarded, got %q", searcher.lastOpts.ContentMode)
+	}
+	if searcher.lastOpts.MaxContentCharacters != 2500 {
+		t.Fatalf("expected max_content_chars=2500 forwarded, got %d", searcher.lastOpts.MaxContentCharacters)
+	}
+}
+
+func TestSearchHandler_ContentModeDefault(t *testing.T) {
+	searcher := &mockSearchProvider{results: []search.Result{{Title: "r"}}}
+	svc := tools.NewService(searcher, nil, nil)
+	handler := newSearchHandler(svc, &config.Config{}, nil)
+
+	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "test"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if searcher.lastOpts.ContentMode != search.ContentModeHighlights {
+		t.Fatalf("expected default content_mode=highlights, got %q", searcher.lastOpts.ContentMode)
+	}
+	if searcher.lastOpts.MaxContentCharacters != 700 {
+		t.Fatalf("expected default max_content_chars=700, got %d", searcher.lastOpts.MaxContentCharacters)
+	}
+}
+
+func TestSearchHandler_ForwardsNewExaKnobs(t *testing.T) {
+	searcher := &mockSearchProvider{results: []search.Result{{Title: "r"}}}
+	svc := tools.NewService(searcher, nil, nil)
+	handler := newSearchHandler(svc, &config.Config{}, nil)
+
+	zero := 0
+	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{
+		Query:              "test",
+		ExcludedDomains:    []string{"Aggregator.Example", " spam.example "},
+		Category:           "news",
+		StartPublishedDate: "2024-01-01",
+		EndPublishedDate:   "2024-12-31T23:59:59Z",
+		MaxAgeHours:        &zero,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expected := []string{"aggregator.example", "spam.example"}
+	if !stringSlicesEqual(searcher.lastOpts.ExcludedDomains, expected) {
+		t.Errorf("expected excluded_domains %v, got %v", expected, searcher.lastOpts.ExcludedDomains)
+	}
+	if searcher.lastOpts.Category != search.CategoryNews {
+		t.Errorf("expected category 'news', got %q", searcher.lastOpts.Category)
+	}
+	if searcher.lastOpts.StartPublishedDate != "2024-01-01T00:00:00Z" {
+		t.Errorf("expected normalized start date, got %q", searcher.lastOpts.StartPublishedDate)
+	}
+	if searcher.lastOpts.EndPublishedDate != "2024-12-31T23:59:59Z" {
+		t.Errorf("expected end date preserved, got %q", searcher.lastOpts.EndPublishedDate)
+	}
+	if searcher.lastOpts.MaxAgeHours == nil || *searcher.lastOpts.MaxAgeHours != 0 {
+		t.Errorf("expected max_age_hours=0 forwarded, got %v", searcher.lastOpts.MaxAgeHours)
+	}
+}
+
+func TestSearchHandler_InvalidCategory(t *testing.T) {
+	svc := tools.NewService(&mockSearchProvider{}, nil, nil)
+	handler := newSearchHandler(svc, &config.Config{}, nil)
+
+	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{
+		Query:    "test",
+		Category: "sports",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid category")
+	}
+}
+
+func TestSearchHandler_InvalidDate(t *testing.T) {
+	svc := tools.NewService(&mockSearchProvider{}, nil, nil)
+	handler := newSearchHandler(svc, &config.Config{}, nil)
+
+	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{
+		Query:              "test",
+		StartPublishedDate: "not-a-date",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid start_published_date")
+	}
+}
+
+func TestSearchHandler_CategoryIncompatibleFilters(t *testing.T) {
+	svc := tools.NewService(&mockSearchProvider{}, nil, nil)
+	handler := newSearchHandler(svc, &config.Config{}, nil)
+
+	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{
+		Query:              "test",
+		Category:           "company",
+		StartPublishedDate: "2024-01-01",
+	})
+	if err == nil {
+		t.Fatal("expected error: company category does not support date filters")
+	}
+
+	_, _, err = handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{
+		Query:           "test",
+		Category:        "people",
+		ExcludedDomains: []string{"foo.example"},
+	})
+	if err == nil {
+		t.Fatal("expected error: people category does not support excluded_domains")
+	}
+}
+
+func TestSearchHandler_InvalidContentMode(t *testing.T) {
+	svc := tools.NewService(&mockSearchProvider{}, nil, nil)
+	handler := newSearchHandler(svc, &config.Config{}, nil)
+
+	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{
+		Query:       "test",
+		ContentMode: "summary",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid content_mode")
+	}
+}
+
 func TestFetchHandler_EmptyURLs(t *testing.T) {
 	realFetcher := fetch.NewFetcher("test-account", "test-token")
 	svc := tools.NewService(nil, realFetcher, nil)

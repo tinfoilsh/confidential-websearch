@@ -14,8 +14,8 @@ import (
 const maxFetchURLs = 20
 
 const (
-	defaultMaxResults         = 8
-	defaultMaxContentChars    = 700
+	defaultMaxResults          = 8
+	defaultMaxContentChars     = 700
 	defaultSearchResultPreview = 500
 )
 
@@ -33,10 +33,17 @@ type SafeguardChecker interface {
 
 type Options struct {
 	MaxResults            int
+	MaxContentCharacters  int
+	ContentMode           search.ContentMode
 	PIICheckEnabled       bool
 	InjectionCheckEnabled bool
 	UserLocationCountry   string
 	AllowedDomains        []string
+	ExcludedDomains       []string
+	Category              search.Category
+	StartPublishedDate    string
+	EndPublishedDate      string
+	MaxAgeHours           *int
 }
 
 type SearchOutcome struct {
@@ -77,12 +84,27 @@ func (s *Service) Search(ctx context.Context, query string, opts Options) (Searc
 		maxResults = defaultMaxResults
 	}
 
+	maxContentChars := opts.MaxContentCharacters
+	if maxContentChars <= 0 {
+		maxContentChars = defaultMaxContentChars
+	}
+
+	contentMode := opts.ContentMode
+	if contentMode == "" {
+		contentMode = search.ContentModeHighlights
+	}
+
 	results, err := s.searcher.Search(ctx, query, search.Options{
 		MaxResults:           maxResults,
-		MaxContentCharacters: defaultMaxContentChars,
-		ContentMode:          search.ContentModeHighlights,
+		MaxContentCharacters: maxContentChars,
+		ContentMode:          contentMode,
 		UserLocationCountry:  opts.UserLocationCountry,
 		AllowedDomains:       opts.AllowedDomains,
+		ExcludedDomains:      opts.ExcludedDomains,
+		Category:             opts.Category,
+		StartPublishedDate:   opts.StartPublishedDate,
+		EndPublishedDate:     opts.EndPublishedDate,
+		MaxAgeHours:          opts.MaxAgeHours,
 	})
 	if err != nil {
 		return SearchOutcome{}, err
