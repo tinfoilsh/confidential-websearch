@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/tinfoilsh/confidential-websearch/fetch"
 	"github.com/tinfoilsh/confidential-websearch/search"
@@ -14,17 +16,83 @@ func isLocalTestMode() bool {
 	return os.Getenv("LOCAL_TEST_MODE") == "1"
 }
 
-func newLocalTestService() *tools.Service {
-	return tools.NewService(localTestSearcher{}, localTestFetcher{}, nil)
+// LocalCallRecorder captures the most recent search and fetch calls seen by
+// the fixture-mode MCP service. The eval harness reads this record through
+// the /debug/last-call endpoint to assert that request-shaping options
+// (user_location, allowed_domains, excluded_domains, category, etc.) are
+// plumbed end-to-end from the caller through the router into the MCP tools.
+//
+// The recorder is only wired up when LOCAL_TEST_MODE=1 so it cannot leak
+// request metadata from a real deployment.
+type LocalCallRecorder struct {
+	mu sync.Mutex
+
+	lastSearchAt    time.Time
+	lastSearchQuery string
+	lastSearchOpts  search.Options
+
+	lastFetchAt   time.Time
+	lastFetchURLs []string
 }
 
-type localTestSearcher struct{}
+// NewLocalCallRecorder returns an empty recorder ready to be handed to the
+// fixture searcher/fetcher.
+func NewLocalCallRecorder() *LocalCallRecorder {
+	return &LocalCallRecorder{}
+}
+
+func (r *LocalCallRecorder) recordSearch(query string, opts search.Options) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastSearchAt = time.Now().UTC()
+	r.lastSearchQuery = query
+	r.lastSearchOpts = opts
+}
+
+func (r *LocalCallRecorder) recordFetch(urls []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastFetchAt = time.Now().UTC()
+	copied := make([]string, len(urls))
+	copy(copied, urls)
+	r.lastFetchURLs = copied
+}
+
+// LastSearch returns a snapshot of the most recent search call.
+func (r *LocalCallRecorder) LastSearch() (time.Time, string, search.Options) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lastSearchAt, r.lastSearchQuery, r.lastSearchOpts
+}
+
+// LastFetch returns a snapshot of the most recent fetch call.
+func (r *LocalCallRecorder) LastFetch() (time.Time, []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	copied := make([]string, len(r.lastFetchURLs))
+	copy(copied, r.lastFetchURLs)
+	return r.lastFetchAt, copied
+}
+
+func newLocalTestService() (*tools.Service, *LocalCallRecorder) {
+	recorder := NewLocalCallRecorder()
+	searcher := localTestSearcher{recorder: recorder}
+	fetcher := localTestFetcher{recorder: recorder}
+	return tools.NewService(searcher, fetcher, nil), recorder
+}
+
+type localTestSearcher struct {
+	recorder *LocalCallRecorder
+}
 
 func (localTestSearcher) Name() string {
 	return "local-test"
 }
 
-func (localTestSearcher) Search(_ context.Context, query string, opts search.Options) ([]search.Result, error) {
+func (s localTestSearcher) Search(_ context.Context, query string, opts search.Options) ([]search.Result, error) {
+	if s.recorder != nil {
+		s.recorder.recordSearch(query, opts)
+	}
 	results := []search.Result{
 		{
 			Title:   "Local Cat Almanac 2026",
@@ -49,10 +117,12 @@ func (localTestSearcher) Search(_ context.Context, query string, opts search.Opt
 	return results, nil
 }
 
-type localTestFetcher struct{}
+type localTestFetcher struct {
+	recorder *LocalCallRecorder
+}
 
-func (localTestFetcher) FetchURLs(ctx context.Context, urls []string) []fetch.FetchedPage {
-	results := localTestFetcher{}.FetchURLResults(ctx, urls)
+func (f localTestFetcher) FetchURLs(ctx context.Context, urls []string) []fetch.FetchedPage {
+	results := f.FetchURLResults(ctx, urls)
 	pages := make([]fetch.FetchedPage, 0, len(results))
 	for _, result := range results {
 		if result.Status != fetch.FetchStatusCompleted {
@@ -66,7 +136,10 @@ func (localTestFetcher) FetchURLs(ctx context.Context, urls []string) []fetch.Fe
 	return pages
 }
 
-func (localTestFetcher) FetchURLResults(_ context.Context, urls []string) []fetch.URLResult {
+func (f localTestFetcher) FetchURLResults(_ context.Context, urls []string) []fetch.URLResult {
+	if f.recorder != nil {
+		f.recorder.recordFetch(urls)
+	}
 	results := make([]fetch.URLResult, 0, len(urls))
 	for _, rawURL := range urls {
 		switch rawURL {
