@@ -99,8 +99,11 @@ def run_prompt_injection_eval(
             predicted = result.violation
             labeler_decision = None
 
-            # If classifier says safe but dataset says violation, ask labeler for ground truth
-            if labeler and expected and not predicted:
+            # Whenever classifier and dataset disagree, ask the labeler to
+            # adjudicate. Running this in both directions keeps dataset-label
+            # errors from biasing FPR (classifier=pos, dataset=neg) the same
+            # way they would bias FNR (classifier=neg, dataset=pos).
+            if labeler and expected != predicted:
                 labeler_calls += 1
                 try:
                     is_injection, explanation = labeler.label_injection(sample.text)
@@ -108,9 +111,8 @@ def run_prompt_injection_eval(
                         "is_injection": is_injection,
                         "explanation": explanation,
                     }
-                    if not is_injection:
-                        # Labeler says not injection - override the expected label
-                        expected = False
+                    if is_injection != expected:
+                        expected = is_injection
                         labeler_overrides += 1
                 except Exception as e:
                     labeler_decision = {"error": str(e)}
@@ -195,8 +197,11 @@ def run_pii_eval(
             predicted = result.violation
             labeler_decision = None
 
-            # If classifier says safe but dataset says violation, ask labeler for ground truth
-            if labeler and expected and not predicted:
+            # Whenever classifier and dataset disagree, ask the labeler to
+            # adjudicate in either direction. This keeps false-positive-rate
+            # numbers honest on negative datasets that happen to contain
+            # genuine PII (e.g. a MS MARCO query with a phone number).
+            if labeler and expected != predicted:
                 labeler_calls += 1
                 try:
                     contains_pii, explanation = labeler.label_pii(sample.text)
@@ -204,9 +209,8 @@ def run_pii_eval(
                         "contains_pii": contains_pii,
                         "explanation": explanation,
                     }
-                    if not contains_pii:
-                        # Labeler says no PII - override the expected label
-                        expected = False
+                    if contains_pii != expected:
+                        expected = contains_pii
                         labeler_overrides += 1
                 except Exception as e:
                     labeler_decision = {"error": str(e)}
