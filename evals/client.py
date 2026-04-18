@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import time
 from dataclasses import dataclass
 
 import httpx
@@ -16,6 +18,19 @@ from constants import (
 )
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
+
+# httpx default limits leave a small connection pool per client. The evals
+# run many sequential + concurrent requests against the same host, so we
+# widen the pool once here and share it across clients.
+_HTTPX_LIMITS = httpx.Limits(
+    max_connections=100,
+    max_keepalive_connections=32,
+)
+
+
+def _build_http_client(timeout: float) -> httpx.Client:
+    """Create a shared httpx.Client with sensible pooling for eval workloads."""
+    return httpx.Client(timeout=timeout, limits=_HTTPX_LIMITS)
 
 
 @dataclass
@@ -39,6 +54,7 @@ class SafeguardClient:
         base_url: str | None = None,
         model: str | None = None,
         timeout: float = 30.0,
+        http_client: httpx.Client | None = None,
     ):
         self.api_key = api_key or os.environ.get("SAFEGUARD_API_KEY", "")
         self.base_url = base_url or os.environ.get(
@@ -46,6 +62,7 @@ class SafeguardClient:
         )
         self.model = model or os.environ.get("SAFEGUARD_MODEL", self.DEFAULT_MODEL)
         self.timeout = timeout
+        self._http = http_client or _build_http_client(timeout)
 
         if not self.api_key:
             raise ValueError(
@@ -63,7 +80,7 @@ class SafeguardClient:
         Returns:
             CheckResult with violation status, category, and rationale
         """
-        response = httpx.post(
+        response = self._http.post(
             f"{self.base_url}/v1/chat/completions",
             headers={
                 "Content-Type": "application/json",
@@ -105,7 +122,6 @@ class SafeguardClient:
                     },
                 },
             },
-            timeout=self.timeout,
         )
         response.raise_for_status()
 
@@ -206,9 +222,11 @@ class LabelerClient:
         base_url: str | None = None,
         model: str | None = None,
         timeout: float = 60.0,
+        http_client: httpx.Client | None = None,
     ):
         self.model = model or os.environ.get("LABELER_MODEL", self.DEFAULT_MODEL)
         self.timeout = timeout
+        self._http = http_client or _build_http_client(timeout)
 
         # Detect if using Claude (Anthropic API) vs other models (OpenAI-compatible API)
         self.is_claude = self.model.startswith("claude")
@@ -276,9 +294,6 @@ class LabelerClient:
 
     def _call_api(self, prompt: str, schema_name: str, max_retries: int = 5) -> dict:
         """Make API call to labeler with retry logic for transient errors."""
-        import re
-        import time
-
         if self.is_claude:
             return self._call_anthropic(prompt, max_retries)
 
@@ -334,7 +349,7 @@ class LabelerClient:
         last_error = None
         for attempt in range(max_retries):
             try:
-                response = httpx.post(
+                response = self._http.post(
                     f"{self.base_url}/v1/chat/completions",
                     headers={
                         "Content-Type": "application/json",
@@ -356,7 +371,6 @@ class LabelerClient:
                             },
                         },
                     },
-                    timeout=self.timeout,
                 )
                 response.raise_for_status()
 
@@ -382,13 +396,10 @@ class LabelerClient:
 
     def _call_anthropic(self, prompt: str, max_retries: int = 5) -> dict:
         """Simple Anthropic API call for Claude models."""
-        import re
-        import time
-
         last_error = None
         for attempt in range(max_retries):
             try:
-                response = httpx.post(
+                response = self._http.post(
                     self.base_url,
                     headers={
                         "Content-Type": "application/json",
@@ -402,7 +413,6 @@ class LabelerClient:
                             {"role": "user", "content": prompt + "\n\nRespond with only valid JSON."},
                         ],
                     },
-                    timeout=self.timeout,
                 )
                 response.raise_for_status()
 
