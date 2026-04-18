@@ -30,12 +30,32 @@ const (
 	ContentModeHighlights ContentMode = "highlights"
 )
 
+// Category mirrors Exa's category enum. Blank means unfiltered.
+type Category string
+
+const (
+	CategoryCompany         Category = "company"
+	CategoryPeople          Category = "people"
+	CategoryResearchPaper   Category = "research paper"
+	CategoryNews            Category = "news"
+	CategoryPersonalSite    Category = "personal site"
+	CategoryFinancialReport Category = "financial report"
+)
+
 type Options struct {
 	MaxResults           int
 	MaxContentCharacters int
 	ContentMode          ContentMode
 	UserLocationCountry  string
 	AllowedDomains       []string
+	ExcludedDomains      []string
+	Category             Category
+	StartPublishedDate   string
+	EndPublishedDate     string
+	// MaxAgeHours controls Exa's livecrawl cache. Nil = Exa default (livecrawl
+	// only when no cache exists); pointer to 0 = force livecrawl every time;
+	// pointer to -1 = never livecrawl (cache-only).
+	MaxAgeHours *int
 }
 
 // Provider defines the interface for search providers
