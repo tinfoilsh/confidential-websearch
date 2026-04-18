@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"net/http"
 	"os"
@@ -48,10 +49,11 @@ func main() {
 	var (
 		svc          *tools.Service
 		searcherName string
+		recorder     *LocalCallRecorder
 	)
 
 	if isLocalTestMode() {
-		svc = newLocalTestService()
+		svc, recorder = newLocalTestService()
 		searcherName = "local-test"
 	} else {
 		client, err := tinfoil.NewClient(option.WithAPIKey(cfg.TinfoilAPIKey))
@@ -86,6 +88,38 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	})
+
+	// /debug/last-call exposes the most recent SearchArgs and fetch URL list
+	// seen by the fixture-mode service. It is only mounted when
+	// LOCAL_TEST_MODE=1 so production deployments never leak request shape.
+	if recorder != nil {
+		mux.HandleFunc("/debug/last-call", func(w http.ResponseWriter, r *http.Request) {
+			searchAt, query, opts := recorder.LastSearch()
+			fetchAt, urls := recorder.LastFetch()
+			payload := map[string]any{
+				"search": map[string]any{
+					"observed_at":           searchAt.Format(time.RFC3339Nano),
+					"query":                 query,
+					"max_results":           opts.MaxResults,
+					"max_content_chars":     opts.MaxContentCharacters,
+					"content_mode":          string(opts.ContentMode),
+					"user_location_country": opts.UserLocationCountry,
+					"allowed_domains":       opts.AllowedDomains,
+					"excluded_domains":      opts.ExcludedDomains,
+					"category":              string(opts.Category),
+					"start_published_date":  opts.StartPublishedDate,
+					"end_published_date":    opts.EndPublishedDate,
+					"max_age_hours":         opts.MaxAgeHours,
+				},
+				"fetch": map[string]any{
+					"observed_at": fetchAt.Format(time.RFC3339Nano),
+					"urls":        urls,
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(payload)
+		})
+	}
 
 	httpServer := &http.Server{
 		Addr:         cfg.ListenAddr,
