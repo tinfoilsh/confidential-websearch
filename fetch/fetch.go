@@ -60,8 +60,8 @@ const cloudflareAPIURLFormat = "https://api.cloudflare.com/client/v4/accounts/%s
 
 // FetchedPage represents a fetched URL and its text content
 type FetchedPage struct {
-	URL     string
-	Content string
+	URL     string `json:"url"`
+	Content string `json:"content"`
 }
 
 const (
