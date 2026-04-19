@@ -8,9 +8,31 @@ import (
 	"time"
 
 	"github.com/tinfoilsh/confidential-websearch/fetch"
+	"github.com/tinfoilsh/confidential-websearch/safeguard"
 	"github.com/tinfoilsh/confidential-websearch/search"
 	"github.com/tinfoilsh/confidential-websearch/tools"
 )
+
+// localTestBlockedTrigger is a sentinel phrase the local-test-mode fake
+// safeguard flags as a violation. Tests include it in the query (or a
+// fetched URL's content) when they want to exercise the end-to-end
+// safety-blocked path without standing up a real safeguard model.
+const localTestBlockedTrigger = "pii-test-trigger"
+
+type localTestSafeguard struct{}
+
+// Check returns a violation when the content contains the trigger phrase so
+// the integration matrix can assert router-side behavior on blocked tool
+// calls (web_search_call.status == "blocked", public reason constant).
+func (localTestSafeguard) Check(_ context.Context, _, content string) (*safeguard.CheckResult, error) {
+	if strings.Contains(strings.ToLower(content), localTestBlockedTrigger) {
+		return &safeguard.CheckResult{
+			Violation: true,
+			Rationale: "local-test fixture: matched trigger phrase",
+		}, nil
+	}
+	return &safeguard.CheckResult{Violation: false}, nil
+}
 
 func isLocalTestMode() bool {
 	return os.Getenv("LOCAL_TEST_MODE") == "1"
@@ -78,7 +100,7 @@ func newLocalTestService() (*tools.Service, *LocalCallRecorder) {
 	recorder := NewLocalCallRecorder()
 	searcher := localTestSearcher{recorder: recorder}
 	fetcher := localTestFetcher{recorder: recorder}
-	return tools.NewService(searcher, fetcher, nil), recorder
+	return tools.NewService(searcher, fetcher, localTestSafeguard{}), recorder
 }
 
 type localTestSearcher struct {
@@ -154,6 +176,12 @@ func (f localTestFetcher) FetchURLResults(_ context.Context, urls []string) []fe
 				URL:     rawURL,
 				Status:  fetch.FetchStatusCompleted,
 				Content: "Neighborhood Cat Gazette reports that the cats in the sunroom prefer saffron cushions because they stay warm in the afternoon light.",
+			})
+		case "https://local.test/blocked-page":
+			results = append(results, fetch.URLResult{
+				URL:     rawURL,
+				Status:  fetch.FetchStatusCompleted,
+				Content: "This fixture contains the " + localTestBlockedTrigger + " phrase so that the injection safeguard marks the fetch blocked.",
 			})
 		default:
 			results = append(results, fetch.URLResult{
