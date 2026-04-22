@@ -1,0 +1,19 @@
+tools:
+  search:
+    description: >-
+      Search the web for current information. Returns ranked results with
+      titles, URLs, snippets, and publication dates. Accepted arguments:
+      query (required, string); max_results (int, 1-30);
+      user_location_country (ISO country code); allowed_domains ([]string);
+      excluded_domains ([]string); content_mode ("highlights"|"text");
+      max_content_chars (int); category (string); start_published_date
+      (ISO-8601); end_published_date (ISO-8601); max_age_hours (int, -1
+      disables livecrawl, 0 forces it). Unknown arguments are silently
+      ignored.
+
+  fetch:
+    description: >-
+      Fetch one or more web pages and return the rendered markdown content
+      for deeper reading after search. Accepted arguments: urls (required,
+      []string, max 20); allowed_domains ([]string). Unknown arguments are
+      silently ignored.

@@ -13,17 +13,7 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/usage"
 )
 
-// searchToolDescription enumerates the accepted arguments so models that
-// were trained on other search-tool schemas (e.g. Tavily's recency_days,
-// Brave's topn) get a strong hint about what this tool actually takes
-// before they start hallucinating alternatives. The enumeration is the
-// source of truth paired with permissiveSchema's additionalProperties:true
-// safety net.
-const searchToolDescription = "Search the web for current information. Returns ranked results with titles, URLs, snippets, and publication dates. Accepted arguments: query (required, string); max_results (int, 1-30); user_location_country (ISO country code); allowed_domains ([]string); excluded_domains ([]string); content_mode (\"highlights\"|\"text\"); max_content_chars (int); category (string); start_published_date (ISO-8601); end_published_date (ISO-8601); max_age_hours (int, -1 disables livecrawl, 0 forces it). Unknown arguments are silently ignored."
-
-const fetchToolDescription = "Fetch one or more web pages and return the rendered markdown content for deeper reading after search. Accepted arguments: urls (required, []string, max 20); allowed_domains ([]string). Unknown arguments are silently ignored."
-
-func newMCPServer(svc *tools.Service, cfg *config.Config, reporter *usage.Reporter, request *http.Request) *mcp.Server {
+func newMCPServer(svc *tools.Service, cfg *config.Config, descriptions config.ToolDescriptions, reporter *usage.Reporter, request *http.Request) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "confidential-websearch",
 		Version: version,
@@ -40,13 +30,13 @@ func newMCPServer(svc *tools.Service, cfg *config.Config, reporter *usage.Report
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "search",
-		Description: searchToolDescription,
+		Description: descriptions.Search,
 		InputSchema: searchSchema,
 	}, newSearchHandlerWithUsage(svc, cfg, reporter, request))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "fetch",
-		Description: fetchToolDescription,
+		Description: descriptions.Fetch,
 		InputSchema: fetchSchema,
 	}, newFetchHandlerWithUsage(svc, cfg, reporter, request))
 
