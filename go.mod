@@ -5,6 +5,7 @@ go 1.25.5
 replace github.com/google/go-sev-guest => github.com/tinfoilsh/go-sev-guest v0.0.0-20250704193550-c725e6216008
 
 require (
+	github.com/google/jsonschema-go v0.4.2
 	github.com/modelcontextprotocol/go-sdk v1.5.0
 	github.com/openai/openai-go/v3 v3.16.0
 	github.com/sirupsen/logrus v1.9.3
@@ -49,7 +50,6 @@ require (
 	github.com/google/go-containerregistry v0.20.7 // indirect
 	github.com/google/go-sev-guest v0.14.1 // indirect
 	github.com/google/go-tdx-guest v0.3.1 // indirect
-	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/google/logger v1.1.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.4 // indirect
