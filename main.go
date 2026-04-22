@@ -36,6 +36,10 @@ func main() {
 	}
 
 	cfg := config.Load()
+	toolDescriptions, err := config.LoadToolDescriptions()
+	if err != nil {
+		log.Fatalf("Failed to load tool descriptions: %v", err)
+	}
 	reporter, err := usage.NewReporter(
 		strings.TrimRight(cfg.ControlPlaneURL, "/")+"/api/internal/usage-reports",
 		cfg.UsageReporterID,
@@ -79,7 +83,7 @@ func main() {
 	}
 
 	handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
-		return newMCPServer(svc, cfg, reporter, r)
+		return newMCPServer(svc, cfg, toolDescriptions, reporter, r)
 	}, &mcp.StreamableHTTPOptions{Stateless: true})
 
 	mux := http.NewServeMux()
