@@ -23,3 +23,6 @@ shim:
   paths:
     - /mcp
     - /health
+  authenticated: true
+  authenticated-endpoints:
+    - /mcp
