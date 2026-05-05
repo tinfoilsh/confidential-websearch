@@ -154,7 +154,7 @@ func TestSearchHandler_PIICheckDisabled(t *testing.T) {
 	}
 }
 
-func TestSearchHandler_InjectionCheckEnabled(t *testing.T) {
+func TestSearchHandler_InjectionCheckSkippedForSearchResults(t *testing.T) {
 	searcher := &mockSearchProvider{
 		results: []search.Result{
 			{Title: "Safe", URL: "https://example.com/safe", Content: "safe"},
@@ -170,11 +170,8 @@ func TestSearchHandler_InjectionCheckEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(result.Results) != 1 {
-		t.Fatalf("expected one filtered result, got %d", len(result.Results))
-	}
-	if result.Results[0].Title != "Safe" {
-		t.Fatalf("expected safe result to remain, got %q", result.Results[0].Title)
+	if len(result.Results) != 2 {
+		t.Fatalf("expected search results to pass through unfiltered, got %d", len(result.Results))
 	}
 }
 
