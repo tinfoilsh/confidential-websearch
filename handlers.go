@@ -139,7 +139,7 @@ func newSearchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Requ
 			MaxContentCharacters:  args.MaxContentChars,
 			ContentMode:           contentMode,
 			PIICheckEnabled:       resolveSafetyFlag(httpReq, headerPIICheck, cfg.EnablePIICheck),
-			InjectionCheckEnabled: resolveInjectionCheck(httpReq, cfg.EnableInjectionCheck),
+			InjectionCheckEnabled: resolveInjectionCheck(httpReq, cfg.EnableSearchInjectionCheck),
 			UserLocationCountry:   strings.ToUpper(strings.TrimSpace(args.UserLocationCountry)),
 			AllowedDomains:        normalizeDomains(args.AllowedDomains),
 			ExcludedDomains:       excludedDomains,
@@ -172,7 +172,7 @@ func newFetchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Reque
 
 		results := svc.FetchDetailed(ctx, urls, tools.Options{
 			PIICheckEnabled:       false,
-			InjectionCheckEnabled: resolveInjectionCheck(httpReq, cfg.EnableInjectionCheck),
+			InjectionCheckEnabled: resolveInjectionCheck(httpReq, cfg.EnableFetchInjectionCheck),
 		})
 		results = append(results, rejected...)
 

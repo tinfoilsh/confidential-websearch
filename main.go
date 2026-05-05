@@ -76,7 +76,22 @@ func main() {
 		fetcher := fetch.NewFetcher(cfg.ExaAPIKey)
 
 		safeguardClient := safeguard.NewClient(client, cfg.SafeguardModel)
-		svc = tools.NewService(searcher, fetcher, safeguardClient, domainrank.NopRanker{})
+
+		var ranker domainrank.Ranker = domainrank.NopRanker{}
+		if cfg.CloudflareAPIToken != "" {
+			cfRanker, err := domainrank.NewCloudflareRanker(context.Background(), cfg.CloudflareAPIToken)
+			if err != nil {
+				log.WithError(err).Warn("domain ranker unavailable; injection checks will run on all fetched pages until first refresh succeeds")
+			}
+			if cfRanker != nil {
+				go cfRanker.Run(context.Background())
+				ranker = cfRanker
+			}
+		} else {
+			log.Warn("CLOUDFLARE_API_TOKEN not set; injection checks will run on all fetched pages")
+		}
+
+		svc = tools.NewService(searcher, fetcher, safeguardClient, ranker)
 		searcherName = searcher.Name()
 	}
 

@@ -12,6 +12,7 @@ containers:
       - USAGE_REPORTER_ID: "websearch-mcp"
     secrets:
       - EXA_API_KEY
+      - CLOUDFLARE_API_TOKEN
       - TINFOIL_API_KEY
       - USAGE_REPORTER_SECRET
 
