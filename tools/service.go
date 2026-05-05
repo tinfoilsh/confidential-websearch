@@ -3,9 +3,11 @@ package tools
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	log "github.com/sirupsen/logrus"
 
+	"github.com/tinfoilsh/confidential-websearch/domainrank"
 	"github.com/tinfoilsh/confidential-websearch/fetch"
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
 	"github.com/tinfoilsh/confidential-websearch/search"
@@ -37,11 +39,15 @@ type SafeguardChecker interface {
 }
 
 type Options struct {
-	MaxResults            int
-	MaxContentCharacters  int
-	ContentMode           search.ContentMode
-	PIICheckEnabled       bool
-	InjectionCheckEnabled bool
+	MaxResults           int
+	MaxContentCharacters int
+	ContentMode          search.ContentMode
+	PIICheckEnabled      bool
+	// InjectionCheckEnabled is the resolved decision for prompt-injection
+	// filtering on this request: nil means "use the operator default and let
+	// the service skip top-bucket domains", a non-nil pointer is an explicit
+	// caller opt-in or opt-out that bypasses the popularity skip.
+	InjectionCheckEnabled *bool
 	UserLocationCountry   string
 	AllowedDomains        []string
 	ExcludedDomains       []string
@@ -60,13 +66,18 @@ type Service struct {
 	searcher  search.Provider
 	fetcher   URLFetcher
 	safeguard SafeguardChecker
+	ranker    domainrank.Ranker
 }
 
-func NewService(searcher search.Provider, fetcher URLFetcher, safeguardChecker SafeguardChecker) *Service {
+func NewService(searcher search.Provider, fetcher URLFetcher, safeguardChecker SafeguardChecker, ranker domainrank.Ranker) *Service {
+	if ranker == nil {
+		ranker = domainrank.NopRanker{}
+	}
 	return &Service{
 		searcher:  searcher,
 		fetcher:   fetcher,
 		safeguard: safeguardChecker,
+		ranker:    ranker,
 	}
 }
 
@@ -115,8 +126,9 @@ func (s *Service) Search(ctx context.Context, query string, opts Options) (Searc
 		return SearchOutcome{}, err
 	}
 
-	if opts.InjectionCheckEnabled && len(results) > 0 && s.safeguard != nil {
-		results = filterSearchResults(ctx, s.safeguard, results)
+	enabled, explicit := resolveInjectionCheck(opts.InjectionCheckEnabled)
+	if enabled && len(results) > 0 && s.safeguard != nil {
+		results = filterSearchResults(ctx, s.safeguard, s.ranker, explicit, results)
 	}
 
 	return SearchOutcome{Results: results}, nil
@@ -131,8 +143,9 @@ func (s *Service) Fetch(ctx context.Context, urls []string, opts Options) []fetc
 	}
 
 	pages := s.fetcher.FetchURLs(ctx, urls)
-	if opts.InjectionCheckEnabled && len(pages) > 0 && s.safeguard != nil {
-		pages = filterFetchedPages(ctx, s.safeguard, pages)
+	enabled, explicit := resolveInjectionCheck(opts.InjectionCheckEnabled)
+	if enabled && len(pages) > 0 && s.safeguard != nil {
+		pages = filterFetchedPages(ctx, s.safeguard, s.ranker, explicit, pages)
 	}
 
 	return pages
@@ -178,56 +191,122 @@ func (s *Service) FetchDetailed(ctx context.Context, urls []string, opts Options
 	}
 
 	results := detailedFetcher.FetchURLResults(ctx, urls)
-	if opts.InjectionCheckEnabled && len(results) > 0 && s.safeguard != nil {
-		results = filterFetchResults(ctx, s.safeguard, results)
+	enabled, explicit := resolveInjectionCheck(opts.InjectionCheckEnabled)
+	if enabled && len(results) > 0 && s.safeguard != nil {
+		results = filterFetchResults(ctx, s.safeguard, s.ranker, explicit, results)
 	}
 
 	return results
 }
 
-func filterSearchResults(ctx context.Context, checker SafeguardChecker, results []search.Result) []search.Result {
-	contents := make([]string, len(results))
+// resolveInjectionCheck collapses the tri-state Options.InjectionCheckEnabled
+// into (run safeguard, caller was explicit). A nil pointer means the caller
+// did not opt in or out and the operator default applies; an explicit pointer
+// is the caller asking for the safeguard to run on every item or none.
+func resolveInjectionCheck(p *bool) (enabled, explicit bool) {
+	if p == nil {
+		return true, false
+	}
+	return *p, true
+}
+
+// shouldSkipForRanker reports whether this URL should bypass the safeguard
+// because the caller did not explicitly opt in and the host is in the
+// popularity bucket the ranker tracks.
+func shouldSkipForRanker(ranker domainrank.Ranker, explicit bool, rawURL string) bool {
+	if explicit || ranker == nil {
+		return false
+	}
+	return ranker.InTopBucket(hostFromURL(rawURL))
+}
+
+func hostFromURL(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return parsed.Hostname()
+}
+
+func filterSearchResults(ctx context.Context, checker SafeguardChecker, ranker domainrank.Ranker, explicit bool, results []search.Result) []search.Result {
+	indexes := make([]int, 0, len(results))
+	contents := make([]string, 0, len(results))
 	for i, result := range results {
-		contents[i] = result.Content
+		if shouldSkipForRanker(ranker, explicit, result.URL) {
+			continue
+		}
+		indexes = append(indexes, i)
+		contents = append(contents, result.Content)
+	}
+	if len(contents) == 0 {
+		return results
 	}
 
 	checks := safeguard.CheckItems(ctx, checker, safeguard.PromptInjectionPolicy, contents)
-	filtered := make([]search.Result, 0, len(results))
+	drop := make(map[int]struct{})
 	for i, check := range checks {
 		if check.Err != nil {
 			log.WithError(check.Err).Warn("prompt injection safeguard unavailable; keeping search result")
-			filtered = append(filtered, results[i])
 			continue
 		}
-		if !check.Violation {
-			filtered = append(filtered, results[i])
+		if check.Violation {
+			drop[indexes[i]] = struct{}{}
 		}
+	}
+	if len(drop) == 0 {
+		return results
+	}
+
+	filtered := make([]search.Result, 0, len(results)-len(drop))
+	for i, result := range results {
+		if _, blocked := drop[i]; blocked {
+			continue
+		}
+		filtered = append(filtered, result)
 	}
 	return filtered
 }
 
-func filterFetchedPages(ctx context.Context, checker SafeguardChecker, pages []fetch.FetchedPage) []fetch.FetchedPage {
-	contents := make([]string, len(pages))
+func filterFetchedPages(ctx context.Context, checker SafeguardChecker, ranker domainrank.Ranker, explicit bool, pages []fetch.FetchedPage) []fetch.FetchedPage {
+	indexes := make([]int, 0, len(pages))
+	contents := make([]string, 0, len(pages))
 	for i, page := range pages {
-		contents[i] = page.Content
+		if shouldSkipForRanker(ranker, explicit, page.URL) {
+			continue
+		}
+		indexes = append(indexes, i)
+		contents = append(contents, page.Content)
+	}
+	if len(contents) == 0 {
+		return pages
 	}
 
 	checks := safeguard.CheckItems(ctx, checker, safeguard.PromptInjectionPolicy, contents)
-	filtered := make([]fetch.FetchedPage, 0, len(pages))
+	drop := make(map[int]struct{})
 	for i, check := range checks {
 		if check.Err != nil {
 			log.WithError(check.Err).Warn("prompt injection safeguard unavailable; keeping fetched page")
-			filtered = append(filtered, pages[i])
 			continue
 		}
-		if !check.Violation {
-			filtered = append(filtered, pages[i])
+		if check.Violation {
+			drop[indexes[i]] = struct{}{}
 		}
+	}
+	if len(drop) == 0 {
+		return pages
+	}
+
+	filtered := make([]fetch.FetchedPage, 0, len(pages)-len(drop))
+	for i, page := range pages {
+		if _, blocked := drop[i]; blocked {
+			continue
+		}
+		filtered = append(filtered, page)
 	}
 	return filtered
 }
 
-func filterFetchResults(ctx context.Context, checker SafeguardChecker, results []fetch.URLResult) []fetch.URLResult {
+func filterFetchResults(ctx context.Context, checker SafeguardChecker, ranker domainrank.Ranker, explicit bool, results []fetch.URLResult) []fetch.URLResult {
 	indexes := make([]int, 0, len(results))
 	contents := make([]string, 0, len(results))
 	filtered := make([]fetch.URLResult, len(results))
@@ -235,6 +314,9 @@ func filterFetchResults(ctx context.Context, checker SafeguardChecker, results [
 
 	for i, result := range results {
 		if result.Status != fetch.FetchStatusCompleted || result.Content == "" {
+			continue
+		}
+		if shouldSkipForRanker(ranker, explicit, result.URL) {
 			continue
 		}
 		indexes = append(indexes, i)

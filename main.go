@@ -17,6 +17,7 @@ import (
 	"github.com/tinfoilsh/tinfoil-go"
 
 	"github.com/tinfoilsh/confidential-websearch/config"
+	"github.com/tinfoilsh/confidential-websearch/domainrank"
 	"github.com/tinfoilsh/confidential-websearch/fetch"
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
 	"github.com/tinfoilsh/confidential-websearch/search"
@@ -75,7 +76,7 @@ func main() {
 		fetcher := fetch.NewFetcher(cfg.ExaAPIKey)
 
 		safeguardClient := safeguard.NewClient(client, cfg.SafeguardModel)
-		svc = tools.NewService(searcher, fetcher, safeguardClient)
+		svc = tools.NewService(searcher, fetcher, safeguardClient, domainrank.NopRanker{})
 		searcherName = searcher.Name()
 	}
 

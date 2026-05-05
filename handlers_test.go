@@ -86,7 +86,7 @@ func TestSearchHandler_Success(t *testing.T) {
 		},
 	}
 	cfg := &config.Config{}
-	svc := tools.NewService(searcher, nil, nil)
+	svc := tools.NewService(searcher, nil, nil, nil)
 	handler := newSearchHandler(svc, cfg, nil)
 
 	_, result, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "test query"})
@@ -102,7 +102,7 @@ func TestSearchHandler_Success(t *testing.T) {
 }
 
 func TestSearchHandler_EmptyQuery(t *testing.T) {
-	svc := tools.NewService(&mockSearchProvider{}, nil, nil)
+	svc := tools.NewService(&mockSearchProvider{}, nil, nil, nil)
 	handler := newSearchHandler(svc, &config.Config{}, nil)
 
 	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: ""})
@@ -113,7 +113,7 @@ func TestSearchHandler_EmptyQuery(t *testing.T) {
 
 func TestSearchHandler_SearchError(t *testing.T) {
 	searcher := &mockSearchProvider{err: fmt.Errorf("search failed")}
-	svc := tools.NewService(searcher, nil, nil)
+	svc := tools.NewService(searcher, nil, nil, nil)
 	handler := newSearchHandler(svc, &config.Config{}, nil)
 
 	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "test"})
@@ -128,7 +128,7 @@ func TestSearchHandler_ForwardsMaxResults(t *testing.T) {
 		results = append(results, search.Result{Title: fmt.Sprintf("Result %d", i)})
 	}
 	searcher := &mockSearchProvider{results: results}
-	svc := tools.NewService(searcher, nil, nil)
+	svc := tools.NewService(searcher, nil, nil, nil)
 	handler := newSearchHandler(svc, &config.Config{}, nil)
 
 	_, result, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "test", MaxResults: 30})
@@ -143,7 +143,7 @@ func TestSearchHandler_ForwardsMaxResults(t *testing.T) {
 func TestSearchHandler_PIICheckDisabled(t *testing.T) {
 	searcher := &mockSearchProvider{results: []search.Result{{Title: "Result"}}}
 
-	svc := tools.NewService(searcher, nil, nil)
+	svc := tools.NewService(searcher, nil, nil, nil)
 	handler := newSearchHandler(svc, &config.Config{EnablePIICheck: false}, nil)
 	_, result, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "test"})
 	if err != nil {
@@ -163,7 +163,7 @@ func TestSearchHandler_InjectionCheckEnabled(t *testing.T) {
 	}
 	svc := tools.NewService(searcher, nil, &mockSafeguard{
 		blocked: map[string]string{"unsafe": "prompt injection detected"},
-	})
+	}, nil)
 	handler := newSearchHandler(svc, &config.Config{EnableInjectionCheck: true}, nil)
 
 	_, result, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "test"})
@@ -180,7 +180,7 @@ func TestSearchHandler_InjectionCheckEnabled(t *testing.T) {
 
 func TestSearchHandler_ForwardsUserLocationAndAllowedDomains(t *testing.T) {
 	searcher := &mockSearchProvider{results: []search.Result{{Title: "r"}}}
-	svc := tools.NewService(searcher, nil, nil)
+	svc := tools.NewService(searcher, nil, nil, nil)
 	handler := newSearchHandler(svc, &config.Config{}, nil)
 
 	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{
@@ -202,7 +202,7 @@ func TestSearchHandler_ForwardsUserLocationAndAllowedDomains(t *testing.T) {
 
 func TestSearchHandler_ForwardsContentModeAndMaxContentChars(t *testing.T) {
 	searcher := &mockSearchProvider{results: []search.Result{{Title: "r"}}}
-	svc := tools.NewService(searcher, nil, nil)
+	svc := tools.NewService(searcher, nil, nil, nil)
 	handler := newSearchHandler(svc, &config.Config{}, nil)
 
 	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{
@@ -223,7 +223,7 @@ func TestSearchHandler_ForwardsContentModeAndMaxContentChars(t *testing.T) {
 
 func TestSearchHandler_ContentModeDefault(t *testing.T) {
 	searcher := &mockSearchProvider{results: []search.Result{{Title: "r"}}}
-	svc := tools.NewService(searcher, nil, nil)
+	svc := tools.NewService(searcher, nil, nil, nil)
 	handler := newSearchHandler(svc, &config.Config{}, nil)
 
 	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "test"})
@@ -240,7 +240,7 @@ func TestSearchHandler_ContentModeDefault(t *testing.T) {
 
 func TestSearchHandler_ForwardsNewExaKnobs(t *testing.T) {
 	searcher := &mockSearchProvider{results: []search.Result{{Title: "r"}}}
-	svc := tools.NewService(searcher, nil, nil)
+	svc := tools.NewService(searcher, nil, nil, nil)
 	handler := newSearchHandler(svc, &config.Config{}, nil)
 
 	zero := 0
@@ -275,7 +275,7 @@ func TestSearchHandler_ForwardsNewExaKnobs(t *testing.T) {
 }
 
 func TestSearchHandler_InvalidCategory(t *testing.T) {
-	svc := tools.NewService(&mockSearchProvider{}, nil, nil)
+	svc := tools.NewService(&mockSearchProvider{}, nil, nil, nil)
 	handler := newSearchHandler(svc, &config.Config{}, nil)
 
 	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{
@@ -288,7 +288,7 @@ func TestSearchHandler_InvalidCategory(t *testing.T) {
 }
 
 func TestSearchHandler_InvalidDate(t *testing.T) {
-	svc := tools.NewService(&mockSearchProvider{}, nil, nil)
+	svc := tools.NewService(&mockSearchProvider{}, nil, nil, nil)
 	handler := newSearchHandler(svc, &config.Config{}, nil)
 
 	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{
@@ -301,7 +301,7 @@ func TestSearchHandler_InvalidDate(t *testing.T) {
 }
 
 func TestSearchHandler_CategoryIncompatibleFilters(t *testing.T) {
-	svc := tools.NewService(&mockSearchProvider{}, nil, nil)
+	svc := tools.NewService(&mockSearchProvider{}, nil, nil, nil)
 	handler := newSearchHandler(svc, &config.Config{}, nil)
 
 	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{
@@ -324,7 +324,7 @@ func TestSearchHandler_CategoryIncompatibleFilters(t *testing.T) {
 }
 
 func TestSearchHandler_InvalidContentMode(t *testing.T) {
-	svc := tools.NewService(&mockSearchProvider{}, nil, nil)
+	svc := tools.NewService(&mockSearchProvider{}, nil, nil, nil)
 	handler := newSearchHandler(svc, &config.Config{}, nil)
 
 	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{
@@ -338,7 +338,7 @@ func TestSearchHandler_InvalidContentMode(t *testing.T) {
 
 func TestFetchHandler_EmptyURLs(t *testing.T) {
 	realFetcher := fetch.NewFetcher("test-key")
-	svc := tools.NewService(nil, realFetcher, nil)
+	svc := tools.NewService(nil, realFetcher, nil, nil)
 	handler := newFetchHandler(svc, &config.Config{}, nil)
 
 	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, FetchArgs{URLs: []string{}})
@@ -352,7 +352,7 @@ func TestFetchHandler_AllowedDomainsRejectsOutsideHosts(t *testing.T) {
 		results: []fetch.URLResult{
 			{URL: "https://docs.python.org/3/tutorial", Status: fetch.FetchStatusCompleted, Content: "# Tutorial"},
 		},
-	}, nil)
+	}, nil, nil)
 	handler := newFetchHandler(svc, &config.Config{}, nil)
 
 	_, result, err := handler(context.Background(), &mcp.CallToolRequest{}, FetchArgs{
@@ -381,7 +381,7 @@ func TestFetchHandler_AllowedDomainsRejectsOutsideHosts(t *testing.T) {
 }
 
 func TestFetchHandler_AllowedDomainsAllRejected(t *testing.T) {
-	svc := tools.NewService(nil, &mockFetcher{}, nil)
+	svc := tools.NewService(nil, &mockFetcher{}, nil, nil)
 	handler := newFetchHandler(svc, &config.Config{}, nil)
 
 	_, result, err := handler(context.Background(), &mcp.CallToolRequest{}, FetchArgs{
@@ -452,7 +452,7 @@ func TestResolveSafetyFlag(t *testing.T) {
 func TestSearchHandler_HeaderOverridesEnvDefaults(t *testing.T) {
 	searcher := &mockSearchProvider{results: []search.Result{{Title: "r", URL: "https://example.com/r", Content: "ok"}}}
 	sg := &mockSafeguard{blocked: map[string]string{"john@example.com": "email detected"}}
-	svc := tools.NewService(searcher, nil, sg)
+	svc := tools.NewService(searcher, nil, sg, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	req.Header.Set(headerPIICheck, "true")
@@ -469,7 +469,7 @@ func TestSearchHandler_AbsentHeadersFallBackToEnv(t *testing.T) {
 	searcher := &mockSearchProvider{results: []search.Result{{Title: "r", URL: "https://example.com/r", Content: "ok"}}}
 	svc := tools.NewService(searcher, nil, &mockSafeguard{
 		blocked: map[string]string{"john@example.com": "email detected"},
-	})
+	}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 
@@ -502,7 +502,7 @@ func TestFetchHandler_PreservesPerURLResultsInOrder(t *testing.T) {
 			{URL: "https://example.com/b", Status: fetch.FetchStatusFailed, Error: "blocked"},
 			{URL: "https://example.com/c", Status: fetch.FetchStatusCompleted, Content: "# C"},
 		},
-	}, nil)
+	}, nil, nil)
 	handler := newFetchHandler(svc, &config.Config{}, nil)
 
 	_, result, err := handler(context.Background(), &mcp.CallToolRequest{}, FetchArgs{
@@ -533,7 +533,7 @@ func TestMCPServer_ToolDiscovery(t *testing.T) {
 
 	searcher := &mockSearchProvider{results: []search.Result{{Title: "Test"}}}
 	cfg := &config.Config{}
-	svc := tools.NewService(searcher, fetch.NewFetcher("test"), nil)
+	svc := tools.NewService(searcher, fetch.NewFetcher("test"), nil, nil)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "search",
@@ -589,7 +589,7 @@ func TestMCPServer_SearchToolCall(t *testing.T) {
 		},
 	}
 	cfg := &config.Config{}
-	svc := tools.NewService(searcher, nil, nil)
+	svc := tools.NewService(searcher, nil, nil, nil)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "search",
