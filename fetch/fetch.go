@@ -22,12 +22,10 @@ const (
 	fetchTimeout = 30 * time.Second
 	// exaContentsURL is the Exa Contents endpoint.
 	exaContentsURL = "https://api.exa.ai/contents"
-	// exaLivecrawlMode tells Exa to attempt a fresh crawl, falling back to
-	// cache when the live fetch fails or times out.
-	exaLivecrawlMode = "preferred"
-	// exaLivecrawlTimeoutMs bounds the per-URL live crawl wait inside Exa.
-	exaLivecrawlTimeoutMs = 10000
-	// exaMaxAgeHours caps cached content age; older results trigger a refresh.
+	// exaMaxAgeHours caps cached content age; older results trigger a fresh
+	// crawl. Exa now treats `maxAgeHours` as the single freshness control
+	// (the legacy `livecrawl` flag was deprecated and rejects requests that
+	// set both).
 	exaMaxAgeHours = 2
 )
 
@@ -66,11 +64,9 @@ func NewFetcher(apiKey string) *Fetcher {
 }
 
 type exaContentsRequest struct {
-	URLs             []string `json:"urls"`
-	Text             bool     `json:"text"`
-	Livecrawl        string   `json:"livecrawl"`
-	LivecrawlTimeout int      `json:"livecrawlTimeout"`
-	MaxAgeHours      int      `json:"maxAgeHours"`
+	URLs        []string `json:"urls"`
+	Text        bool     `json:"text"`
+	MaxAgeHours int      `json:"maxAgeHours"`
 }
 
 type exaContentsResponse struct {
@@ -130,11 +126,9 @@ func (f *Fetcher) FetchURLResults(ctx context.Context, urls []string) []URLResul
 
 func (f *Fetcher) callExa(ctx context.Context, urls []string) (map[string]string, error) {
 	reqBody := exaContentsRequest{
-		URLs:             urls,
-		Text:             true,
-		Livecrawl:        exaLivecrawlMode,
-		LivecrawlTimeout: exaLivecrawlTimeoutMs,
-		MaxAgeHours:      exaMaxAgeHours,
+		URLs:        urls,
+		Text:        true,
+		MaxAgeHours: exaMaxAgeHours,
 	}
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
