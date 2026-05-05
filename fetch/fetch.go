@@ -6,62 +6,30 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"net/netip"
-	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
 )
 
 const (
-	// maxContentLength caps the per-page markdown returned to callers.
+	// maxContentLength caps the per-page text returned to callers.
 	maxContentLength = 50000
-	// maxResponseBytes caps how much of the Cloudflare API response we read.
-	maxResponseBytes = 512 * 1024
-	// fetchTimeout is the per-URL HTTP deadline for the Cloudflare call.
-	fetchTimeout = 60 * time.Second
-	// maxConcurrentURLs bounds the fan-out of FetchURLResults.
-	maxConcurrentURLs = 5
-
-	allowedSchemeHTTP  = "http"
-	allowedSchemeHTTPS = "https"
+	// maxResponseBytes caps how much of the Exa API response we read.
+	maxResponseBytes = 8 * 1024 * 1024
+	// fetchTimeout is the HTTP deadline for the Exa contents call.
+	fetchTimeout = 30 * time.Second
+	// exaContentsURL is the Exa Contents endpoint.
+	exaContentsURL = "https://api.exa.ai/contents"
+	// exaLivecrawlMode tells Exa to attempt a fresh crawl, falling back to
+	// cache when the live fetch fails or times out.
+	exaLivecrawlMode = "preferred"
+	// exaLivecrawlTimeoutMs bounds the per-URL live crawl wait inside Exa.
+	exaLivecrawlTimeoutMs = 10000
+	// exaMaxAgeHours caps cached content age; older results trigger a refresh.
+	exaMaxAgeHours = 2
 )
-
-var blockedHostSuffixes = []string{
-	".internal",
-	".local",
-	".localhost",
-}
-
-var blockedIPPrefixes = mustParseBlockedIPPrefixes([]string{
-	"0.0.0.0/8",
-	"10.0.0.0/8",
-	"100.64.0.0/10",
-	"127.0.0.0/8",
-	"169.254.0.0/16",
-	"172.16.0.0/12",
-	"192.0.0.0/24",
-	"192.0.2.0/24",
-	"192.168.0.0/16",
-	"198.18.0.0/15",
-	"198.51.100.0/24",
-	"203.0.113.0/24",
-	"224.0.0.0/4",
-	"240.0.0.0/4",
-	"::/128",
-	"::1/128",
-	"2001:db8::/32",
-	"fc00::/7",
-	"fe80::/10",
-	"ff00::/8",
-})
-
-// cloudflareAPIURLFormat is the URL template for the Cloudflare Browser Rendering markdown endpoint.
-const cloudflareAPIURLFormat = "https://api.cloudflare.com/client/v4/accounts/%s/browser-rendering/markdown"
 
 // FetchedPage represents a fetched URL and its text content
 type FetchedPage struct {
@@ -81,141 +49,40 @@ type URLResult struct {
 	Error   string `json:"error,omitempty"`
 }
 
-// Fetcher fetches URL contents via Cloudflare Browser Rendering API
+// Fetcher fetches URL contents via the Exa /contents endpoint.
 type Fetcher struct {
-	client   *http.Client
-	apiURL   string
-	apiToken string
+	client *http.Client
+	apiURL string
+	apiKey string
 }
 
-// NewFetcher creates a new URL fetcher using Cloudflare Browser Rendering
-func NewFetcher(accountID, apiToken string) *Fetcher {
+// NewFetcher creates a new URL fetcher backed by Exa Contents.
+func NewFetcher(apiKey string) *Fetcher {
 	return &Fetcher{
-		client: &http.Client{
-			Timeout: fetchTimeout,
-		},
-		apiURL:   fmt.Sprintf(cloudflareAPIURLFormat, accountID),
-		apiToken: apiToken,
+		client: &http.Client{Timeout: fetchTimeout},
+		apiURL: exaContentsURL,
+		apiKey: apiKey,
 	}
 }
 
-func validateTargetURL(ctx context.Context, rawURL string) error {
-	rawURL = strings.TrimSpace(rawURL)
-	if rawURL == "" {
-		return fmt.Errorf("url is required")
-	}
-
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return fmt.Errorf("parse url: %w", err)
-	}
-	if parsed.User != nil {
-		return fmt.Errorf("embedded credentials are not allowed")
-	}
-	if parsed.Scheme != allowedSchemeHTTP && parsed.Scheme != allowedSchemeHTTPS {
-		return fmt.Errorf("unsupported scheme %q", parsed.Scheme)
-	}
-	host := strings.ToLower(parsed.Hostname())
-	if host == "" {
-		return fmt.Errorf("url host is required")
-	}
-	if isBlockedHostname(host) {
-		return fmt.Errorf("host %q is not allowed", host)
-	}
-
-	if addr, err := netip.ParseAddr(host); err == nil {
-		if isBlockedAddr(addr) {
-			return fmt.Errorf("ip address %q is not allowed", host)
-		}
-		return nil
-	}
-
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return fmt.Errorf("resolve host %q: %w", host, err)
-	}
-	if len(addrs) == 0 {
-		return fmt.Errorf("host %q resolved to no addresses", host)
-	}
-
-	for _, addr := range addrs {
-		if ip, ok := netip.AddrFromSlice(addr.IP); ok && isBlockedAddr(ip) {
-			return fmt.Errorf("resolved address %q is not allowed", addr.IP.String())
-		}
-	}
-
-	return nil
+type exaContentsRequest struct {
+	URLs             []string `json:"urls"`
+	Text             bool     `json:"text"`
+	Livecrawl        string   `json:"livecrawl"`
+	LivecrawlTimeout int      `json:"livecrawlTimeout"`
+	MaxAgeHours      int      `json:"maxAgeHours"`
 }
 
-func isBlockedHostname(host string) bool {
-	if host == "localhost" {
-		return true
-	}
-	for _, suffix := range blockedHostSuffixes {
-		if strings.HasSuffix(host, suffix) {
-			return true
-		}
-	}
-	return false
+type exaContentsResponse struct {
+	Results []exaContentsResult `json:"results"`
 }
 
-func isBlockedAddr(addr netip.Addr) bool {
-	addr = addr.Unmap()
-	if addr.IsPrivate() ||
-		addr.IsLoopback() ||
-		addr.IsMulticast() ||
-		addr.IsLinkLocalMulticast() ||
-		addr.IsLinkLocalUnicast() ||
-		addr.IsInterfaceLocalMulticast() ||
-		addr.IsUnspecified() {
-		return true
-	}
-
-	for _, prefix := range blockedIPPrefixes {
-		if prefix.Contains(addr) {
-			return true
-		}
-	}
-
-	return false
+type exaContentsResult struct {
+	URL  string `json:"url"`
+	Text string `json:"text"`
 }
 
-func mustParseBlockedIPPrefixes(prefixes []string) []netip.Prefix {
-	parsed := make([]netip.Prefix, 0, len(prefixes))
-	for _, prefix := range prefixes {
-		parsedPrefix, err := netip.ParsePrefix(prefix)
-		if err != nil {
-			panic(fmt.Sprintf("invalid blocked IP prefix %q: %v", prefix, err))
-		}
-		parsed = append(parsed, parsedPrefix)
-	}
-	return parsed
-}
-
-// cloudflareRequest is the JSON body sent to the Cloudflare Browser Rendering API
-type cloudflareRequest struct {
-	URL                 string          `json:"url"`
-	RejectResourceTypes []string        `json:"rejectResourceTypes"`
-	GotoOptions         *cloudflareGoto `json:"gotoOptions,omitempty"`
-}
-
-type cloudflareGoto struct {
-	WaitUntil string `json:"waitUntil"`
-}
-
-// cloudflareResponse is the JSON response from the Cloudflare Browser Rendering API
-type cloudflareResponse struct {
-	Success bool      `json:"success"`
-	Result  string    `json:"result"`
-	Errors  []cfError `json:"errors"`
-}
-
-type cfError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-// FetchURLs fetches the contents of the given URLs in parallel
+// FetchURLs fetches the contents of the given URLs in a single batched call.
 func (f *Fetcher) FetchURLs(ctx context.Context, urls []string) []FetchedPage {
 	results := f.FetchURLResults(ctx, urls)
 	pages := make([]FetchedPage, 0, len(results))
@@ -232,106 +99,80 @@ func (f *Fetcher) FetchURLs(ctx context.Context, urls []string) []FetchedPage {
 }
 
 func (f *Fetcher) FetchURLResults(ctx context.Context, urls []string) []URLResult {
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, maxConcurrentURLs)
 	results := make([]URLResult, len(urls))
-
 	for i, u := range urls {
-		results[i] = URLResult{
-			URL:    u,
-			Status: FetchStatusFailed,
-		}
+		results[i] = URLResult{URL: u, Status: FetchStatusFailed}
+	}
+	if len(urls) == 0 {
+		return results
 	}
 
-	for i, u := range urls {
-		// Respect context cancellation while waiting for a semaphore slot
-		select {
-		case sem <- struct{}{}:
-		case <-ctx.Done():
+	contents, err := f.callExa(ctx, urls)
+	if err != nil {
+		log.Debugf("Exa contents call failed: %v", err)
+		for i := range results {
+			results[i].Error = err.Error()
 		}
-		if ctx.Err() != nil {
-			results[i].Error = ctx.Err().Error()
-			break
-		}
-		wg.Add(1)
-		go func(index int, rawURL string) {
-			defer wg.Done()
-			defer func() { <-sem }()
-
-			if err := validateTargetURL(ctx, rawURL); err != nil {
-				log.Debugf("Rejected fetch URL %s: %v", rawURL, err)
-				results[index].Error = err.Error()
-				return
-			}
-
-			content, err := f.fetchURL(ctx, rawURL)
-			if err != nil {
-				log.Debugf("Failed to fetch %s: %v", rawURL, err)
-				results[index].Error = err.Error()
-				return
-			}
-			if content == "" {
-				results[index].Error = "empty content returned"
-				return
-			}
-
-			results[index].Status = FetchStatusCompleted
-			results[index].Content = content
-			results[index].Error = ""
-		}(i, u)
+		return results
 	}
 
-	wg.Wait()
+	for i, rawURL := range urls {
+		text := strings.TrimSpace(contents[rawURL])
+		if text == "" {
+			results[i].Error = "empty content returned"
+			continue
+		}
+		results[i].Status = FetchStatusCompleted
+		results[i].Content = truncate(text)
+	}
 	return results
 }
 
-// fetchURL fetches a single URL via Cloudflare Browser Rendering and returns markdown
-func (f *Fetcher) fetchURL(ctx context.Context, rawURL string) (string, error) {
-	reqBody := cloudflareRequest{
-		URL:                 rawURL,
-		RejectResourceTypes: []string{"image", "media", "font", "stylesheet"},
-		GotoOptions:         &cloudflareGoto{WaitUntil: "networkidle2"},
+func (f *Fetcher) callExa(ctx context.Context, urls []string) (map[string]string, error) {
+	reqBody := exaContentsRequest{
+		URLs:             urls,
+		Text:             true,
+		Livecrawl:        exaLivecrawlMode,
+		LivecrawlTimeout: exaLivecrawlTimeoutMs,
+		MaxAgeHours:      exaMaxAgeHours,
 	}
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", fmt.Errorf("marshal request: %w", err)
+		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.apiURL, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+f.apiToken)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", f.apiKey)
 
 	resp, err := f.client.Do(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("cloudflare API status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("exa API status %d: %s", resp.StatusCode, string(body))
 	}
 
-	var cfResp cloudflareResponse
-	if err := json.Unmarshal(body, &cfResp); err != nil {
-		return "", fmt.Errorf("unmarshal response: %w", err)
+	var exaResp exaContentsResponse
+	if err := json.Unmarshal(body, &exaResp); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
 
-	if !cfResp.Success {
-		if len(cfResp.Errors) > 0 {
-			return "", fmt.Errorf("cloudflare API error: %s", cfResp.Errors[0].Message)
-		}
-		return "", fmt.Errorf("cloudflare API returned success=false")
+	contents := make(map[string]string, len(exaResp.Results))
+	for _, item := range exaResp.Results {
+		contents[item.URL] = item.Text
 	}
-
-	return truncate(strings.TrimSpace(cfResp.Result)), nil
+	return contents, nil
 }
 
 func truncate(s string) string {

@@ -5,27 +5,19 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"sync/atomic"
 	"testing"
 )
 
-// newTestFetcher creates a Fetcher that points at a test server instead of Cloudflare
 func newTestFetcher(apiURL string) *Fetcher {
 	return &Fetcher{
-		client:   http.DefaultClient,
-		apiURL:   apiURL,
-		apiToken: "test-token",
+		client: http.DefaultClient,
+		apiURL: apiURL,
+		apiKey: "test-key",
 	}
 }
 
-// writeCFResponse writes a Cloudflare-style JSON response
-func writeCFResponse(w http.ResponseWriter, success bool, result string, errors []cfError) {
-	resp := cloudflareResponse{
-		Success: success,
-		Result:  result,
-		Errors:  errors,
-	}
+func writeExaResponse(w http.ResponseWriter, results []exaContentsResult) {
+	resp := exaContentsResponse{Results: results}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
@@ -35,14 +27,34 @@ func TestFetchURLs_Success(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
-		if r.Header.Get("Authorization") != "Bearer test-token" {
-			t.Errorf("unexpected auth header: %s", r.Header.Get("Authorization"))
+		if r.Header.Get("x-api-key") != "test-key" {
+			t.Errorf("unexpected api-key header: %s", r.Header.Get("x-api-key"))
 		}
 
-		var req cloudflareRequest
-		json.NewDecoder(r.Body).Decode(&req)
+		var req exaContentsRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			http.Error(w, "decode error", http.StatusBadRequest)
+			return
+		}
+		if !req.Text {
+			t.Error("expected text=true in request")
+		}
+		if req.Livecrawl != exaLivecrawlMode {
+			t.Errorf("expected livecrawl=%q, got %q", exaLivecrawlMode, req.Livecrawl)
+		}
+		if req.LivecrawlTimeout != exaLivecrawlTimeoutMs {
+			t.Errorf("expected livecrawlTimeout=%d, got %d", exaLivecrawlTimeoutMs, req.LivecrawlTimeout)
+		}
+		if req.MaxAgeHours != exaMaxAgeHours {
+			t.Errorf("expected maxAgeHours=%d, got %d", exaMaxAgeHours, req.MaxAgeHours)
+		}
 
-		writeCFResponse(w, true, "# Example\n\nThis is markdown from "+req.URL, nil)
+		results := make([]exaContentsResult, len(req.URLs))
+		for i, u := range req.URLs {
+			results[i] = exaContentsResult{URL: u, Text: "text from " + u}
+		}
+		writeExaResponse(w, results)
 	}))
 	defer server.Close()
 
@@ -55,26 +67,62 @@ func TestFetchURLs_Success(t *testing.T) {
 	if pages[0].URL != "https://example.com" {
 		t.Errorf("expected URL %q, got %q", "https://example.com", pages[0].URL)
 	}
-	if pages[0].Content != "# Example\n\nThis is markdown from https://example.com" {
+	if pages[0].Content != "text from https://example.com" {
 		t.Errorf("unexpected content: %q", pages[0].Content)
 	}
 }
 
-func TestFetchURLs_APIError(t *testing.T) {
+func TestFetchURLResults_PreservesInputOrder(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeCFResponse(w, false, "", []cfError{{Code: 1000, Message: "invalid URL"}})
+		var req exaContentsRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		writeExaResponse(w, []exaContentsResult{
+			{URL: req.URLs[1], Text: "second"},
+			{URL: req.URLs[0], Text: "first"},
+		})
 	}))
 	defer server.Close()
 
 	fetcher := newTestFetcher(server.URL)
-	pages := fetcher.FetchURLs(context.Background(), []string{"https://bad.example"})
+	urls := []string{"https://example.com/a", "https://example.com/b"}
+	results := fetcher.FetchURLResults(context.Background(), urls)
 
-	if len(pages) != 0 {
-		t.Fatalf("expected 0 pages for API error, got %d", len(pages))
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].URL != urls[0] || results[1].URL != urls[1] {
+		t.Fatalf("expected input order preserved, got %+v", results)
+	}
+	if results[0].Content != "first" || results[1].Content != "second" {
+		t.Fatalf("expected matched content, got %+v", results)
 	}
 }
 
-func TestFetchURLs_NonOKStatus(t *testing.T) {
+func TestFetchURLResults_EmptyTextMarksFailed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req exaContentsRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		writeExaResponse(w, []exaContentsResult{
+			{URL: req.URLs[0], Text: ""},
+		})
+	}))
+	defer server.Close()
+
+	fetcher := newTestFetcher(server.URL)
+	results := fetcher.FetchURLResults(context.Background(), []string{"https://example.com"})
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Status != FetchStatusFailed {
+		t.Fatalf("expected failed status, got %q", results[0].Status)
+	}
+	if results[0].Error == "" {
+		t.Fatal("expected error message for empty content")
+	}
+}
+
+func TestFetchURLs_NonOKStatusMarksAllFailed(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("internal error"))
@@ -82,37 +130,41 @@ func TestFetchURLs_NonOKStatus(t *testing.T) {
 	defer server.Close()
 
 	fetcher := newTestFetcher(server.URL)
-	pages := fetcher.FetchURLs(context.Background(), []string{"https://example.com"})
+	results := fetcher.FetchURLResults(context.Background(), []string{
+		"https://example.com/a",
+		"https://example.com/b",
+	})
 
-	if len(pages) != 0 {
-		t.Fatalf("expected 0 pages for 500, got %d", len(pages))
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	for i, r := range results {
+		if r.Status != FetchStatusFailed {
+			t.Fatalf("result %d: expected failed status, got %q", i, r.Status)
+		}
+		if r.Error == "" {
+			t.Fatalf("result %d: expected error", i)
+		}
 	}
 }
 
-func TestFetchURLs_ParallelMultipleURLs(t *testing.T) {
+func TestFetchURLs_MalformedJSONMarksAllFailed(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req cloudflareRequest
-		json.NewDecoder(r.Body).Decode(&req)
-		writeCFResponse(w, true, "page for "+req.URL, nil)
+		w.Write([]byte("not json"))
 	}))
 	defer server.Close()
 
 	fetcher := newTestFetcher(server.URL)
-	urls := []string{
-		"https://example.com/a",
-		"https://example.com/b",
-		"https://example.com/c",
-	}
-	pages := fetcher.FetchURLs(context.Background(), urls)
+	pages := fetcher.FetchURLs(context.Background(), []string{"https://example.com"})
 
-	if len(pages) != 3 {
-		t.Fatalf("expected 3 pages, got %d", len(pages))
+	if len(pages) != 0 {
+		t.Fatalf("expected 0 pages on malformed response, got %d", len(pages))
 	}
 }
 
 func TestFetchURLs_ContextCanceled(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeCFResponse(w, true, "content", nil)
+		writeExaResponse(w, []exaContentsResult{{URL: "https://example.com", Text: "ok"}})
 	}))
 	defer server.Close()
 
@@ -127,98 +179,11 @@ func TestFetchURLs_ContextCanceled(t *testing.T) {
 	}
 }
 
-func TestFetchURLResults_ContextCanceledPreservesInputOrderMetadata(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeCFResponse(w, true, "content", nil)
-	}))
-	defer server.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	fetcher := newTestFetcher(server.URL)
-	urls := []string{"https://example.com/a", "https://example.com/b"}
-	results := fetcher.FetchURLResults(ctx, urls)
-
-	if len(results) != len(urls) {
-		t.Fatalf("expected %d results, got %d", len(urls), len(results))
-	}
-	for i, result := range results {
-		if result.URL != urls[i] {
-			t.Fatalf("expected result %d url %q, got %q", i, urls[i], result.URL)
-		}
-		if result.Status != FetchStatusFailed {
-			t.Fatalf("expected result %d status %q, got %q", i, FetchStatusFailed, result.Status)
-		}
-	}
-}
-
-func TestFetchURLs_EmptyResult(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeCFResponse(w, true, "   ", nil)
-	}))
-	defer server.Close()
-
-	fetcher := newTestFetcher(server.URL)
-	pages := fetcher.FetchURLs(context.Background(), []string{"https://example.com"})
-
-	if len(pages) != 0 {
-		t.Fatalf("expected 0 pages for empty content, got %d", len(pages))
-	}
-}
-
-func TestValidateTargetURL_RejectsUnsafeTargets(t *testing.T) {
-	credentialURL := (&url.URL{
-		Scheme: "https",
-		Host:   "example.com",
-		User:   url.UserPassword("username", "placeholder"),
-	}).String()
-
-	tests := []string{
-		"http://127.0.0.1",
-		"http://[::1]",
-		"http://localhost",
-		"http://service.internal",
-		"file:///etc/passwd",
-		credentialURL,
-		"https://192.168.1.10",
-	}
-
-	for _, rawURL := range tests {
-		t.Run(rawURL, func(t *testing.T) {
-			if err := validateTargetURL(context.Background(), rawURL); err == nil {
-				t.Fatalf("expected %q to be rejected", rawURL)
-			}
-		})
-	}
-}
-
-func TestValidateTargetURL_AllowsPublicHTTPSTarget(t *testing.T) {
-	if err := validateTargetURL(context.Background(), "https://93.184.216.34"); err != nil {
-		t.Fatalf("expected public IP target to be allowed, got %v", err)
-	}
-}
-
-func TestFetchURLs_SkipsUnsafeTargetsBeforeCallingAPI(t *testing.T) {
-	var calls atomic.Int64
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		writeCFResponse(w, true, "content", nil)
-	}))
-	defer server.Close()
-
-	fetcher := newTestFetcher(server.URL)
-	pages := fetcher.FetchURLs(context.Background(), []string{
-		"http://127.0.0.1",
-		"http://localhost",
-		"https://192.168.1.10",
-	})
-
-	if len(pages) != 0 {
-		t.Fatalf("expected 0 pages for unsafe targets, got %d", len(pages))
-	}
-	if calls.Load() != 0 {
-		t.Fatalf("expected Cloudflare API not to be called, got %d calls", calls.Load())
+func TestFetchURLs_EmptyInput(t *testing.T) {
+	fetcher := newTestFetcher("http://unreachable.invalid")
+	results := fetcher.FetchURLResults(context.Background(), nil)
+	if len(results) != 0 {
+		t.Fatalf("expected 0 results for empty input, got %d", len(results))
 	}
 }
 
