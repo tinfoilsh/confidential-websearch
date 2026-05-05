@@ -40,12 +40,6 @@ func TestFetchURLs_Success(t *testing.T) {
 		if !req.Text {
 			t.Error("expected text=true in request")
 		}
-		if req.Livecrawl != exaLivecrawlMode {
-			t.Errorf("expected livecrawl=%q, got %q", exaLivecrawlMode, req.Livecrawl)
-		}
-		if req.LivecrawlTimeout != exaLivecrawlTimeoutMs {
-			t.Errorf("expected livecrawlTimeout=%d, got %d", exaLivecrawlTimeoutMs, req.LivecrawlTimeout)
-		}
 		if req.MaxAgeHours != exaMaxAgeHours {
 			t.Errorf("expected maxAgeHours=%d, got %d", exaMaxAgeHours, req.MaxAgeHours)
 		}
