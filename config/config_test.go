@@ -6,7 +6,7 @@ import (
 )
 
 func TestLoad_Defaults(t *testing.T) {
-	envVars := []string{"EXA_API_KEY", "LISTEN_ADDR", "SAFEGUARD_MODEL", "ENABLE_PII_CHECK", "ENABLE_INJECTION_CHECK", "ENABLE_FETCH_INJECTION_CHECK", "CONTROL_PLANE_URL", "USAGE_REPORTER_ID", "USAGE_REPORTER_SECRET"}
+	envVars := []string{"EXA_API_KEY", "LISTEN_ADDR", "SAFEGUARD_MODEL", "ENABLE_PII_CHECK", "ENABLE_INJECTION_CHECK", "CONTROL_PLANE_URL", "USAGE_REPORTER_ID", "USAGE_REPORTER_SECRET"}
 	originalValues := make(map[string]string)
 	for _, key := range envVars {
 		originalValues[key] = os.Getenv(key)
@@ -90,18 +90,6 @@ func TestLoad_CustomValues(t *testing.T) {
 	}
 	if cfg.UsageReporterSecret != "secret" {
 		t.Errorf("UsageReporterSecret: expected custom reporter secret, got '%s'", cfg.UsageReporterSecret)
-	}
-}
-
-func TestLoad_UsesFetchInjectionCheckEnvAlias(t *testing.T) {
-	os.Unsetenv("ENABLE_INJECTION_CHECK")
-	os.Setenv("ENABLE_FETCH_INJECTION_CHECK", "true")
-	defer os.Unsetenv("ENABLE_FETCH_INJECTION_CHECK")
-
-	cfg := Load()
-
-	if !cfg.EnableInjectionCheck {
-		t.Error("EnableInjectionCheck: expected true from alias")
 	}
 }
 
