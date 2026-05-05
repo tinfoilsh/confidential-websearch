@@ -9,8 +9,6 @@ import (
 type Config struct {
 	TinfoilAPIKey        string
 	ExaAPIKey            string
-	CloudflareAccountID  string
-	CloudflareAPIToken   string
 	ControlPlaneURL      string
 	UsageReporterID      string
 	UsageReporterSecret  string
@@ -25,8 +23,6 @@ func Load() *Config {
 	return &Config{
 		TinfoilAPIKey:        os.Getenv("TINFOIL_API_KEY"),
 		ExaAPIKey:            os.Getenv("EXA_API_KEY"),
-		CloudflareAccountID:  os.Getenv("CLOUDFLARE_ACCOUNT_ID"),
-		CloudflareAPIToken:   os.Getenv("CLOUDFLARE_API_TOKEN"),
 		ControlPlaneURL:      getEnv("CONTROL_PLANE_URL", "https://api.tinfoil.sh"),
 		UsageReporterID:      getEnv("USAGE_REPORTER_ID", "websearch-mcp"),
 		UsageReporterSecret:  os.Getenv("USAGE_REPORTER_SECRET"),
