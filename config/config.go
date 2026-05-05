@@ -33,7 +33,7 @@ func Load() *Config {
 		ListenAddr:           getEnv("LISTEN_ADDR", ":8089"),
 		SafeguardModel:       getEnv("SAFEGUARD_MODEL", "gpt-oss-safeguard-120b"),
 		EnablePIICheck:       getEnvBool("ENABLE_PII_CHECK", true),
-		EnableInjectionCheck: getInjectionCheckEnvBool(false),
+		EnableInjectionCheck: getEnvBool("ENABLE_INJECTION_CHECK", false),
 	}
 }
 
@@ -54,14 +54,4 @@ func getEnvBool(key string, fallback bool) bool {
 		return fallback
 	}
 	return parsed
-}
-
-func getInjectionCheckEnvBool(fallback bool) bool {
-	if val := os.Getenv("ENABLE_INJECTION_CHECK"); val != "" {
-		return getEnvBool("ENABLE_INJECTION_CHECK", fallback)
-	}
-	if val := os.Getenv("ENABLE_FETCH_INJECTION_CHECK"); val != "" {
-		return getEnvBool("ENABLE_FETCH_INJECTION_CHECK", fallback)
-	}
-	return fallback
 }
