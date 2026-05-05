@@ -72,10 +72,7 @@ func main() {
 			log.Fatalf("Failed to create search provider: %v", err)
 		}
 
-		if cfg.CloudflareAccountID == "" || cfg.CloudflareAPIToken == "" {
-			log.Fatal("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must be set")
-		}
-		fetcher := fetch.NewFetcher(cfg.CloudflareAccountID, cfg.CloudflareAPIToken)
+		fetcher := fetch.NewFetcher(cfg.ExaAPIKey)
 
 		safeguardClient := safeguard.NewClient(client, cfg.SafeguardModel)
 		svc = tools.NewService(searcher, fetcher, safeguardClient)

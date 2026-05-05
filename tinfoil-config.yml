@@ -13,8 +13,6 @@ containers:
     secrets:
       - EXA_API_KEY
       - TINFOIL_API_KEY
-      - CLOUDFLARE_ACCOUNT_ID
-      - CLOUDFLARE_API_TOKEN
       - USAGE_REPORTER_SECRET
 
 shim:

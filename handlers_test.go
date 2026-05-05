@@ -334,7 +334,7 @@ func TestSearchHandler_InvalidContentMode(t *testing.T) {
 }
 
 func TestFetchHandler_EmptyURLs(t *testing.T) {
-	realFetcher := fetch.NewFetcher("test-account", "test-token")
+	realFetcher := fetch.NewFetcher("test-key")
 	svc := tools.NewService(nil, realFetcher, nil)
 	handler := newFetchHandler(svc, &config.Config{}, nil)
 
@@ -530,7 +530,7 @@ func TestMCPServer_ToolDiscovery(t *testing.T) {
 
 	searcher := &mockSearchProvider{results: []search.Result{{Title: "Test"}}}
 	cfg := &config.Config{}
-	svc := tools.NewService(searcher, fetch.NewFetcher("test", "test"), nil)
+	svc := tools.NewService(searcher, fetch.NewFetcher("test"), nil)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "search",
