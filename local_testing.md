@@ -12,7 +12,7 @@ router guide focuses on model-facing behavior.
 
 ### Fixture mode
 
-Use this when you want deterministic local behavior without Exa or Cloudflare.
+Use this when you want deterministic local behavior without calling Exa.
 
 ```bash
 LOCAL_TEST_MODE=1 \
@@ -22,8 +22,8 @@ go run .
 
 ### Real-provider mode
 
-Use this when you want to probe the real Exa search path and Cloudflare fetch
-path. If this repo has a local `.env`, load it first.
+Use this when you want to probe the real Exa search and fetch paths. If this
+repo has a local `.env`, load it first.
 
 ```bash
 set -a && . ./.env && set +a

@@ -1,6 +1,6 @@
 # Confidential Web Search MCP Server
 
-A secure Model Context Protocol (MCP) server that exposes `search` and `fetch` tools backed by Exa and Cloudflare Browser Rendering, running inside a Tinfoil enclave.
+A secure Model Context Protocol (MCP) server that exposes `search` and `fetch` tools backed by Exa, running inside a Tinfoil enclave.
 
 The server exposes two surfaces:
 
@@ -30,7 +30,7 @@ MCP Client (e.g. router, agent runtime)
         └──────────────────┬───────────────────┘
                            ▼
                 ┌───────────────┐      ┌───────────────────┐
-                │ Exa Search    │      │ Cloudflare Render │
+                │ Exa Search    │      │ Exa Contents      │
                 └───────────────┘      └───────────────────┘
 ```
 
@@ -39,8 +39,6 @@ MCP Client (e.g. router, agent runtime)
 ```bash
 export TINFOIL_API_KEY="your-tinfoil-api-key"
 export EXA_API_KEY="your-exa-api-key"
-export CLOUDFLARE_ACCOUNT_ID="your-cloudflare-account-id"
-export CLOUDFLARE_API_TOKEN="your-cloudflare-api-token"
 export USAGE_REPORTER_SECRET="your-usage-reporter-secret"
 
 go run .
@@ -49,7 +47,7 @@ go run .
 go run . -v
 ```
 
-For local development without real upstream providers, set `LOCAL_TEST_MODE=1` to use built-in deterministic fixtures instead of Exa and Cloudflare. In that mode the server also mounts `GET /debug/last-call`, which returns the arguments of the most recent MCP tool call and is consumed by the eval harness.
+For local development without real upstream providers, set `LOCAL_TEST_MODE=1` to use built-in deterministic fixtures instead of Exa. In that mode the server also mounts `GET /debug/last-call`, which returns the arguments of the most recent MCP tool call and is consumed by the eval harness.
 
 See [`local_testing.md`](./local_testing.md) for the full runbook, including how to exercise the server through the model router and the eval harness.
 
@@ -58,9 +56,7 @@ See [`local_testing.md`](./local_testing.md) for the full runbook, including how
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TINFOIL_API_KEY` | - | Tinfoil API key for the in-enclave safeguard model |
-| `EXA_API_KEY` | - | Exa search API key |
-| `CLOUDFLARE_ACCOUNT_ID` | - | Cloudflare account ID for Browser Rendering |
-| `CLOUDFLARE_API_TOKEN` | - | Cloudflare API token for Browser Rendering |
+| `EXA_API_KEY` | - | Exa API key (used for both search and fetch) |
 | `SAFEGUARD_MODEL` | `gpt-oss-safeguard-120b` | Model used for safety filtering |
 | `ENABLE_PII_CHECK` | `true` | Run PII filtering on outgoing search queries. A per-request `X-Tinfoil-Tool-PII-Check` header can override this (see [Router Integration](#router-integration)). |
 | `ENABLE_INJECTION_CHECK` | `false` | Run prompt-injection filtering on search/fetch output. A per-request `X-Tinfoil-Tool-Injection-Check` header can override this. |
@@ -68,7 +64,7 @@ See [`local_testing.md`](./local_testing.md) for the full runbook, including how
 | `CONTROL_PLANE_URL` | `https://api.tinfoil.sh` | Base URL for the usage reporter |
 | `USAGE_REPORTER_ID` | `websearch-mcp` | Identifier reported with usage events |
 | `USAGE_REPORTER_SECRET` | - | Shared secret for signing usage reports |
-| `LOCAL_TEST_MODE` | - | Set to `1` to serve static fixtures instead of calling Exa/Cloudflare |
+| `LOCAL_TEST_MODE` | - | Set to `1` to serve static fixtures instead of calling Exa |
 
 ## Tools
 
@@ -112,13 +108,13 @@ Search the web and return ranked results with titles, URLs, snippets, and public
 
 ### `fetch`
 
-Fetch one or more web pages via Cloudflare Browser Rendering and return the rendered markdown.
+Fetch one or more web pages via the Exa Contents API and return the page text.
 
 #### Arguments
 
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| `urls` | string[] | yes | - | One or more HTTP/HTTPS URLs. Capped at 20 per request. Each page is rendered in a headless browser and converted to clean markdown. |
+| `urls` | string[] | yes | - | One or more HTTP/HTTPS URLs. Capped at 20 per request. Each page is fetched via Exa Contents (livecrawl preferred, with a short cache horizon). |
 | `allowed_domains` | string[] | no | - | If set, reject any URL whose host is not in this list before it is sent to the renderer. |
 
 #### Response
@@ -128,7 +124,7 @@ The response contains a per-URL `results` list that preserves input order (inclu
 ```json
 {
   "pages": [
-    { "url": "string", "content": "string (markdown)" }
+    { "url": "string", "content": "string (text)" }
   ],
   "results": [
     {
@@ -228,11 +224,7 @@ Blocks outgoing search queries that would leak sensitive personally identifiable
 
 ### Prompt Injection Detection
 
-Filters search results and fetched pages that contain prompt injection attempts before they are returned to the caller.
-
-### Fetch Target Validation
-
-Rejects unsafe fetch targets before they reach Cloudflare Browser Rendering, including localhost, internal hostnames, private IP ranges, and unsupported URL schemes.
+Filters fetched pages that contain prompt injection attempts before they are returned to the caller.
 
 ## Docker
 
@@ -241,8 +233,6 @@ docker build -t websearch-mcp .
 docker run -p 8089:8089 \
   -e TINFOIL_API_KEY=$TINFOIL_API_KEY \
   -e EXA_API_KEY=$EXA_API_KEY \
-  -e CLOUDFLARE_ACCOUNT_ID=$CLOUDFLARE_ACCOUNT_ID \
-  -e CLOUDFLARE_API_TOKEN=$CLOUDFLARE_API_TOKEN \
   -e USAGE_REPORTER_SECRET=$USAGE_REPORTER_SECRET \
   websearch-mcp
 ```
