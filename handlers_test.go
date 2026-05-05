@@ -164,7 +164,7 @@ func TestSearchHandler_InjectionCheckEnabled(t *testing.T) {
 	svc := tools.NewService(searcher, nil, &mockSafeguard{
 		blocked: map[string]string{"unsafe": "prompt injection detected"},
 	}, nil)
-	handler := newSearchHandler(svc, &config.Config{EnableInjectionCheck: true}, nil)
+	handler := newSearchHandler(svc, &config.Config{EnableSearchInjectionCheck: true}, nil)
 
 	_, result, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "test"})
 	if err != nil {
@@ -458,7 +458,7 @@ func TestSearchHandler_HeaderOverridesEnvDefaults(t *testing.T) {
 	req.Header.Set(headerPIICheck, "true")
 	req.Header.Set(headerInjectionCheck, "false")
 
-	handler := newSearchHandler(svc, &config.Config{EnablePIICheck: false, EnableInjectionCheck: true}, req)
+	handler := newSearchHandler(svc, &config.Config{EnablePIICheck: false, EnableSearchInjectionCheck: true}, req)
 	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "john@example.com"})
 	if err == nil {
 		t.Fatalf("expected PII block when header opts PII check on; got nil error")
@@ -473,7 +473,7 @@ func TestSearchHandler_AbsentHeadersFallBackToEnv(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 
-	handler := newSearchHandler(svc, &config.Config{EnablePIICheck: false, EnableInjectionCheck: false}, req)
+	handler := newSearchHandler(svc, &config.Config{EnablePIICheck: false, EnableSearchInjectionCheck: false}, req)
 	_, result, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "john@example.com"})
 	if err != nil {
 		t.Fatalf("unexpected error when both env defaults off and no header present: %v", err)

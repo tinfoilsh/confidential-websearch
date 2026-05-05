@@ -57,9 +57,11 @@ See [`local_testing.md`](./local_testing.md) for the full runbook, including how
 |----------|---------|-------------|
 | `TINFOIL_API_KEY` | - | Tinfoil API key for the in-enclave safeguard model |
 | `EXA_API_KEY` | - | Exa API key (used for both search and fetch) |
+| `CLOUDFLARE_API_TOKEN` | - | Cloudflare Radar API token used to load the top-domain list that bypasses prompt-injection filtering. When unset, every fetched page and search result goes through the safeguard. |
 | `SAFEGUARD_MODEL` | `gpt-oss-safeguard-120b` | Model used for safety filtering |
 | `ENABLE_PII_CHECK` | `true` | Run PII filtering on outgoing search queries. A per-request `X-Tinfoil-Tool-PII-Check` header can override this (see [Router Integration](#router-integration)). |
-| `ENABLE_INJECTION_CHECK` | `false` | Run prompt-injection filtering on search/fetch output. A per-request `X-Tinfoil-Tool-Injection-Check` header can override this. |
+| `ENABLE_FETCH_INJECTION_CHECK` | `true` | Run prompt-injection filtering on fetched pages by default (top-popularity domains are skipped unless the caller explicitly opts in via header). |
+| `ENABLE_SEARCH_INJECTION_CHECK` | `true` | Run prompt-injection filtering on search results by default (same top-domain skip applies). |
 | `LISTEN_ADDR` | `:8089` | Address to listen on |
 | `CONTROL_PLANE_URL` | `https://api.tinfoil.sh` | Base URL for the usage reporter |
 | `USAGE_REPORTER_ID` | `websearch-mcp` | Identifier reported with usage events |
@@ -212,7 +214,7 @@ When this server runs behind the Tinfoil model router, the router can override t
 | Header | Values | Effect |
 |--------|--------|--------|
 | `X-Tinfoil-Tool-PII-Check` | `true`, `false`, `1`, `0` | Overrides `ENABLE_PII_CHECK` for this request only. |
-| `X-Tinfoil-Tool-Injection-Check` | `true`, `false`, `1`, `0` | Overrides `ENABLE_INJECTION_CHECK` for this request only. |
+| `X-Tinfoil-Tool-Injection-Check` | `true`, `false`, `1`, `0` | Overrides the env defaults for fetch and search prompt-injection filtering for this request only. An explicit `true` also disables the popularity-based skip and runs the safeguard on every result. |
 
 Missing, empty, or unparseable values fall back to the env default, so a malformed header can never silently weaken filtering below what the operator configured.
 
@@ -224,7 +226,7 @@ Blocks outgoing search queries that would leak sensitive personally identifiable
 
 ### Prompt Injection Detection
 
-Filters fetched pages that contain prompt injection attempts before they are returned to the caller.
+Filters fetched pages and search results that contain prompt injection attempts before they are returned to the caller. Pages hosted on the top ~500k most-visited domains (per the Cloudflare Radar list, refreshed every 24 hours) are treated as trusted and bypass the safeguard. Callers that want maximum coverage can pass `X-Tinfoil-Tool-Injection-Check: true` to force the safeguard on every result regardless of host popularity.
 
 ## Docker
 
