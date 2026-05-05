@@ -11,6 +11,7 @@ require (
 	github.com/sirupsen/logrus v1.9.3
 	github.com/tinfoilsh/tinfoil-go v0.11.3
 	github.com/tinfoilsh/usage-reporting-go v0.0.3
+	golang.org/x/net v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -93,7 +94,6 @@ require (
 	golang.org/x/crypto v0.46.0 // indirect
 	golang.org/x/exp v0.0.0-20251219203646-944ab1f22d93 // indirect
 	golang.org/x/mod v0.31.0 // indirect
-	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
