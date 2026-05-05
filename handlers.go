@@ -50,6 +50,31 @@ func resolveSafetyFlag(req *http.Request, header string, fallback bool) bool {
 	}
 }
 
+// resolveInjectionCheck returns the tri-state opt-in for prompt-injection
+// filtering: nil means "operator default (on) applies and the popularity
+// skip is allowed", a non-nil pointer is a caller's explicit opt-in/out and
+// disables the popularity skip downstream.
+func resolveInjectionCheck(req *http.Request, fallback bool) *bool {
+	if req != nil {
+		raw := strings.TrimSpace(req.Header.Get(headerInjectionCheck))
+		if raw != "" {
+			switch strings.ToLower(raw) {
+			case "true", "1":
+				v := true
+				return &v
+			case "false", "0":
+				v := false
+				return &v
+			}
+		}
+	}
+	if fallback {
+		return nil
+	}
+	v := false
+	return &v
+}
+
 type SearchArgs struct {
 	Query               string   `json:"query" jsonschema:"Natural language search query. Be specific and descriptive for better results. Max ~400 characters."`
 	MaxResults          int      `json:"max_results,omitempty" jsonschema:"Number of results to return (1-30). Defaults to 10 if omitted. Use fewer for focused queries and more for broad research."`
@@ -114,7 +139,7 @@ func newSearchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Requ
 			MaxContentCharacters:  args.MaxContentChars,
 			ContentMode:           contentMode,
 			PIICheckEnabled:       resolveSafetyFlag(httpReq, headerPIICheck, cfg.EnablePIICheck),
-			InjectionCheckEnabled: resolveSafetyFlag(httpReq, headerInjectionCheck, cfg.EnableInjectionCheck),
+			InjectionCheckEnabled: resolveInjectionCheck(httpReq, cfg.EnableInjectionCheck),
 			UserLocationCountry:   strings.ToUpper(strings.TrimSpace(args.UserLocationCountry)),
 			AllowedDomains:        normalizeDomains(args.AllowedDomains),
 			ExcludedDomains:       excludedDomains,
@@ -147,7 +172,7 @@ func newFetchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Reque
 
 		results := svc.FetchDetailed(ctx, urls, tools.Options{
 			PIICheckEnabled:       false,
-			InjectionCheckEnabled: resolveSafetyFlag(httpReq, headerInjectionCheck, cfg.EnableInjectionCheck),
+			InjectionCheckEnabled: resolveInjectionCheck(httpReq, cfg.EnableInjectionCheck),
 		})
 		results = append(results, rejected...)
 

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tinfoilsh/confidential-websearch/domainrank"
 	"github.com/tinfoilsh/confidential-websearch/fetch"
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
 	"github.com/tinfoilsh/confidential-websearch/search"
@@ -100,7 +101,7 @@ func newLocalTestService() (*tools.Service, *LocalCallRecorder) {
 	recorder := NewLocalCallRecorder()
 	searcher := localTestSearcher{recorder: recorder}
 	fetcher := localTestFetcher{recorder: recorder}
-	return tools.NewService(searcher, fetcher, localTestSafeguard{}), recorder
+	return tools.NewService(searcher, fetcher, localTestSafeguard{}, domainrank.NopRanker{}), recorder
 }
 
 type localTestSearcher struct {
