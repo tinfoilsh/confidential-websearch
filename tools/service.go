@@ -115,6 +115,10 @@ func (s *Service) Search(ctx context.Context, query string, opts Options) (Searc
 		return SearchOutcome{}, err
 	}
 
+	if opts.InjectionCheckEnabled && len(results) > 0 && s.safeguard != nil {
+		results = filterSearchResults(ctx, s.safeguard, results)
+	}
+
 	return SearchOutcome{Results: results}, nil
 }
 
@@ -179,6 +183,27 @@ func (s *Service) FetchDetailed(ctx context.Context, urls []string, opts Options
 	}
 
 	return results
+}
+
+func filterSearchResults(ctx context.Context, checker SafeguardChecker, results []search.Result) []search.Result {
+	contents := make([]string, len(results))
+	for i, result := range results {
+		contents[i] = result.Content
+	}
+
+	checks := safeguard.CheckItems(ctx, checker, safeguard.PromptInjectionPolicy, contents)
+	filtered := make([]search.Result, 0, len(results))
+	for i, check := range checks {
+		if check.Err != nil {
+			log.WithError(check.Err).Warn("prompt injection safeguard unavailable; keeping search result")
+			filtered = append(filtered, results[i])
+			continue
+		}
+		if !check.Violation {
+			filtered = append(filtered, results[i])
+		}
+	}
+	return filtered
 }
 
 func filterFetchedPages(ctx context.Context, checker SafeguardChecker, pages []fetch.FetchedPage) []fetch.FetchedPage {

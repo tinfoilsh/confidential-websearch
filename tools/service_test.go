@@ -54,15 +54,7 @@ func (s *stubSafeguard) Check(_ context.Context, _ string, content string) (*saf
 	return &safeguard.CheckResult{}, nil
 }
 
-type recordingSafeguard struct {
-	stub  stubSafeguard
-	calls int
-}
 
-func (r *recordingSafeguard) Check(ctx context.Context, policy, content string) (*safeguard.CheckResult, error) {
-	r.calls++
-	return r.stub.Check(ctx, policy, content)
-}
 
 func TestSearch_RequiresQuery(t *testing.T) {
 	service := NewService(&stubSearcher{}, nil, nil)
@@ -116,25 +108,25 @@ func TestSearch_PIIBlocksQuery(t *testing.T) {
 	}
 }
 
-func TestSearch_InjectionCheckSkippedForSearchResults(t *testing.T) {
+func TestSearch_InjectionCheckFiltersResults(t *testing.T) {
 	searcher := &stubSearcher{
 		results: []search.Result{
 			{Title: "Safe", URL: "https://example.com/safe", Content: "safe"},
 			{Title: "Unsafe", URL: "https://example.com/unsafe", Content: "bad instructions"},
 		},
 	}
-	sg := &recordingSafeguard{stub: stubSafeguard{blocked: map[string]string{"bad instructions": "injection"}}}
+	sg := &stubSafeguard{blocked: map[string]string{"bad instructions": "injection"}}
 	service := NewService(searcher, nil, sg)
 
 	outcome, err := service.Search(context.Background(), "topic", Options{InjectionCheckEnabled: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(outcome.Results) != 2 {
-		t.Fatalf("expected search results to pass through unfiltered, got %d", len(outcome.Results))
+	if len(outcome.Results) != 1 {
+		t.Fatalf("expected injection-free result only, got %d", len(outcome.Results))
 	}
-	if sg.calls != 0 {
-		t.Fatalf("expected safeguard not to be called for search results, got %d calls", sg.calls)
+	if outcome.Results[0].Title != "Safe" {
+		t.Fatalf("expected Safe result to remain, got %q", outcome.Results[0].Title)
 	}
 }
 
