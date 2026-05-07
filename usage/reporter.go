@@ -8,14 +8,20 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/sirupsen/logrus"
 	usageclient "github.com/tinfoilsh/usage-reporting-go/client"
 	"github.com/tinfoilsh/usage-reporting-go/contract"
+	"github.com/tinfoilsh/usage-reporting-go/usagecontext"
 )
 
-const sessionCacheTTL = 30 * time.Minute
+const (
+	sessionCacheTTL     = 30 * time.Minute
+	usageContextMaxSkew = 10 * time.Minute
+)
 
 type Reporter struct {
-	client *usageclient.ReporterClient
+	client             *usageclient.ReporterClient
+	usageContextSecret string
 
 	mu         sync.Mutex
 	reportedAt map[string]time.Time
@@ -34,7 +40,8 @@ func NewReporter(endpoint, reporterID, secret string) (*Reporter, error) {
 			},
 			Secret: secret,
 		}),
-		reportedAt: make(map[string]time.Time),
+		usageContextSecret: secret,
+		reportedAt:         make(map[string]time.Time),
 	}, nil
 }
 
@@ -80,6 +87,29 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) {
 	r.reportedAt[rc.RequestID] = now
 	r.mu.Unlock()
 
+	customerRequests := int64(1)
+	attributes := map[string]string{
+		"model":     rc.Model,
+		"route":     rc.Route,
+		"streaming": map[bool]string{true: "true", false: "false"}[rc.Streaming],
+	}
+	if r.usageContextSecret != "" {
+		ctx, ok, err := usagecontext.FromHeaders(req.Header, r.usageContextSecret, now, usageContextMaxSkew)
+		if err != nil {
+			log.WithError(err).Warn("invalid usage context; using direct request count")
+		} else if ok {
+			if ctx.CustomerRequestCount != nil && *ctx.CustomerRequestCount >= 0 {
+				customerRequests = *ctx.CustomerRequestCount
+			}
+			if ctx.RootRequestID != "" {
+				attributes["root_request_id"] = ctx.RootRequestID
+			}
+			if ctx.ParentService != "" {
+				attributes["parent_service"] = ctx.ParentService
+			}
+		}
+	}
+
 	r.client.AddEvent(contract.Event{
 		RequestID:  rc.RequestID,
 		OccurredAt: now,
@@ -91,11 +121,10 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) {
 		Meters: []contract.Meter{
 			{Name: "requests", Quantity: 1},
 		},
-		Attributes: map[string]string{
-			"model":     rc.Model,
-			"route":     rc.Route,
-			"streaming": map[bool]string{true: "true", false: "false"}[rc.Streaming],
+		Counters: []contract.Counter{
+			{Name: contract.CounterCustomerRequests, Quantity: customerRequests},
 		},
+		Attributes: attributes,
 	})
 }
 
