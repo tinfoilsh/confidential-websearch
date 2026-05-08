@@ -91,6 +91,13 @@ func TestReportSessionRejectsInvalidUsageContext(t *testing.T) {
 	expectNoBatch(t, batches)
 }
 
+func TestNewReporterRequiresUsageContextSecret(t *testing.T) {
+	_, err := NewReporter("https://controlplane.example/api/internal/usage-reports", "reporter", "reporter-secret", "")
+	if err == nil {
+		t.Fatal("expected NewReporter to reject empty usage context secret")
+	}
+}
+
 func TestReportSessionDeduplicatesRequestID(t *testing.T) {
 	reporter, batches, closeServer := newTestReporter(t, "secret")
 	defer closeServer()

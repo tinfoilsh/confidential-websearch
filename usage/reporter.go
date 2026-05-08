@@ -26,9 +26,18 @@ type Reporter struct {
 	reportedAt map[string]time.Time
 }
 
-func NewReporter(endpoint, reporterID, reporterSecret string) (*Reporter, error) {
+// NewReporter constructs a usage reporter wired to the controlplane batch
+// ingestion endpoint. The two HMAC secrets are deliberately separate:
+// reporterSecret authenticates outbound usage batches to the controlplane,
+// while usageContextSecret verifies inbound signed billing context attached
+// by upstream services (e.g. the model router) so this service knows whether
+// the call has already been counted as a customer-billable request.
+func NewReporter(endpoint, reporterID, reporterSecret, usageContextSecret string) (*Reporter, error) {
 	if err := validateReporterEndpoint(endpoint); err != nil {
 		return nil, err
+	}
+	if usageContextSecret == "" {
+		return nil, fmt.Errorf("usage context secret is required")
 	}
 	return &Reporter{
 		client: usageclient.New(usageclient.Config{
@@ -36,7 +45,7 @@ func NewReporter(endpoint, reporterID, reporterSecret string) (*Reporter, error)
 			ReporterID: reporterID,
 			Secret:     reporterSecret,
 		}),
-		usageContextSecret: reporterSecret,
+		usageContextSecret: usageContextSecret,
 		reportedAt:         make(map[string]time.Time),
 	}, nil
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/openai/openai-go/v3/option"
 	log "github.com/sirupsen/logrus"
 	"github.com/tinfoilsh/tinfoil-go"
+	"github.com/tinfoilsh/usage-reporting-go/contract"
 
 	"github.com/tinfoilsh/confidential-websearch/config"
 	"github.com/tinfoilsh/confidential-websearch/domainrank"
@@ -37,14 +38,21 @@ func main() {
 	}
 
 	cfg := config.Load()
+	if cfg.UsageReporterSecret == "" {
+		log.Fatal("USAGE_REPORTER_SECRET is required")
+	}
+	if cfg.UsageContextSecret == "" {
+		log.Fatal("USAGE_CONTEXT_SECRET is required")
+	}
 	toolDescriptions, err := config.LoadToolDescriptions()
 	if err != nil {
 		log.Fatalf("Failed to load tool descriptions: %v", err)
 	}
 	reporter, err := usage.NewReporter(
-		strings.TrimRight(cfg.ControlPlaneURL, "/")+"/api/internal/usage-reports",
+		strings.TrimRight(cfg.ControlPlaneURL, "/")+contract.IngestionPath,
 		cfg.UsageReporterID,
 		cfg.UsageReporterSecret,
+		cfg.UsageContextSecret,
 	)
 	if err != nil {
 		log.Fatalf("Failed to create usage reporter: %v", err)

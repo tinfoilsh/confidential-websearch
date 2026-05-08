@@ -40,6 +40,7 @@ MCP Client (e.g. router, agent runtime)
 export TINFOIL_API_KEY="your-tinfoil-api-key"
 export EXA_API_KEY="your-exa-api-key"
 export USAGE_REPORTER_SECRET="your-usage-reporter-secret"
+export USAGE_CONTEXT_SECRET="your-usage-context-secret"
 
 go run .
 
@@ -65,7 +66,8 @@ See [`local_testing.md`](./local_testing.md) for the full runbook, including how
 | `LISTEN_ADDR` | `:8089` | Address to listen on |
 | `CONTROL_PLANE_URL` | `https://api.tinfoil.sh` | Base URL for the usage reporter |
 | `USAGE_REPORTER_ID` | `websearch-mcp` | Identifier reported with usage events |
-| `USAGE_REPORTER_SECRET` | - | Shared secret for signing usage reports |
+| `USAGE_REPORTER_SECRET` | - | Shared secret for signing outbound usage reports to the controlplane |
+| `USAGE_CONTEXT_SECRET` | - | Shared secret for verifying inbound usage-context headers attached by upstream services |
 | `LOCAL_TEST_MODE` | - | Set to `1` to serve static fixtures instead of calling Exa |
 
 ## Tools
@@ -236,6 +238,7 @@ docker run -p 8089:8089 \
   -e TINFOIL_API_KEY=$TINFOIL_API_KEY \
   -e EXA_API_KEY=$EXA_API_KEY \
   -e USAGE_REPORTER_SECRET=$USAGE_REPORTER_SECRET \
+  -e USAGE_CONTEXT_SECRET=$USAGE_CONTEXT_SECRET \
   websearch-mcp
 ```
 
