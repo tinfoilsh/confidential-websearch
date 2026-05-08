@@ -64,7 +64,9 @@ func permissiveSchema[T any]() (*jsonschema.Schema, error) {
 func newSearchHandlerWithUsage(svc *tools.Service, cfg *config.Config, reporter *usage.Reporter, httpReq *http.Request) mcp.ToolHandlerFor[SearchArgs, SearchResult] {
 	inner := newSearchHandler(svc, cfg, httpReq)
 	return func(ctx context.Context, req *mcp.CallToolRequest, args SearchArgs) (*mcp.CallToolResult, SearchResult, error) {
-		reporter.ReportSession(ctx, httpReq)
+		if err := reporter.ReportSession(ctx, httpReq); err != nil {
+			return nil, SearchResult{}, err
+		}
 		return inner(ctx, req, args)
 	}
 }
@@ -72,7 +74,9 @@ func newSearchHandlerWithUsage(svc *tools.Service, cfg *config.Config, reporter 
 func newFetchHandlerWithUsage(svc *tools.Service, cfg *config.Config, reporter *usage.Reporter, httpReq *http.Request) mcp.ToolHandlerFor[FetchArgs, FetchResult] {
 	inner := newFetchHandler(svc, cfg, httpReq)
 	return func(ctx context.Context, req *mcp.CallToolRequest, args FetchArgs) (*mcp.CallToolResult, FetchResult, error) {
-		reporter.ReportSession(ctx, httpReq)
+		if err := reporter.ReportSession(ctx, httpReq); err != nil {
+			return nil, FetchResult{}, err
+		}
 		return inner(ctx, req, args)
 	}
 }

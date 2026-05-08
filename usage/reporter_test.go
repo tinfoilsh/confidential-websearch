@@ -19,7 +19,9 @@ func TestReportSessionEmitsDirectCustomerRequestCounter(t *testing.T) {
 	defer reporter.Close(context.Background())
 
 	req := newUsageRequest("request-1")
-	reporter.ReportSession(context.Background(), req)
+	if err := reporter.ReportSession(context.Background(), req); err != nil {
+		t.Fatalf("report session: %v", err)
+	}
 	if err := reporter.client.Flush(context.Background()); err != nil {
 		t.Fatalf("flush usage reporter: %v", err)
 	}
@@ -49,7 +51,9 @@ func TestReportSessionUsesSignedUsageContextCustomerRequestCount(t *testing.T) {
 		t.Fatalf("set usage context headers: %v", err)
 	}
 
-	reporter.ReportSession(context.Background(), req)
+	if err := reporter.ReportSession(context.Background(), req); err != nil {
+		t.Fatalf("report session: %v", err)
+	}
 	if err := reporter.client.Flush(context.Background()); err != nil {
 		t.Fatalf("flush usage reporter: %v", err)
 	}
@@ -69,7 +73,7 @@ func TestReportSessionUsesSignedUsageContextCustomerRequestCount(t *testing.T) {
 	}
 }
 
-func TestReportSessionFallsBackOnInvalidUsageContext(t *testing.T) {
+func TestReportSessionRejectsInvalidUsageContext(t *testing.T) {
 	reporter, batches, closeServer := newTestReporter(t, "secret")
 	defer closeServer()
 	defer reporter.Close(context.Background())
@@ -85,18 +89,14 @@ func TestReportSessionFallsBackOnInvalidUsageContext(t *testing.T) {
 		t.Fatalf("set usage context headers: %v", err)
 	}
 
-	reporter.ReportSession(context.Background(), req)
+	err := reporter.ReportSession(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected report session to reject tampered usage context")
+	}
 	if err := reporter.client.Flush(context.Background()); err != nil {
 		t.Fatalf("flush usage reporter: %v", err)
 	}
-
-	event := singleEvent(t, batches)
-	if got := counterQuantity(event, contract.CounterCustomerRequests); got != 1 {
-		t.Fatalf("customer request counter mismatch: got %d want fallback 1", got)
-	}
-	if _, ok := event.Attributes["parent_service"]; ok {
-		t.Fatal("invalid usage context should not add parent_service attribute")
-	}
+	expectNoBatch(t, batches)
 }
 
 func TestReportSessionDeduplicatesRequestID(t *testing.T) {
@@ -105,8 +105,12 @@ func TestReportSessionDeduplicatesRequestID(t *testing.T) {
 	defer reporter.Close(context.Background())
 
 	req := newUsageRequest("request-1")
-	reporter.ReportSession(context.Background(), req)
-	reporter.ReportSession(context.Background(), req)
+	if err := reporter.ReportSession(context.Background(), req); err != nil {
+		t.Fatalf("report session: %v", err)
+	}
+	if err := reporter.ReportSession(context.Background(), req); err != nil {
+		t.Fatalf("report session: %v", err)
+	}
 	if err := reporter.client.Flush(context.Background()); err != nil {
 		t.Fatalf("flush usage reporter: %v", err)
 	}
@@ -173,6 +177,15 @@ func singleBatch(t *testing.T, batches <-chan contract.Batch) contract.Batch {
 		t.Fatal("timed out waiting for usage batch")
 	}
 	return contract.Batch{}
+}
+
+func expectNoBatch(t *testing.T, batches <-chan contract.Batch) {
+	t.Helper()
+	select {
+	case batch := <-batches:
+		t.Fatalf("expected no usage batch, got %d events", len(batch.Events))
+	case <-time.After(100 * time.Millisecond):
+	}
 }
 
 func counterQuantity(event contract.Event, name string) int64 {
