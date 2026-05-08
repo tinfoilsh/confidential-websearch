@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -38,26 +39,18 @@ func main() {
 	}
 
 	cfg := config.Load()
-	if cfg.UsageReporterSecret == "" {
-		log.Fatal("USAGE_REPORTER_SECRET is required")
-	}
-	if cfg.UsageContextSecret == "" {
-		log.Fatal("USAGE_CONTEXT_SECRET is required")
-	}
+	localTestMode := isLocalTestMode()
 	toolDescriptions, err := config.LoadToolDescriptions()
 	if err != nil {
 		log.Fatalf("Failed to load tool descriptions: %v", err)
 	}
-	reporter, err := usage.NewReporter(
-		strings.TrimRight(cfg.ControlPlaneURL, "/")+contract.IngestionPath,
-		cfg.UsageReporterID,
-		cfg.UsageReporterSecret,
-		cfg.UsageContextSecret,
-	)
+	reporter, err := newUsageReporter(cfg, localTestMode)
 	if err != nil {
 		log.Fatalf("Failed to create usage reporter: %v", err)
 	}
-	defer reporter.Close(context.Background())
+	if reporter != nil {
+		defer reporter.Close(context.Background())
+	}
 
 	var (
 		svc          *tools.Service
@@ -65,7 +58,7 @@ func main() {
 		recorder     *LocalCallRecorder
 	)
 
-	if isLocalTestMode() {
+	if localTestMode {
 		svc, recorder = newLocalTestService()
 		searcherName = "local-test"
 	} else {
@@ -168,4 +161,22 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	httpServer.Shutdown(ctx)
+}
+
+func newUsageReporter(cfg *config.Config, localTestMode bool) (*usage.Reporter, error) {
+	if localTestMode {
+		return nil, nil
+	}
+	if cfg.UsageReporterSecret == "" {
+		return nil, fmt.Errorf("USAGE_REPORTER_SECRET is required")
+	}
+	if cfg.UsageContextSecret == "" {
+		return nil, fmt.Errorf("USAGE_CONTEXT_SECRET is required")
+	}
+	return usage.NewReporter(
+		strings.TrimRight(cfg.ControlPlaneURL, "/")+contract.IngestionPath,
+		cfg.UsageReporterID,
+		cfg.UsageReporterSecret,
+		cfg.UsageContextSecret,
+	)
 }
