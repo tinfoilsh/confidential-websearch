@@ -118,9 +118,6 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) {
 			Service: "websearch",
 			Name:    "session",
 		},
-		Meters: []contract.Meter{
-			{Name: "requests", Quantity: 1},
-		},
 		Counters: []contract.Counter{
 			{Name: contract.CounterCustomerRequests, Quantity: customerRequests},
 		},

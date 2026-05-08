@@ -28,8 +28,8 @@ func TestReportSessionEmitsDirectCustomerRequestCounter(t *testing.T) {
 	if got := counterQuantity(event, contract.CounterCustomerRequests); got != 1 {
 		t.Fatalf("customer request counter mismatch: got %d want 1", got)
 	}
-	if got := meterQuantity(event, "requests"); got != 1 {
-		t.Fatalf("websearch request meter mismatch: got %d want 1", got)
+	if len(event.Meters) != 0 {
+		t.Fatalf("expected no meters on websearch event, got %v", event.Meters)
 	}
 }
 
@@ -58,8 +58,8 @@ func TestReportSessionUsesSignedUsageContextCustomerRequestCount(t *testing.T) {
 	if got := counterQuantity(event, contract.CounterCustomerRequests); got != 0 {
 		t.Fatalf("customer request counter mismatch: got %d want 0", got)
 	}
-	if got := meterQuantity(event, "requests"); got != 1 {
-		t.Fatalf("websearch request meter mismatch: got %d want 1", got)
+	if len(event.Meters) != 0 {
+		t.Fatalf("expected no meters on websearch event, got %v", event.Meters)
 	}
 	if got := event.Attributes["root_request_id"]; got != "root-request-1" {
 		t.Fatalf("root request attribute mismatch: got %q", got)
@@ -184,11 +184,3 @@ func counterQuantity(event contract.Event, name string) int64 {
 	return 0
 }
 
-func meterQuantity(event contract.Event, name string) int64 {
-	for _, meter := range event.Meters {
-		if meter.Name == name {
-			return meter.Quantity
-		}
-	}
-	return 0
-}
