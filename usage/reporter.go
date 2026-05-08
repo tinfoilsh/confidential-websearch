@@ -26,20 +26,17 @@ type Reporter struct {
 	reportedAt map[string]time.Time
 }
 
-func NewReporter(endpoint, reporterID, secret string) (*Reporter, error) {
+func NewReporter(endpoint, reporterID, reporterSecret string) (*Reporter, error) {
 	if err := validateReporterEndpoint(endpoint); err != nil {
 		return nil, err
 	}
 	return &Reporter{
 		client: usageclient.New(usageclient.Config{
-			Endpoint: endpoint,
-			Reporter: contract.Reporter{
-				ID:      reporterID,
-				Service: "websearch",
-			},
-			Secret: secret,
+			Endpoint:   endpoint,
+			ReporterID: reporterID,
+			Secret:     reporterSecret,
 		}),
-		usageContextSecret: secret,
+		usageContextSecret: reporterSecret,
 		reportedAt:         make(map[string]time.Time),
 	}, nil
 }
@@ -91,8 +88,8 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 			return fmt.Errorf("verify usage context: %w", err)
 		}
 		if ok {
-			if usageCtx.CustomerRequestCount != nil && *usageCtx.CustomerRequestCount >= 0 {
-				customerRequests = *usageCtx.CustomerRequestCount
+			if !usageCtx.BillCustomerRequest {
+				customerRequests = 0
 			}
 			if usageCtx.RootRequestID != "" {
 				attributes["root_request_id"] = usageCtx.RootRequestID
@@ -121,20 +118,18 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 		OccurredAt: now,
 		APIKey:     bearerToken(rc.AuthHeader),
 		Operation: contract.Operation{
-			Service: "websearch",
-			Name:    "session",
+			Service: contract.ServiceWebsearch,
+			Name:    contract.OperationWebsearchSession,
 		},
-		Counters: []contract.Counter{
-			{Name: contract.CounterCustomerRequests, Quantity: customerRequests},
-		},
-		Attributes: attributes,
+		CustomerRequests: customerRequests,
+		Attributes:       attributes,
 	})
 	return nil
 }
 
-func (r *Reporter) Close(ctx context.Context) error {
+func (r *Reporter) Close(ctx context.Context) {
 	if r == nil || r.client == nil {
-		return nil
+		return
 	}
-	return r.client.Stop(ctx)
+	r.client.Stop(ctx)
 }
