@@ -24,8 +24,12 @@ func contextFromRequest(r *http.Request) requestContext {
 	if r == nil {
 		return requestContext{}
 	}
+	requestID := strings.TrimSpace(r.Header.Get(headerRequestID))
+	if requestID == "" {
+		requestID = strings.TrimSpace(r.Header.Get("X-Request-ID"))
+	}
 	return requestContext{
-		RequestID:  strings.TrimSpace(r.Header.Get(headerRequestID)),
+		RequestID:  requestID,
 		Model:      strings.TrimSpace(r.Header.Get(headerModel)),
 		Route:      strings.TrimSpace(r.Header.Get(headerRoute)),
 		Streaming:  strings.EqualFold(strings.TrimSpace(r.Header.Get(headerStreaming)), "true"),

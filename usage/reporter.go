@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	usageclient "github.com/tinfoilsh/usage-reporting-go/client"
 	"github.com/tinfoilsh/usage-reporting-go/contract"
 	"github.com/tinfoilsh/usage-reporting-go/usagecontext"
@@ -79,9 +80,12 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 	if r == nil {
 		return nil
 	}
+	if req == nil {
+		return nil
+	}
 	rc := contextFromRequest(req)
 	if rc.RequestID == "" {
-		return nil
+		rc.RequestID = uuid.NewString()
 	}
 	now := time.Now().UTC()
 

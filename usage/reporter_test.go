@@ -33,6 +33,30 @@ func TestReportSessionEmitsDirectCustomerRequest(t *testing.T) {
 	}
 }
 
+func TestReportSessionEmitsDirectCustomerRequestWithoutToolRequestID(t *testing.T) {
+	reporter, batches, closeServer := newTestReporter(t, "secret")
+	defer closeServer()
+	defer reporter.Close(context.Background())
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set("Authorization", "Bearer tk_test")
+	if err := reporter.ReportSession(context.Background(), req); err != nil {
+		t.Fatalf("report session: %v", err)
+	}
+	reporter.client.Flush(context.Background())
+
+	event := singleEvent(t, batches)
+	if event.RequestID == "" {
+		t.Fatal("expected generated request ID")
+	}
+	if event.CustomerRequests != 1 {
+		t.Fatalf("customer request mismatch: got %d want 1", event.CustomerRequests)
+	}
+	if event.APIKey != "tk_test" {
+		t.Fatalf("api key mismatch: got %q want %q", event.APIKey, "tk_test")
+	}
+}
+
 func TestReportSessionDefersToParentWhenContextSetsBillCustomerRequestFalse(t *testing.T) {
 	reporter, batches, closeServer := newTestReporter(t, "secret")
 	defer closeServer()
@@ -184,5 +208,3 @@ func expectNoBatch(t *testing.T, batches <-chan contract.Batch) {
 	case <-time.After(100 * time.Millisecond):
 	}
 }
-
-
