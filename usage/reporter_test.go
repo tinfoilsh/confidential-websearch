@@ -64,8 +64,11 @@ func TestReportSessionDefersToParentWhenContextSetsBillCustomerRequestFalse(t *t
 
 	req := newUsageRequest("request-1")
 	if err := usagecontext.SetHeaders(req.Header, usagecontext.Context{
+		ContextID:           "context-1",
 		RootRequestID:       "root-request-1",
 		ParentService:       contract.ServiceRouter,
+		APIKeyHash:          usagecontext.HashAPIKey("tk_test"),
+		Depth:               1,
 		BillCustomerRequest: false,
 		IssuedAt:            time.Now().UTC(),
 	}, "secret"); err != nil {
@@ -87,8 +90,14 @@ func TestReportSessionDefersToParentWhenContextSetsBillCustomerRequestFalse(t *t
 	if got := event.Attributes["root_request_id"]; got != "root-request-1" {
 		t.Fatalf("root request attribute mismatch: got %q", got)
 	}
+	if got := event.Attributes["context_id"]; got != "context-1" {
+		t.Fatalf("context id attribute mismatch: got %q", got)
+	}
 	if got := event.Attributes["parent_service"]; got != contract.ServiceRouter {
 		t.Fatalf("parent service attribute mismatch: got %q", got)
+	}
+	if got := event.Attributes["depth"]; got != "1" {
+		t.Fatalf("depth attribute mismatch: got %q", got)
 	}
 }
 
@@ -110,6 +119,55 @@ func TestReportSessionRejectsInvalidUsageContext(t *testing.T) {
 	err := reporter.ReportSession(context.Background(), req)
 	if err == nil {
 		t.Fatal("expected report session to reject tampered usage context")
+	}
+	reporter.client.Flush(context.Background())
+	expectNoBatch(t, batches)
+}
+
+func TestReportSessionRejectsUsageContextAPIKeyMismatch(t *testing.T) {
+	reporter, batches, closeServer := newTestReporter(t, "secret")
+	defer closeServer()
+	defer reporter.Close(context.Background())
+
+	req := newUsageRequest("request-1")
+	if err := usagecontext.SetHeaders(req.Header, usagecontext.Context{
+		RootRequestID:       "root-request-1",
+		ParentService:       contract.ServiceRouter,
+		APIKeyHash:          usagecontext.HashAPIKey("tk_other"),
+		BillCustomerRequest: false,
+		IssuedAt:            time.Now().UTC(),
+	}, "secret"); err != nil {
+		t.Fatalf("set usage context headers: %v", err)
+	}
+
+	err := reporter.ReportSession(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected report session to reject mismatched api key hash")
+	}
+	reporter.client.Flush(context.Background())
+	expectNoBatch(t, batches)
+}
+
+func TestReportSessionRejectsUsageContextDepthLimit(t *testing.T) {
+	reporter, batches, closeServer := newTestReporter(t, "secret")
+	defer closeServer()
+	defer reporter.Close(context.Background())
+
+	req := newUsageRequest("request-1")
+	if err := usagecontext.SetHeaders(req.Header, usagecontext.Context{
+		RootRequestID:       "root-request-1",
+		ParentService:       contract.ServiceRouter,
+		APIKeyHash:          usagecontext.HashAPIKey("tk_test"),
+		Depth:               usageContextMaxDepth + 1,
+		BillCustomerRequest: false,
+		IssuedAt:            time.Now().UTC(),
+	}, "secret"); err != nil {
+		t.Fatalf("set usage context headers: %v", err)
+	}
+
+	err := reporter.ReportSession(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected report session to reject excessive usage context depth")
 	}
 	reporter.client.Flush(context.Background())
 	expectNoBatch(t, batches)

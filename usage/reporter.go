@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"sync"
 	"time"
 
@@ -15,8 +16,9 @@ import (
 )
 
 const (
-	sessionCacheTTL     = 30 * time.Minute
-	usageContextMaxSkew = 10 * time.Minute
+	sessionCacheTTL      = 30 * time.Minute
+	usageContextMaxSkew  = 10 * time.Minute
+	usageContextMaxDepth = 8
 )
 
 type Reporter struct {
@@ -101,14 +103,26 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 			return fmt.Errorf("verify usage context: %w", err)
 		}
 		if ok {
+			if !usagecontext.VerifyAPIKeyHash(bearerToken(rc.AuthHeader), usageCtx.APIKeyHash) {
+				return fmt.Errorf("verify usage context api key: mismatch")
+			}
+			if usageCtx.Depth > usageContextMaxDepth {
+				return fmt.Errorf("verify usage context depth: %d exceeds max %d", usageCtx.Depth, usageContextMaxDepth)
+			}
 			if !usageCtx.BillCustomerRequest {
 				customerRequests = 0
+			}
+			if usageCtx.ContextID != "" {
+				attributes["context_id"] = usageCtx.ContextID
 			}
 			if usageCtx.RootRequestID != "" {
 				attributes["root_request_id"] = usageCtx.RootRequestID
 			}
 			if usageCtx.ParentService != "" {
 				attributes["parent_service"] = usageCtx.ParentService
+			}
+			if usageCtx.Depth > 0 {
+				attributes["depth"] = strconv.Itoa(usageCtx.Depth)
 			}
 		}
 	}

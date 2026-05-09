@@ -336,6 +336,8 @@ github.com/tinfoilsh/tinfoil-go v0.11.3 h1:hDb4FmRbpEDdPRIaRCW+4inqPHR/pO+TaMING
 github.com/tinfoilsh/tinfoil-go v0.11.3/go.mod h1:E9xolkMWgVn+MynNWO4rYy8Leo2v0WHzk/t9WtX5gXs=
 github.com/tinfoilsh/usage-reporting-go v0.1.0 h1:7Q/GsJ5mYfHtOFd3RfA//RltgahVJHsUybl4lN4M8J4=
 github.com/tinfoilsh/usage-reporting-go v0.1.0/go.mod h1:1lXVGmDbEmlAdUo+0YPsUYuFVtr74xycCs0K4fSnwYs=
+github.com/tinfoilsh/usage-reporting-go v0.1.1 h1:Mf1scGCjTGgf+fRF4HT4/LitEq0q/6Y9oCngUVhpvkk=
+github.com/tinfoilsh/usage-reporting-go v0.1.1/go.mod h1:1lXVGmDbEmlAdUo+0YPsUYuFVtr74xycCs0K4fSnwYs=
 github.com/tinfoilsh/verifier v0.11.2 h1:rGSoyJTrY9TlnySng3zcTyN1nw1OtU1SiqRjGAtqax4=
 github.com/tinfoilsh/verifier v0.11.2/go.mod h1:DuRa6ryH0eAPzyRvzCWoODEAcRsDYFNZdhDWciNndsw=
 github.com/tink-crypto/tink-go-awskms/v2 v2.1.0 h1:N9UxlsOzu5mttdjhxkDLbzwtEecuXmlxZVo/ds7JKJI=
