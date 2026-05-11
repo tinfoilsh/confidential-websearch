@@ -6,7 +6,7 @@ import (
 )
 
 func TestLoad_Defaults(t *testing.T) {
-	envVars := []string{"EXA_API_KEY", "CLOUDFLARE_API_TOKEN", "LISTEN_ADDR", "SAFEGUARD_MODEL", "ENABLE_PII_CHECK", "ENABLE_FETCH_INJECTION_CHECK", "ENABLE_SEARCH_INJECTION_CHECK", "CONTROL_PLANE_URL", "USAGE_REPORTER_ID", "USAGE_REPORTER_SECRET"}
+	envVars := []string{"EXA_API_KEY", "CLOUDFLARE_API_TOKEN", "LISTEN_ADDR", "SAFEGUARD_MODEL", "ENABLE_PII_CHECK", "ENABLE_FETCH_INJECTION_CHECK", "ENABLE_SEARCH_INJECTION_CHECK", "CONTROL_PLANE_URL", "USAGE_REPORTER_ID", "USAGE_REPORTER_SECRET", "USAGE_CONTEXT_SECRET"}
 	originalValues := make(map[string]string)
 	for _, key := range envVars {
 		originalValues[key] = os.Getenv(key)
@@ -58,6 +58,7 @@ func TestLoad_CustomValues(t *testing.T) {
 	os.Setenv("CONTROL_PLANE_URL", "https://controlplane.example")
 	os.Setenv("USAGE_REPORTER_ID", "reporter-id")
 	os.Setenv("USAGE_REPORTER_SECRET", "secret")
+	os.Setenv("USAGE_CONTEXT_SECRET", "context-secret")
 	defer func() {
 		os.Unsetenv("EXA_API_KEY")
 		os.Unsetenv("LISTEN_ADDR")
@@ -68,6 +69,7 @@ func TestLoad_CustomValues(t *testing.T) {
 		os.Unsetenv("CONTROL_PLANE_URL")
 		os.Unsetenv("USAGE_REPORTER_ID")
 		os.Unsetenv("USAGE_REPORTER_SECRET")
+		os.Unsetenv("USAGE_CONTEXT_SECRET")
 	}()
 
 	cfg := Load()
@@ -98,6 +100,9 @@ func TestLoad_CustomValues(t *testing.T) {
 	}
 	if cfg.UsageReporterSecret != "secret" {
 		t.Errorf("UsageReporterSecret: expected custom reporter secret, got '%s'", cfg.UsageReporterSecret)
+	}
+	if cfg.UsageContextSecret != "context-secret" {
+		t.Errorf("UsageContextSecret: expected custom usage context secret, got '%s'", cfg.UsageContextSecret)
 	}
 }
 

@@ -13,89 +13,170 @@ import (
 	"github.com/tinfoilsh/usage-reporting-go/usagecontext"
 )
 
-func TestReportSessionEmitsDirectCustomerRequestCounter(t *testing.T) {
+func TestReportSessionEmitsDirectCustomerRequest(t *testing.T) {
 	reporter, batches, closeServer := newTestReporter(t, "secret")
 	defer closeServer()
 	defer reporter.Close(context.Background())
 
 	req := newUsageRequest("request-1")
-	reporter.ReportSession(context.Background(), req)
-	if err := reporter.client.Flush(context.Background()); err != nil {
-		t.Fatalf("flush usage reporter: %v", err)
+	if err := reporter.ReportSession(context.Background(), req); err != nil {
+		t.Fatalf("report session: %v", err)
 	}
+	reporter.client.Flush(context.Background())
 
 	event := singleEvent(t, batches)
-	if got := counterQuantity(event, contract.CounterCustomerRequests); got != 1 {
-		t.Fatalf("customer request counter mismatch: got %d want 1", got)
+	if event.CustomerRequests != 1 {
+		t.Fatalf("customer request mismatch: got %d want 1", event.CustomerRequests)
 	}
-	if got := meterQuantity(event, "requests"); got != 1 {
-		t.Fatalf("websearch request meter mismatch: got %d want 1", got)
+	if len(event.Meters) != 0 {
+		t.Fatalf("expected no meters on websearch event, got %v", event.Meters)
 	}
 }
 
-func TestReportSessionUsesSignedUsageContextCustomerRequestCount(t *testing.T) {
+func TestReportSessionEmitsDirectCustomerRequestWithoutToolRequestID(t *testing.T) {
+	reporter, batches, closeServer := newTestReporter(t, "secret")
+	defer closeServer()
+	defer reporter.Close(context.Background())
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set("Authorization", "Bearer tk_test")
+	if err := reporter.ReportSession(context.Background(), req); err != nil {
+		t.Fatalf("report session: %v", err)
+	}
+	reporter.client.Flush(context.Background())
+
+	event := singleEvent(t, batches)
+	if event.RequestID == "" {
+		t.Fatal("expected generated request ID")
+	}
+	if event.CustomerRequests != 1 {
+		t.Fatalf("customer request mismatch: got %d want 1", event.CustomerRequests)
+	}
+	if event.APIKey != "tk_test" {
+		t.Fatalf("api key mismatch: got %q want %q", event.APIKey, "tk_test")
+	}
+}
+
+func TestReportSessionDefersToParentWhenContextSetsBillCustomerRequestFalse(t *testing.T) {
 	reporter, batches, closeServer := newTestReporter(t, "secret")
 	defer closeServer()
 	defer reporter.Close(context.Background())
 
 	req := newUsageRequest("request-1")
-	customerRequests := int64(0)
 	if err := usagecontext.SetHeaders(req.Header, usagecontext.Context{
-		RootRequestID:        "root-request-1",
-		ParentService:        "router",
-		CustomerRequestCount: &customerRequests,
-		IssuedAt:             time.Now().UTC(),
+		ContextID:           "context-1",
+		RootRequestID:       "root-request-1",
+		ParentService:       contract.ServiceRouter,
+		APIKeyHash:          usagecontext.HashAPIKey("tk_test"),
+		Depth:               1,
+		BillCustomerRequest: false,
+		IssuedAt:            time.Now().UTC(),
 	}, "secret"); err != nil {
 		t.Fatalf("set usage context headers: %v", err)
 	}
 
-	reporter.ReportSession(context.Background(), req)
-	if err := reporter.client.Flush(context.Background()); err != nil {
-		t.Fatalf("flush usage reporter: %v", err)
+	if err := reporter.ReportSession(context.Background(), req); err != nil {
+		t.Fatalf("report session: %v", err)
 	}
+	reporter.client.Flush(context.Background())
 
 	event := singleEvent(t, batches)
-	if got := counterQuantity(event, contract.CounterCustomerRequests); got != 0 {
-		t.Fatalf("customer request counter mismatch: got %d want 0", got)
+	if event.CustomerRequests != 0 {
+		t.Fatalf("customer request mismatch: got %d want 0", event.CustomerRequests)
 	}
-	if got := meterQuantity(event, "requests"); got != 1 {
-		t.Fatalf("websearch request meter mismatch: got %d want 1", got)
+	if len(event.Meters) != 0 {
+		t.Fatalf("expected no meters on websearch event, got %v", event.Meters)
 	}
 	if got := event.Attributes["root_request_id"]; got != "root-request-1" {
 		t.Fatalf("root request attribute mismatch: got %q", got)
 	}
-	if got := event.Attributes["parent_service"]; got != "router" {
+	if got := event.Attributes["context_id"]; got != "context-1" {
+		t.Fatalf("context id attribute mismatch: got %q", got)
+	}
+	if got := event.Attributes["parent_service"]; got != contract.ServiceRouter {
 		t.Fatalf("parent service attribute mismatch: got %q", got)
+	}
+	if got := event.Attributes["depth"]; got != "1" {
+		t.Fatalf("depth attribute mismatch: got %q", got)
 	}
 }
 
-func TestReportSessionFallsBackOnInvalidUsageContext(t *testing.T) {
+func TestReportSessionRejectsInvalidUsageContext(t *testing.T) {
 	reporter, batches, closeServer := newTestReporter(t, "secret")
 	defer closeServer()
 	defer reporter.Close(context.Background())
 
 	req := newUsageRequest("request-1")
-	customerRequests := int64(0)
 	if err := usagecontext.SetHeaders(req.Header, usagecontext.Context{
-		RootRequestID:        "root-request-1",
-		ParentService:        "router",
-		CustomerRequestCount: &customerRequests,
-		IssuedAt:             time.Now().UTC(),
+		RootRequestID:       "root-request-1",
+		ParentService:       contract.ServiceRouter,
+		BillCustomerRequest: false,
+		IssuedAt:            time.Now().UTC(),
 	}, "wrong-secret"); err != nil {
 		t.Fatalf("set usage context headers: %v", err)
 	}
 
-	reporter.ReportSession(context.Background(), req)
-	if err := reporter.client.Flush(context.Background()); err != nil {
-		t.Fatalf("flush usage reporter: %v", err)
+	err := reporter.ReportSession(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected report session to reject tampered usage context")
+	}
+	reporter.client.Flush(context.Background())
+	expectNoBatch(t, batches)
+}
+
+func TestReportSessionRejectsUsageContextAPIKeyMismatch(t *testing.T) {
+	reporter, batches, closeServer := newTestReporter(t, "secret")
+	defer closeServer()
+	defer reporter.Close(context.Background())
+
+	req := newUsageRequest("request-1")
+	if err := usagecontext.SetHeaders(req.Header, usagecontext.Context{
+		RootRequestID:       "root-request-1",
+		ParentService:       contract.ServiceRouter,
+		APIKeyHash:          usagecontext.HashAPIKey("tk_other"),
+		BillCustomerRequest: false,
+		IssuedAt:            time.Now().UTC(),
+	}, "secret"); err != nil {
+		t.Fatalf("set usage context headers: %v", err)
 	}
 
-	event := singleEvent(t, batches)
-	if got := counterQuantity(event, contract.CounterCustomerRequests); got != 1 {
-		t.Fatalf("customer request counter mismatch: got %d want fallback 1", got)
+	err := reporter.ReportSession(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected report session to reject mismatched api key hash")
 	}
-	if _, ok := event.Attributes["parent_service"]; ok {
-		t.Fatal("invalid usage context should not add parent_service attribute")
+	reporter.client.Flush(context.Background())
+	expectNoBatch(t, batches)
+}
+
+func TestReportSessionRejectsUsageContextDepthLimit(t *testing.T) {
+	reporter, batches, closeServer := newTestReporter(t, "secret")
+	defer closeServer()
+	defer reporter.Close(context.Background())
+
+	req := newUsageRequest("request-1")
+	if err := usagecontext.SetHeaders(req.Header, usagecontext.Context{
+		RootRequestID:       "root-request-1",
+		ParentService:       contract.ServiceRouter,
+		APIKeyHash:          usagecontext.HashAPIKey("tk_test"),
+		Depth:               usageContextMaxDepth + 1,
+		BillCustomerRequest: false,
+		IssuedAt:            time.Now().UTC(),
+	}, "secret"); err != nil {
+		t.Fatalf("set usage context headers: %v", err)
+	}
+
+	err := reporter.ReportSession(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected report session to reject excessive usage context depth")
+	}
+	reporter.client.Flush(context.Background())
+	expectNoBatch(t, batches)
+}
+
+func TestNewReporterRequiresUsageContextSecret(t *testing.T) {
+	_, err := NewReporter("https://controlplane.example/api/internal/usage-reports", "reporter", "reporter-secret", "")
+	if err == nil {
+		t.Fatal("expected NewReporter to reject empty usage context secret")
 	}
 }
 
@@ -105,11 +186,13 @@ func TestReportSessionDeduplicatesRequestID(t *testing.T) {
 	defer reporter.Close(context.Background())
 
 	req := newUsageRequest("request-1")
-	reporter.ReportSession(context.Background(), req)
-	reporter.ReportSession(context.Background(), req)
-	if err := reporter.client.Flush(context.Background()); err != nil {
-		t.Fatalf("flush usage reporter: %v", err)
+	if err := reporter.ReportSession(context.Background(), req); err != nil {
+		t.Fatalf("report session: %v", err)
 	}
+	if err := reporter.ReportSession(context.Background(), req); err != nil {
+		t.Fatalf("report session: %v", err)
+	}
+	reporter.client.Flush(context.Background())
 
 	batch := singleBatch(t, batches)
 	if got := len(batch.Events); got != 1 {
@@ -135,7 +218,7 @@ func newTestReporter(t *testing.T, secret string) (*Reporter, <-chan contract.Ba
 	reporter := &Reporter{
 		client: usageclient.New(usageclient.Config{
 			Endpoint:      server.URL,
-			Reporter:      contract.Reporter{ID: "reporter", Service: "websearch"},
+			ReporterID:    "reporter",
 			Secret:        secret,
 			FlushInterval: time.Hour,
 		}),
@@ -175,20 +258,11 @@ func singleBatch(t *testing.T, batches <-chan contract.Batch) contract.Batch {
 	return contract.Batch{}
 }
 
-func counterQuantity(event contract.Event, name string) int64 {
-	for _, counter := range event.Counters {
-		if counter.Name == name {
-			return counter.Quantity
-		}
+func expectNoBatch(t *testing.T, batches <-chan contract.Batch) {
+	t.Helper()
+	select {
+	case batch := <-batches:
+		t.Fatalf("expected no usage batch, got %d events", len(batch.Events))
+	case <-time.After(100 * time.Millisecond):
 	}
-	return 0
-}
-
-func meterQuantity(event contract.Event, name string) int64 {
-	for _, meter := range event.Meters {
-		if meter.Name == name {
-			return meter.Quantity
-		}
-	}
-	return 0
 }

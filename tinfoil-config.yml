@@ -15,6 +15,7 @@ containers:
       - CLOUDFLARE_API_TOKEN
       - TINFOIL_API_KEY
       - USAGE_REPORTER_SECRET
+      - USAGE_CONTEXT_SECRET
 
 shim:
   listen-port: 443

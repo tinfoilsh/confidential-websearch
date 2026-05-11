@@ -5,18 +5,20 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"sync"
 	"time"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/google/uuid"
 	usageclient "github.com/tinfoilsh/usage-reporting-go/client"
 	"github.com/tinfoilsh/usage-reporting-go/contract"
 	"github.com/tinfoilsh/usage-reporting-go/usagecontext"
 )
 
 const (
-	sessionCacheTTL     = 30 * time.Minute
-	usageContextMaxSkew = 10 * time.Minute
+	sessionCacheTTL      = 30 * time.Minute
+	usageContextMaxSkew  = 10 * time.Minute
+	usageContextMaxDepth = 8
 )
 
 type Reporter struct {
@@ -27,20 +29,26 @@ type Reporter struct {
 	reportedAt map[string]time.Time
 }
 
-func NewReporter(endpoint, reporterID, secret string) (*Reporter, error) {
+// NewReporter constructs a usage reporter wired to the controlplane batch
+// ingestion endpoint. The two HMAC secrets are deliberately separate:
+// reporterSecret authenticates outbound usage batches to the controlplane,
+// while usageContextSecret verifies inbound signed billing context attached
+// by upstream services (e.g. the model router) so this service knows whether
+// the call has already been counted as a customer-billable request.
+func NewReporter(endpoint, reporterID, reporterSecret, usageContextSecret string) (*Reporter, error) {
 	if err := validateReporterEndpoint(endpoint); err != nil {
 		return nil, err
 	}
+	if usageContextSecret == "" {
+		return nil, fmt.Errorf("usage context secret is required")
+	}
 	return &Reporter{
 		client: usageclient.New(usageclient.Config{
-			Endpoint: endpoint,
-			Reporter: contract.Reporter{
-				ID:      reporterID,
-				Service: "websearch",
-			},
-			Secret: secret,
+			Endpoint:   endpoint,
+			ReporterID: reporterID,
+			Secret:     reporterSecret,
 		}),
-		usageContextSecret: secret,
+		usageContextSecret: usageContextSecret,
 		reportedAt:         make(map[string]time.Time),
 	}, nil
 }
@@ -64,15 +72,60 @@ func validateReporterEndpoint(endpoint string) error {
 
 // ReportSession records a single usage event for the caller identified by
 // standard Tinfoil tool headers on the incoming MCP request.
-func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) {
+//
+// A signed usage-context header is optional. When absent, the call is treated
+// as a direct customer-facing MCP request and billed accordingly. When the
+// header is present but fails verification (bad signature, stale, malformed),
+// the request is rejected: an attacker tampering with that header must not be
+// allowed to silently fall through to the direct-billing default.
+func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 	if r == nil {
-		return
+		return nil
+	}
+	if req == nil {
+		return nil
 	}
 	rc := contextFromRequest(req)
 	if rc.RequestID == "" {
-		return
+		rc.RequestID = uuid.NewString()
 	}
 	now := time.Now().UTC()
+
+	customerRequests := int64(1)
+	attributes := map[string]string{
+		"model":     rc.Model,
+		"route":     rc.Route,
+		"streaming": map[bool]string{true: "true", false: "false"}[rc.Streaming],
+	}
+	if r.usageContextSecret != "" {
+		usageCtx, ok, err := usagecontext.FromHeaders(req.Header, r.usageContextSecret, now, usageContextMaxSkew)
+		if err != nil {
+			return fmt.Errorf("verify usage context: %w", err)
+		}
+		if ok {
+			if !usagecontext.VerifyAPIKeyHash(bearerToken(rc.AuthHeader), usageCtx.APIKeyHash) {
+				return fmt.Errorf("verify usage context api key: mismatch")
+			}
+			if usageCtx.Depth > usageContextMaxDepth {
+				return fmt.Errorf("verify usage context depth: %d exceeds max %d", usageCtx.Depth, usageContextMaxDepth)
+			}
+			if !usageCtx.BillCustomerRequest {
+				customerRequests = 0
+			}
+			if usageCtx.ContextID != "" {
+				attributes["context_id"] = usageCtx.ContextID
+			}
+			if usageCtx.RootRequestID != "" {
+				attributes["root_request_id"] = usageCtx.RootRequestID
+			}
+			if usageCtx.ParentService != "" {
+				attributes["parent_service"] = usageCtx.ParentService
+			}
+			if usageCtx.Depth > 0 {
+				attributes["depth"] = strconv.Itoa(usageCtx.Depth)
+			}
+		}
+	}
 
 	r.mu.Lock()
 	for requestID, reportedAt := range r.reportedAt {
@@ -82,55 +135,28 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) {
 	}
 	if _, ok := r.reportedAt[rc.RequestID]; ok {
 		r.mu.Unlock()
-		return
+		return nil
 	}
 	r.reportedAt[rc.RequestID] = now
 	r.mu.Unlock()
-
-	customerRequests := int64(1)
-	attributes := map[string]string{
-		"model":     rc.Model,
-		"route":     rc.Route,
-		"streaming": map[bool]string{true: "true", false: "false"}[rc.Streaming],
-	}
-	if r.usageContextSecret != "" {
-		ctx, ok, err := usagecontext.FromHeaders(req.Header, r.usageContextSecret, now, usageContextMaxSkew)
-		if err != nil {
-			log.WithError(err).Warn("invalid usage context; using direct request count")
-		} else if ok {
-			if ctx.CustomerRequestCount != nil && *ctx.CustomerRequestCount >= 0 {
-				customerRequests = *ctx.CustomerRequestCount
-			}
-			if ctx.RootRequestID != "" {
-				attributes["root_request_id"] = ctx.RootRequestID
-			}
-			if ctx.ParentService != "" {
-				attributes["parent_service"] = ctx.ParentService
-			}
-		}
-	}
 
 	r.client.AddEvent(contract.Event{
 		RequestID:  rc.RequestID,
 		OccurredAt: now,
 		APIKey:     bearerToken(rc.AuthHeader),
 		Operation: contract.Operation{
-			Service: "websearch",
-			Name:    "session",
+			Service: contract.ServiceWebsearch,
+			Name:    contract.OperationWebsearchSession,
 		},
-		Meters: []contract.Meter{
-			{Name: "requests", Quantity: 1},
-		},
-		Counters: []contract.Counter{
-			{Name: contract.CounterCustomerRequests, Quantity: customerRequests},
-		},
-		Attributes: attributes,
+		CustomerRequests: customerRequests,
+		Attributes:       attributes,
 	})
+	return nil
 }
 
-func (r *Reporter) Close(ctx context.Context) error {
+func (r *Reporter) Close(ctx context.Context) {
 	if r == nil || r.client == nil {
-		return nil
+		return
 	}
-	return r.client.Stop(ctx)
+	r.client.Stop(ctx)
 }

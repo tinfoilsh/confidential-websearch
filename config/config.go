@@ -13,6 +13,7 @@ type Config struct {
 	ControlPlaneURL            string
 	UsageReporterID            string
 	UsageReporterSecret        string
+	UsageContextSecret         string
 	ListenAddr                 string
 	SafeguardModel             string
 	EnablePIICheck             bool
@@ -29,6 +30,7 @@ func Load() *Config {
 		ControlPlaneURL:            getEnv("CONTROL_PLANE_URL", "https://api.tinfoil.sh"),
 		UsageReporterID:            getEnv("USAGE_REPORTER_ID", "websearch-mcp"),
 		UsageReporterSecret:        os.Getenv("USAGE_REPORTER_SECRET"),
+		UsageContextSecret:         os.Getenv("USAGE_CONTEXT_SECRET"),
 		ListenAddr:                 getEnv("LISTEN_ADDR", ":8089"),
 		SafeguardModel:             getEnv("SAFEGUARD_MODEL", "gpt-oss-safeguard-120b"),
 		EnablePIICheck:             getEnvBool("ENABLE_PII_CHECK", true),
