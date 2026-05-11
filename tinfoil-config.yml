@@ -5,7 +5,7 @@ memory: 16384
 
 containers:
   - name: "websearch-mcp"
-    image: "ghcr.io/tinfoilsh/confidential-websearch@sha256:dff72461646610010793994140d45fd1aac783ae5615b5a6e0eb6de1a73c2ed8" # v0.5.2
+    image: "ghcr.io/tinfoilsh/confidential-websearch@sha256:28182009fb649bcf5f8f2356390b9d0b64da79c397b5d2bb5aed744c6000d761" # v0.5.3
     env:
       - SAFEGUARD_MODEL: "gpt-oss-safeguard-120b"
       - CONTROL_PLANE_URL: "https://api.tinfoil.sh"
