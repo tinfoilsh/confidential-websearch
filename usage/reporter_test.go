@@ -8,9 +8,8 @@ import (
 	"testing"
 	"time"
 
+	usagereporting "github.com/tinfoilsh/usage-reporting-go"
 	usageclient "github.com/tinfoilsh/usage-reporting-go/client"
-	"github.com/tinfoilsh/usage-reporting-go/contract"
-	"github.com/tinfoilsh/usage-reporting-go/usagecontext"
 )
 
 func TestReportSessionEmitsDirectCustomerRequest(t *testing.T) {
@@ -63,11 +62,11 @@ func TestReportSessionDefersToParentWhenContextSetsBillCustomerRequestFalse(t *t
 	defer reporter.Close(context.Background())
 
 	req := newUsageRequest("request-1")
-	if err := usagecontext.SetHeaders(req.Header, usagecontext.Context{
+	if err := usagereporting.SetHeaders(req.Header, usagereporting.Context{
 		ContextID:           "context-1",
 		RootRequestID:       "root-request-1",
-		ParentService:       contract.ServiceRouter,
-		APIKeyHash:          usagecontext.HashAPIKey("tk_test"),
+		ParentService:       usagereporting.ServiceRouter,
+		APIKeyHash:          usagereporting.HashAPIKey("tk_test"),
 		Depth:               1,
 		BillCustomerRequest: false,
 		IssuedAt:            time.Now().UTC(),
@@ -93,7 +92,7 @@ func TestReportSessionDefersToParentWhenContextSetsBillCustomerRequestFalse(t *t
 	if got := event.Attributes["context_id"]; got != "context-1" {
 		t.Fatalf("context id attribute mismatch: got %q", got)
 	}
-	if got := event.Attributes["parent_service"]; got != contract.ServiceRouter {
+	if got := event.Attributes["parent_service"]; got != usagereporting.ServiceRouter {
 		t.Fatalf("parent service attribute mismatch: got %q", got)
 	}
 	if got := event.Attributes["depth"]; got != "1" {
@@ -107,9 +106,9 @@ func TestReportSessionRejectsInvalidUsageContext(t *testing.T) {
 	defer reporter.Close(context.Background())
 
 	req := newUsageRequest("request-1")
-	if err := usagecontext.SetHeaders(req.Header, usagecontext.Context{
+	if err := usagereporting.SetHeaders(req.Header, usagereporting.Context{
 		RootRequestID:       "root-request-1",
-		ParentService:       contract.ServiceRouter,
+		ParentService:       usagereporting.ServiceRouter,
 		BillCustomerRequest: false,
 		IssuedAt:            time.Now().UTC(),
 	}, "wrong-secret"); err != nil {
@@ -130,10 +129,10 @@ func TestReportSessionRejectsUsageContextAPIKeyMismatch(t *testing.T) {
 	defer reporter.Close(context.Background())
 
 	req := newUsageRequest("request-1")
-	if err := usagecontext.SetHeaders(req.Header, usagecontext.Context{
+	if err := usagereporting.SetHeaders(req.Header, usagereporting.Context{
 		RootRequestID:       "root-request-1",
-		ParentService:       contract.ServiceRouter,
-		APIKeyHash:          usagecontext.HashAPIKey("tk_other"),
+		ParentService:       usagereporting.ServiceRouter,
+		APIKeyHash:          usagereporting.HashAPIKey("tk_other"),
 		BillCustomerRequest: false,
 		IssuedAt:            time.Now().UTC(),
 	}, "secret"); err != nil {
@@ -154,10 +153,10 @@ func TestReportSessionRejectsUsageContextDepthLimit(t *testing.T) {
 	defer reporter.Close(context.Background())
 
 	req := newUsageRequest("request-1")
-	if err := usagecontext.SetHeaders(req.Header, usagecontext.Context{
+	if err := usagereporting.SetHeaders(req.Header, usagereporting.Context{
 		RootRequestID:       "root-request-1",
-		ParentService:       contract.ServiceRouter,
-		APIKeyHash:          usagecontext.HashAPIKey("tk_test"),
+		ParentService:       usagereporting.ServiceRouter,
+		APIKeyHash:          usagereporting.HashAPIKey("tk_test"),
 		Depth:               usageContextMaxDepth + 1,
 		BillCustomerRequest: false,
 		IssuedAt:            time.Now().UTC(),
@@ -200,12 +199,12 @@ func TestReportSessionDeduplicatesRequestID(t *testing.T) {
 	}
 }
 
-func newTestReporter(t *testing.T, secret string) (*Reporter, <-chan contract.Batch, func()) {
+func newTestReporter(t *testing.T, secret string) (*Reporter, <-chan usagereporting.Batch, func()) {
 	t.Helper()
-	batches := make(chan contract.Batch, 4)
+	batches := make(chan usagereporting.Batch, 4)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
-		var batch contract.Batch
+		var batch usagereporting.Batch
 		if err := json.NewDecoder(r.Body).Decode(&batch); err != nil {
 			t.Errorf("decode usage batch: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
@@ -238,7 +237,7 @@ func newUsageRequest(requestID string) *http.Request {
 	return req
 }
 
-func singleEvent(t *testing.T, batches <-chan contract.Batch) contract.Event {
+func singleEvent(t *testing.T, batches <-chan usagereporting.Batch) usagereporting.Event {
 	t.Helper()
 	batch := singleBatch(t, batches)
 	if len(batch.Events) != 1 {
@@ -247,7 +246,7 @@ func singleEvent(t *testing.T, batches <-chan contract.Batch) contract.Event {
 	return batch.Events[0]
 }
 
-func singleBatch(t *testing.T, batches <-chan contract.Batch) contract.Batch {
+func singleBatch(t *testing.T, batches <-chan usagereporting.Batch) usagereporting.Batch {
 	t.Helper()
 	select {
 	case batch := <-batches:
@@ -255,10 +254,10 @@ func singleBatch(t *testing.T, batches <-chan contract.Batch) contract.Batch {
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for usage batch")
 	}
-	return contract.Batch{}
+	return usagereporting.Batch{}
 }
 
-func expectNoBatch(t *testing.T, batches <-chan contract.Batch) {
+func expectNoBatch(t *testing.T, batches <-chan usagereporting.Batch) {
 	t.Helper()
 	select {
 	case batch := <-batches:

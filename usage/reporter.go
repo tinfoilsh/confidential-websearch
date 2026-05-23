@@ -10,9 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	usagereporting "github.com/tinfoilsh/usage-reporting-go"
 	usageclient "github.com/tinfoilsh/usage-reporting-go/client"
-	"github.com/tinfoilsh/usage-reporting-go/contract"
-	"github.com/tinfoilsh/usage-reporting-go/usagecontext"
 )
 
 const (
@@ -98,12 +97,12 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 		"streaming": map[bool]string{true: "true", false: "false"}[rc.Streaming],
 	}
 	if r.usageContextSecret != "" {
-		usageCtx, ok, err := usagecontext.FromHeaders(req.Header, r.usageContextSecret, now, usageContextMaxSkew)
+		usageCtx, ok, err := usagereporting.FromHeaders(req.Header, r.usageContextSecret, now, usageContextMaxSkew)
 		if err != nil {
 			return fmt.Errorf("verify usage context: %w", err)
 		}
 		if ok {
-			if !usagecontext.VerifyAPIKeyHash(bearerToken(rc.AuthHeader), usageCtx.APIKeyHash) {
+			if !usagereporting.VerifyAPIKeyHash(bearerToken(rc.AuthHeader), usageCtx.APIKeyHash) {
 				return fmt.Errorf("verify usage context api key: mismatch")
 			}
 			if usageCtx.Depth > usageContextMaxDepth {
@@ -140,13 +139,13 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 	r.reportedAt[rc.RequestID] = now
 	r.mu.Unlock()
 
-	r.client.AddEvent(contract.Event{
+	r.client.AddEvent(usagereporting.Event{
 		RequestID:  rc.RequestID,
 		OccurredAt: now,
 		APIKey:     bearerToken(rc.AuthHeader),
-		Operation: contract.Operation{
-			Service: contract.ServiceWebsearch,
-			Name:    contract.OperationWebsearchSession,
+		Operation: usagereporting.Operation{
+			Service: usagereporting.ServiceWebsearch,
+			Name:    usagereporting.OperationWebsearchSession,
 		},
 		CustomerRequests: customerRequests,
 		Attributes:       attributes,

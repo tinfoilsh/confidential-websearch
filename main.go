@@ -16,7 +16,6 @@ import (
 	"github.com/openai/openai-go/v3/option"
 	log "github.com/sirupsen/logrus"
 	"github.com/tinfoilsh/tinfoil-go"
-	"github.com/tinfoilsh/usage-reporting-go/contract"
 
 	"github.com/tinfoilsh/confidential-websearch/config"
 	"github.com/tinfoilsh/confidential-websearch/domainrank"
@@ -25,6 +24,8 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/search"
 	"github.com/tinfoilsh/confidential-websearch/tools"
 	"github.com/tinfoilsh/confidential-websearch/usage"
+
+	usagereporting "github.com/tinfoilsh/usage-reporting-go"
 )
 
 var (
@@ -174,7 +175,7 @@ func newUsageReporter(cfg *config.Config, localTestMode bool) (*usage.Reporter, 
 		return nil, fmt.Errorf("USAGE_CONTEXT_SECRET is required")
 	}
 	return usage.NewReporter(
-		strings.TrimRight(cfg.ControlPlaneURL, "/")+contract.IngestionPath,
+		strings.TrimRight(cfg.ControlPlaneURL, "/")+usagereporting.IngestionPath,
 		cfg.UsageReporterID,
 		cfg.UsageReporterSecret,
 		cfg.UsageContextSecret,
