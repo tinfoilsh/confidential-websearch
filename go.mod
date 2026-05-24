@@ -11,7 +11,7 @@ require (
 	github.com/openai/openai-go/v3 v3.16.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/tinfoilsh/tinfoil-go v0.11.3
-	github.com/tinfoilsh/usage-reporting-go v0.1.1
+	github.com/tinfoilsh/usage-reporting-go v0.1.2
 	golang.org/x/net v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -105,5 +105,3 @@ require (
 	google.golang.org/grpc v1.78.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
-
-replace github.com/tinfoilsh/usage-reporting-go => ../usage-reporting-go
