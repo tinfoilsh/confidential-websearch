@@ -6,11 +6,12 @@ replace github.com/google/go-sev-guest => github.com/tinfoilsh/go-sev-guest v0.0
 
 require (
 	github.com/google/jsonschema-go v0.4.2
+	github.com/google/uuid v1.6.0
 	github.com/modelcontextprotocol/go-sdk v1.5.0
 	github.com/openai/openai-go/v3 v3.16.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/tinfoilsh/tinfoil-go v0.11.3
-	github.com/tinfoilsh/usage-reporting-go v0.1.1
+	github.com/tinfoilsh/usage-reporting-go v0.1.2
 	golang.org/x/net v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -52,7 +53,6 @@ require (
 	github.com/google/go-sev-guest v0.14.1 // indirect
 	github.com/google/go-tdx-guest v0.3.1 // indirect
 	github.com/google/logger v1.1.1 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.4 // indirect
 	github.com/in-toto/attestation v1.1.2 // indirect
 	github.com/in-toto/in-toto-golang v0.9.0 // indirect
