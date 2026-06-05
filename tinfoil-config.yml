@@ -4,7 +4,7 @@ memory: 16384
 
 containers:
   - name: "websearch-mcp"
-    image: "ghcr.io/tinfoilsh/confidential-websearch@sha256:0000000000000000000000000000000000000000000000000000000000000000" # placeholder - populated during release
+    image: "ghcr.io/tinfoilsh/confidential-websearch@sha256:c6fe85aee479da331f3c1ad816038b4a9a5697ec66a5198510f8d3267a442b76" # v0.5.5
     restart: always
     networks: [web]
     env:
