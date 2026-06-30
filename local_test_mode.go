@@ -101,7 +101,7 @@ func newLocalTestService() (*tools.Service, *LocalCallRecorder) {
 	recorder := NewLocalCallRecorder()
 	searcher := localTestSearcher{recorder: recorder}
 	fetcher := localTestFetcher{recorder: recorder}
-	return tools.NewService(searcher, fetcher, localTestSafeguard{}, domainrank.NopRanker{}), recorder
+	return tools.NewService(searcher, fetcher, localTestSafeguard{}, nil, domainrank.NopRanker{}), recorder
 }
 
 type localTestSearcher struct {

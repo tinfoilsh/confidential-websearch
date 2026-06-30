@@ -16,6 +16,8 @@ type Config struct {
 	UsageContextSecret         string
 	ListenAddr                 string
 	SafeguardModel             string
+	PIIEnclave                 string
+	PIIRepo                    string
 	EnablePIICheck             bool
 	EnableFetchInjectionCheck  bool
 	EnableSearchInjectionCheck bool
@@ -33,6 +35,8 @@ func Load() *Config {
 		UsageContextSecret:         os.Getenv("USAGE_CONTEXT_SECRET"),
 		ListenAddr:                 getEnv("LISTEN_ADDR", ":8089"),
 		SafeguardModel:             getEnv("SAFEGUARD_MODEL", "gpt-oss-safeguard-120b"),
+		PIIEnclave:                 getEnv("PII_ENCLAVE", ""),
+		PIIRepo:                    getEnv("PII_REPO", "tinfoilsh/confidential-pii-cpu"),
 		EnablePIICheck:             getEnvBool("ENABLE_PII_CHECK", true),
 		EnableFetchInjectionCheck:  getEnvBool("ENABLE_FETCH_INJECTION_CHECK", true),
 		EnableSearchInjectionCheck: getEnvBool("ENABLE_SEARCH_INJECTION_CHECK", true),

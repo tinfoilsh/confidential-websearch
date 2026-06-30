@@ -63,21 +63,23 @@ type SearchOutcome struct {
 }
 
 type Service struct {
-	searcher  search.Provider
-	fetcher   URLFetcher
-	safeguard SafeguardChecker
-	ranker    domainrank.Ranker
+	searcher   search.Provider
+	fetcher    URLFetcher
+	safeguard  SafeguardChecker
+	piiChecker SafeguardChecker
+	ranker     domainrank.Ranker
 }
 
-func NewService(searcher search.Provider, fetcher URLFetcher, safeguardChecker SafeguardChecker, ranker domainrank.Ranker) *Service {
+func NewService(searcher search.Provider, fetcher URLFetcher, safeguardChecker SafeguardChecker, piiChecker SafeguardChecker, ranker domainrank.Ranker) *Service {
 	if ranker == nil {
 		ranker = domainrank.NopRanker{}
 	}
 	return &Service{
-		searcher:  searcher,
-		fetcher:   fetcher,
-		safeguard: safeguardChecker,
-		ranker:    ranker,
+		searcher:   searcher,
+		fetcher:     fetcher,
+		safeguard:   safeguardChecker,
+		piiChecker:  piiChecker,
+		ranker:      ranker,
 	}
 }
 
@@ -86,12 +88,18 @@ func (s *Service) Search(ctx context.Context, query string, opts Options) (Searc
 		return SearchOutcome{}, fmt.Errorf("query is required")
 	}
 
-	if opts.PIICheckEnabled && s.safeguard != nil {
-		check, err := s.safeguard.Check(ctx, safeguard.PIILeakagePolicy, query)
-		if err != nil {
-			log.WithError(err).Warn("PII safeguard unavailable; allowing search to continue")
-		} else if check.Violation {
-			return SearchOutcome{BlockedReason: check.Rationale}, nil
+	if opts.PIICheckEnabled {
+		piiChecker := s.piiChecker
+		if piiChecker == nil {
+			piiChecker = s.safeguard
+		}
+		if piiChecker != nil {
+			check, err := piiChecker.Check(ctx, safeguard.PIILeakagePolicy, query)
+			if err != nil {
+				log.WithError(err).Warn("PII safeguard unavailable; allowing search to continue")
+			} else if check.Violation {
+				return SearchOutcome{BlockedReason: check.Rationale}, nil
+			}
 		}
 	}
 

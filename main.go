@@ -79,6 +79,15 @@ func main() {
 
 		safeguardClient := safeguard.NewClient(client, cfg.SafeguardModel)
 
+		var piiChecker safeguard.Checker = safeguardClient
+		if cfg.PIIEnclave != "" {
+			pf, err := safeguard.NewPrivacyFilterChecker(cfg.PIIEnclave, cfg.PIIRepo, cfg.TinfoilAPIKey)
+			if err != nil {
+				log.Fatalf("Failed to create privacy filter PII checker: %v", err)
+			}
+			piiChecker = pf
+		}
+
 		var ranker domainrank.Ranker = domainrank.NopRanker{}
 		if cfg.CloudflareAPIToken != "" {
 			cfRanker, err := domainrank.NewCloudflareRanker(context.Background(), cfg.CloudflareAPIToken)
@@ -93,7 +102,7 @@ func main() {
 			log.Warn("CLOUDFLARE_API_TOKEN not set; injection checks will run on all fetched pages")
 		}
 
-		svc = tools.NewService(searcher, fetcher, safeguardClient, ranker)
+		svc = tools.NewService(searcher, fetcher, safeguardClient, piiChecker, ranker)
 		searcherName = searcher.Name()
 	}
 
