@@ -54,21 +54,21 @@ See [`local_testing.md`](./local_testing.md) for the full runbook, including how
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TINFOIL_API_KEY` | - | Tinfoil API key for the in-enclave safeguard model |
-| `EXA_API_KEY` | - | Exa API key (used for both search and fetch) |
-| `CLOUDFLARE_API_TOKEN` | - | Cloudflare Radar API token used to load the top-domain list that bypasses prompt-injection filtering. When unset, every fetched page and search result goes through the safeguard. |
-| `SAFEGUARD_MODEL` | `gpt-oss-safeguard-120b` | Model used for safety filtering |
-| `ENABLE_PII_CHECK` | `true` | Run PII filtering on outgoing search queries. A per-request `X-Tinfoil-Tool-PII-Check` header can override this (see [Router Integration](#router-integration)). |
-| `ENABLE_FETCH_INJECTION_CHECK` | `true` | Run prompt-injection filtering on fetched pages by default (top-popularity domains are skipped unless the caller explicitly opts in via header). |
-| `ENABLE_SEARCH_INJECTION_CHECK` | `true` | Run prompt-injection filtering on search results by default (same top-domain skip applies). |
-| `LISTEN_ADDR` | `:8089` | Address to listen on |
-| `CONTROL_PLANE_URL` | `https://api.tinfoil.sh` | Base URL for the usage reporter |
-| `USAGE_REPORTER_ID` | `websearch-mcp` | Identifier reported with usage events |
-| `USAGE_REPORTER_SECRET` | - | Shared secret for signing outbound usage reports to the controlplane |
-| `USAGE_CONTEXT_SECRET` | - | Shared secret for verifying inbound usage-context headers attached by upstream services |
-| `LOCAL_TEST_MODE` | - | Set to `1` to serve static fixtures instead of calling Exa |
+| Variable                        | Default                  | Description                                                                                                                                                                        |
+| ------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TINFOIL_API_KEY`               | -                        | Tinfoil API key for the in-enclave safeguard model                                                                                                                                 |
+| `EXA_API_KEY`                   | -                        | Exa API key (used for both search and fetch)                                                                                                                                       |
+| `CLOUDFLARE_API_TOKEN`          | -                        | Cloudflare Radar API token used to load the top-domain list that bypasses prompt-injection filtering. When unset, every fetched page and search result goes through the safeguard. |
+| `SAFEGUARD_MODEL`               | `gpt-oss-safeguard-120b` | Model used for safety filtering                                                                                                                                                    |
+| `ENABLE_PII_CHECK`              | `true`                   | Run PII filtering on outgoing search queries. A per-request `X-Tinfoil-Tool-PII-Check` header can override this (see [Router Integration](#router-integration)).                   |
+| `ENABLE_FETCH_INJECTION_CHECK`  | `true`                   | Run prompt-injection filtering on fetched pages by default (top-popularity domains are skipped unless the caller explicitly opts in via header).                                   |
+| `ENABLE_SEARCH_INJECTION_CHECK` | `true`                   | Run prompt-injection filtering on search results by default (same top-domain skip applies).                                                                                        |
+| `LISTEN_ADDR`                   | `:8089`                  | Address to listen on                                                                                                                                                               |
+| `CONTROL_PLANE_URL`             | `https://api.tinfoil.sh` | Base URL for the usage reporter                                                                                                                                                    |
+| `USAGE_REPORTER_ID`             | `websearch-mcp`          | Identifier reported with usage events                                                                                                                                              |
+| `USAGE_REPORTER_SECRET`         | -                        | Shared secret for signing outbound usage reports to the controlplane                                                                                                               |
+| `USAGE_CONTEXT_SECRET`          | -                        | Shared secret for verifying inbound usage-context headers attached by upstream services                                                                                            |
+| `LOCAL_TEST_MODE`               | -                        | Set to `1` to serve static fixtures instead of calling Exa                                                                                                                         |
 
 ## Tools
 
@@ -80,19 +80,19 @@ Search the web and return ranked results with titles, URLs, snippets, and public
 
 #### Arguments
 
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| `query` | string | yes | - | Natural language search query. Max ~400 characters. |
-| `max_results` | int | no | `8` | Number of results to return. Any positive integer; non-positive values fall back to the default. The upstream search provider applies its own ceiling. |
-| `content_mode` | string | no | `highlights` | Per-result content granularity. `highlights` returns key excerpts relevant to the query; `text` returns the full page text as markdown. |
-| `max_content_chars` | int | no | `700` | Per-result character budget for the snippet or text returned in each hit. Higher values surface more context at a higher token cost. |
-| `user_location_country` | string | no | - | ISO 3166-1 alpha-2 country code (e.g. `US`, `GB`, `DE`) used to bias results toward that locale. |
-| `allowed_domains` | string[] | no | - | Only return results whose host matches one of these domains. |
-| `excluded_domains` | string[] | no | - | Drop results from these domains. Useful for filtering aggregators or SEO farms. |
-| `category` | string | no | - | Restrict to one of: `company`, `people`, `research paper`, `news`, `personal site`, `financial report`. Note: `company` and `people` are incompatible with date filters and `excluded_domains` and the server will reject such combinations. |
-| `start_published_date` | string | no | - | ISO-8601 date (e.g. `2024-01-01` or `2024-01-01T00:00:00Z`). Only include results published at or after this instant. |
-| `end_published_date` | string | no | - | ISO-8601 date. Only include results published at or before this instant. |
-| `max_age_hours` | int | no | - | Cache freshness control. `0` forces a livecrawl on every result (freshest, slowest). `-1` disables livecrawl (cache-only, fastest). Omit for the upstream default (livecrawl only when uncached). |
+| Name                    | Type     | Required | Default      | Description                                                                                                                                                                                                                                  |
+| ----------------------- | -------- | -------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `query`                 | string   | yes      | -            | Natural language search query. Max ~400 characters.                                                                                                                                                                                          |
+| `max_results`           | int      | no       | `8`          | Number of results to return. Any positive integer; non-positive values fall back to the default. The upstream search provider applies its own ceiling.                                                                                       |
+| `content_mode`          | string   | no       | `highlights` | Per-result content granularity. `highlights` returns key excerpts relevant to the query; `text` returns the full page text as markdown.                                                                                                      |
+| `max_content_chars`     | int      | no       | `700`        | Per-result character budget for the snippet or text returned in each hit. Higher values surface more context at a higher token cost.                                                                                                         |
+| `user_location_country` | string   | no       | -            | ISO 3166-1 alpha-2 country code (e.g. `US`, `GB`, `DE`) used to bias results toward that locale.                                                                                                                                             |
+| `allowed_domains`       | string[] | no       | -            | Only return results whose host matches one of these domains.                                                                                                                                                                                 |
+| `excluded_domains`      | string[] | no       | -            | Drop results from these domains. Useful for filtering aggregators or SEO farms.                                                                                                                                                              |
+| `category`              | string   | no       | -            | Restrict to one of: `company`, `people`, `research paper`, `news`, `personal site`, `financial report`. Note: `company` and `people` are incompatible with date filters and `excluded_domains` and the server will reject such combinations. |
+| `start_published_date`  | string   | no       | -            | ISO-8601 date (e.g. `2024-01-01` or `2024-01-01T00:00:00Z`). Only include results published at or after this instant.                                                                                                                        |
+| `end_published_date`    | string   | no       | -            | ISO-8601 date. Only include results published at or before this instant.                                                                                                                                                                     |
+| `max_age_hours`         | int      | no       | -            | Cache freshness control. `0` forces a livecrawl on every result (freshest, slowest). `-1` disables livecrawl (cache-only, fastest). Omit for the upstream default (livecrawl only when uncached).                                            |
 
 #### Response
 
@@ -116,10 +116,10 @@ Fetch one or more web pages via the Exa Contents API and return the page text.
 
 #### Arguments
 
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| `urls` | string[] | yes | - | One or more HTTP/HTTPS URLs. Capped at 20 per request. Each page is fetched via Exa Contents (livecrawl preferred, with a short cache horizon). |
-| `allowed_domains` | string[] | no | - | If set, reject any URL whose host is not in this list before it is sent to the renderer. |
+| Name              | Type     | Required | Default | Description                                                                                                                                     |
+| ----------------- | -------- | -------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `urls`            | string[] | yes      | -       | One or more HTTP/HTTPS URLs. Capped at 20 per request. Each page is fetched via Exa Contents (livecrawl preferred, with a short cache horizon). |
+| `allowed_domains` | string[] | no       | -       | If set, reject any URL whose host is not in this list before it is sent to the renderer.                                                        |
 
 #### Response
 
@@ -127,9 +127,7 @@ The response contains a per-URL `results` list that preserves input order (inclu
 
 ```json
 {
-  "pages": [
-    { "url": "string", "content": "string (text)" }
-  ],
+  "pages": [{ "url": "string", "content": "string (text)" }],
   "results": [
     {
       "url": "string",
@@ -213,9 +211,9 @@ curl -sS -X POST http://localhost:8089/mcp \
 
 When this server runs behind the Tinfoil model router, the router can override the server's env-configured safety defaults on a per-request basis by forwarding these HTTP headers on the `POST /mcp` call. Anything else leaves the server-side defaults in place.
 
-| Header | Values | Effect |
-|--------|--------|--------|
-| `X-Tinfoil-Tool-PII-Check` | `true`, `false`, `1`, `0` | Overrides `ENABLE_PII_CHECK` for this request only. |
+| Header                           | Values                    | Effect                                                                                                                                                                                               |
+| -------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `X-Tinfoil-Tool-PII-Check`       | `true`, `false`, `1`, `0` | Overrides `ENABLE_PII_CHECK` for this request only.                                                                                                                                                  |
 | `X-Tinfoil-Tool-Injection-Check` | `true`, `false`, `1`, `0` | Overrides the env defaults for fetch and search prompt-injection filtering for this request only. An explicit `true` also disables the popularity-based skip and runs the safeguard on every result. |
 
 Missing, empty, or unparseable values fall back to the env default, so a malformed header can never silently weaken filtering below what the operator configured.
@@ -224,7 +222,7 @@ Missing, empty, or unparseable values fall back to the env default, so a malform
 
 ### PII Detection
 
-Blocks outgoing search queries that would leak sensitive personally identifiable information.
+Blocks outgoing search queries that would leak sensitive personally identifiable information. Returns a response to the model/user showing what was wrong.
 
 ### Prompt Injection Detection
 
