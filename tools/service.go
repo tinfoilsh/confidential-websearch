@@ -88,18 +88,12 @@ func (s *Service) Search(ctx context.Context, query string, opts Options) (Searc
 		return SearchOutcome{}, fmt.Errorf("query is required")
 	}
 
-	if opts.PIICheckEnabled {
-		piiChecker := s.piiChecker
-		if piiChecker == nil {
-			piiChecker = s.safeguard
-		}
-		if piiChecker != nil {
-			check, err := piiChecker.Check(ctx, safeguard.PIILeakagePolicy, query)
-			if err != nil {
-				log.WithError(err).Warn("PII safeguard unavailable; allowing search to continue")
-			} else if check.Violation {
-				return SearchOutcome{BlockedReason: check.Rationale}, nil
-			}
+	if opts.PIICheckEnabled && s.piiChecker != nil {
+		check, err := s.piiChecker.Check(ctx, "", query)
+		if err != nil {
+			log.WithError(err).Warn("PII safeguard unavailable; allowing search to continue")
+		} else if check.Violation {
+			return SearchOutcome{BlockedReason: check.Rationale}, nil
 		}
 	}
 

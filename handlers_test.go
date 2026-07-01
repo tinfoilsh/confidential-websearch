@@ -452,7 +452,7 @@ func TestResolveSafetyFlag(t *testing.T) {
 func TestSearchHandler_HeaderOverridesEnvDefaults(t *testing.T) {
 	searcher := &mockSearchProvider{results: []search.Result{{Title: "r", URL: "https://example.com/r", Content: "ok"}}}
 	sg := &mockSafeguard{blocked: map[string]string{"john@example.com": "email detected"}}
-	svc := tools.NewService(searcher, nil, sg, nil, nil)
+	svc := tools.NewService(searcher, nil, nil, sg, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	req.Header.Set(headerPIICheck, "true")

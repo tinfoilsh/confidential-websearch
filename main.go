@@ -79,7 +79,7 @@ func main() {
 
 		safeguardClient := safeguard.NewClient(client, cfg.SafeguardModel)
 
-		var piiChecker safeguard.Checker = safeguardClient
+		var piiChecker safeguard.Checker
 		if cfg.PIIEnclave != "" {
 			pf, err := safeguard.NewPrivacyFilterChecker(cfg.PIIEnclave, cfg.PIIRepo, cfg.TinfoilAPIKey)
 			if err != nil {

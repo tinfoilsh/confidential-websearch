@@ -100,7 +100,7 @@ func TestSearch_DefaultMaxResults(t *testing.T) {
 func TestSearch_PIIBlocksQuery(t *testing.T) {
 	searcher := &stubSearcher{results: []search.Result{{Title: "hit"}}}
 	sg := &stubSafeguard{blocked: map[string]string{"john@example.com": "email detected"}}
-	service := NewService(searcher, nil, sg, nil, nil)
+	service := NewService(searcher, nil, nil, sg, nil)
 
 	outcome, err := service.Search(context.Background(), "john@example.com", Options{PIICheckEnabled: true})
 	if err != nil {
