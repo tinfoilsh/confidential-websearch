@@ -29,24 +29,24 @@ var pfAlwaysBlock = map[string]bool{
 	"secret":         true,
 }
 
-type PrivacyFilterChecker struct {
+type PrivacyFilterClient struct {
 	enclave      string
 	apiKey       string
 	httpClient   *http.Client
 	secureClient *client.SecureClient
 }
 
-// NewPrivacyFilterChecker creates a checker that calls the privacy filter enclave at the given
+// NewPrivacyFilterClient creates a client that calls the privacy filter enclave at the given
 // domain. The repo is used for attestation verification (code measurement
 // pinned to the GitHub repo's signed release).
-func NewPrivacyFilterChecker(enclave, repo, apiKey string) (*PrivacyFilterChecker, error) {
+func NewPrivacyFilterClient(enclave, repo, apiKey string) (*PrivacyFilterClient, error) {
 	sc := client.NewSecureClient(enclave, repo)
 	httpClient, err := sc.HTTPClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify privacy filter enclave: %w", err)
 	}
 	log.WithField("enclave", enclave).Info("privacy filter PII checker verified")
-	return &PrivacyFilterChecker{
+	return &PrivacyFilterClient{
 		enclave:      enclave,
 		apiKey:       apiKey,
 		httpClient:   httpClient,
@@ -72,7 +72,7 @@ type pfRedactResponse struct {
 // Check implements the Checker interface. The content is sent to /redact
 // and the returned spans are evaluated against the deterministic PII policy
 // in code (see applyPIIPolicy), not an LLM prompt.
-func (c *PrivacyFilterChecker) Check(ctx context.Context, content string) (*CheckResult, error) {
+func (c *PrivacyFilterClient) Check(ctx context.Context, content string) (*CheckResult, error) {
 	spans, err := c.redact(ctx, content)
 	if err != nil {
 		return nil, err
@@ -81,7 +81,7 @@ func (c *PrivacyFilterChecker) Check(ctx context.Context, content string) (*Chec
 }
 
 // redact calls the privacy filter /redact endpoint and returns the detected spans.
-func (c *PrivacyFilterChecker) redact(ctx context.Context, text string) ([]pfSpan, error) {
+func (c *PrivacyFilterClient) redact(ctx context.Context, text string) ([]pfSpan, error) {
 	body, err := json.Marshal(pfRedactRequest{Text: text})
 	if err != nil {
 		return nil, fmt.Errorf("marshal redact request: %w", err)

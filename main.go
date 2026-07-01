@@ -77,11 +77,11 @@ func main() {
 
 		fetcher := fetch.NewFetcher(cfg.ExaAPIKey)
 
-		safeguardClient := safeguard.NewClient(client, cfg.SafeguardModel)
+		injectionClient := safeguard.NewPromptInjectionClient(client, cfg.SafeguardModel)
 
 		var piiChecker safeguard.Checker
 		if cfg.PIIEnclave != "" {
-			pf, err := safeguard.NewPrivacyFilterChecker(cfg.PIIEnclave, cfg.PIIRepo, cfg.TinfoilAPIKey)
+			pf, err := safeguard.NewPrivacyFilterClient(cfg.PIIEnclave, cfg.PIIRepo, cfg.TinfoilAPIKey)
 			if err != nil {
 				log.Fatalf("Failed to create privacy filter PII checker: %v", err)
 			}
@@ -102,7 +102,7 @@ func main() {
 			log.Warn("CLOUDFLARE_API_TOKEN not set; injection checks will run on all fetched pages")
 		}
 
-		svc = tools.NewService(searcher, fetcher, safeguardClient, piiChecker, ranker)
+		svc = tools.NewService(searcher, fetcher, injectionClient, piiChecker, ranker)
 		searcherName = searcher.Name()
 	}
 
