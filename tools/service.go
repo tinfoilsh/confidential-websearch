@@ -35,7 +35,7 @@ type DetailedURLFetcher interface {
 }
 
 type SafeguardChecker interface {
-	Check(ctx context.Context, policy, content string) (*safeguard.CheckResult, error)
+	Check(ctx context.Context, content string) (*safeguard.CheckResult, error)
 }
 
 type Options struct {
@@ -89,7 +89,7 @@ func (s *Service) Search(ctx context.Context, query string, opts Options) (Searc
 	}
 
 	if opts.PIICheckEnabled && s.piiChecker != nil {
-		check, err := s.piiChecker.Check(ctx, "", query)
+		check, err := s.piiChecker.Check(ctx, query)
 		if err != nil {
 			log.WithError(err).Warn("PII safeguard unavailable; allowing search to continue")
 		} else if check.Violation {
@@ -244,7 +244,7 @@ func filterSearchResults(ctx context.Context, checker SafeguardChecker, ranker d
 		return results
 	}
 
-	checks := safeguard.CheckItems(ctx, checker, safeguard.PromptInjectionPolicy, contents)
+	checks := safeguard.CheckItems(ctx, checker, contents)
 	drop := make(map[int]struct{})
 	for i, check := range checks {
 		if check.Err != nil {
@@ -283,7 +283,7 @@ func filterFetchedPages(ctx context.Context, checker SafeguardChecker, ranker do
 		return pages
 	}
 
-	checks := safeguard.CheckItems(ctx, checker, safeguard.PromptInjectionPolicy, contents)
+	checks := safeguard.CheckItems(ctx, checker, contents)
 	drop := make(map[int]struct{})
 	for i, check := range checks {
 		if check.Err != nil {
@@ -328,7 +328,7 @@ func filterFetchResults(ctx context.Context, checker SafeguardChecker, ranker do
 		return filtered
 	}
 
-	checks := safeguard.CheckItems(ctx, checker, safeguard.PromptInjectionPolicy, contents)
+	checks := safeguard.CheckItems(ctx, checker, contents)
 	for i, check := range checks {
 		if check.Err != nil {
 			log.WithError(check.Err).Warn("prompt injection safeguard unavailable; keeping fetched result")

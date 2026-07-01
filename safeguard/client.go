@@ -54,12 +54,12 @@ func NewClient(tinfoil *tinfoil.Client, model string) *Client {
 	return &Client{tinfoil: tinfoil, model: model}
 }
 
-// Check evaluates content against a policy and returns the result
-func (c *Client) Check(ctx context.Context, policy, content string) (*CheckResult, error) {
+// Check evaluates content for prompt injection and returns the result.
+func (c *Client) Check(ctx context.Context, content string) (*CheckResult, error) {
 	resp, err := c.tinfoil.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
 		Model: shared.ChatModel(c.model),
 		Messages: []openai.ChatCompletionMessageParamUnion{
-			openai.SystemMessage(policy),
+			openai.SystemMessage(PromptInjectionPolicy),
 			openai.UserMessage(content),
 		},
 		Temperature: openai.Float(safeguardTemperature),

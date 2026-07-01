@@ -69,10 +69,10 @@ type pfRedactResponse struct {
 	DetectedSpans []pfSpan `json:"detected_spans"`
 }
 
-// Check implements the Checker interface. The policy parameter is ignored —
-// the PII policy is code, not a prompt. The content is sent to /redact and
-// the returned spans are evaluated against the deterministic policy.
-func (c *PrivacyFilterChecker) Check(ctx context.Context, _ string, content string) (*CheckResult, error) {
+// Check implements the Checker interface. The content is sent to /redact
+// and the returned spans are evaluated against the deterministic PII policy
+// in code (see applyPIIPolicy), not an LLM prompt.
+func (c *PrivacyFilterChecker) Check(ctx context.Context, content string) (*CheckResult, error) {
 	spans, err := c.redact(ctx, content)
 	if err != nil {
 		return nil, err

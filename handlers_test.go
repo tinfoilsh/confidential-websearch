@@ -44,7 +44,7 @@ type mockSafeguard struct {
 	blocked map[string]string
 }
 
-func (m *mockSafeguard) Check(ctx context.Context, policy, content string) (*safeguard.CheckResult, error) {
+func (m *mockSafeguard) Check(ctx context.Context, content string) (*safeguard.CheckResult, error) {
 	if reason, ok := m.blocked[content]; ok {
 		return &safeguard.CheckResult{Violation: true, Rationale: reason}, nil
 	}

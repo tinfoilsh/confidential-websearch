@@ -48,7 +48,7 @@ type stubSafeguard struct {
 	blocked map[string]string
 }
 
-func (s *stubSafeguard) Check(_ context.Context, _ string, content string) (*safeguard.CheckResult, error) {
+func (s *stubSafeguard) Check(_ context.Context, content string) (*safeguard.CheckResult, error) {
 	if reason, ok := s.blocked[content]; ok {
 		return &safeguard.CheckResult{Violation: true, Rationale: reason}, nil
 	}
@@ -225,7 +225,7 @@ type recordingSafeguard struct {
 	checked []string
 }
 
-func (r *recordingSafeguard) Check(_ context.Context, _ string, content string) (*safeguard.CheckResult, error) {
+func (r *recordingSafeguard) Check(_ context.Context, content string) (*safeguard.CheckResult, error) {
 	r.mu.Lock()
 	r.checked = append(r.checked, content)
 	r.mu.Unlock()
