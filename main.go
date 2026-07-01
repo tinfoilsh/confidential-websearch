@@ -63,6 +63,9 @@ func main() {
 		svc, recorder = newLocalTestService()
 		searcherName = "local-test"
 	} else {
+		if cfg.TinfoilAPIKey == "" {
+			log.Fatal("TINFOIL_API_KEY is required")
+		}
 		client, err := tinfoil.NewClient(option.WithAPIKey(cfg.TinfoilAPIKey))
 		if err != nil {
 			log.Fatalf("Failed to create Tinfoil client: %v", err)
@@ -79,14 +82,14 @@ func main() {
 
 		injectionClient := safeguard.NewPromptInjectionClient(client, cfg.SafeguardModel)
 
-		var piiChecker safeguard.Checker
-		if cfg.PIIEnclave != "" {
-			pf, err := safeguard.NewPrivacyFilterClient(cfg.PIIEnclave, cfg.PIIRepo, cfg.TinfoilAPIKey)
-			if err != nil {
-				log.Fatalf("Failed to create privacy filter PII checker: %v", err)
-			}
-			piiChecker = pf
+		if cfg.PIIEnclave == "" {
+			log.Fatal("PII_ENCLAVE is required")
 		}
+		pf, err := safeguard.NewPrivacyFilterClient(cfg.PIIEnclave, cfg.PIIRepo, cfg.TinfoilAPIKey)
+		if err != nil {
+			log.Fatalf("Failed to create privacy filter PII client: %v", err)
+		}
+		piiChecker := safeguard.Checker(pf)
 
 		var ranker domainrank.Ranker = domainrank.NopRanker{}
 		if cfg.CloudflareAPIToken != "" {

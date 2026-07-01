@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net/url"
 
-	log "github.com/sirupsen/logrus"
-
 	"github.com/tinfoilsh/confidential-websearch/domainrank"
 	"github.com/tinfoilsh/confidential-websearch/fetch"
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
@@ -76,10 +74,10 @@ func NewService(searcher search.Provider, fetcher URLFetcher, safeguardChecker S
 	}
 	return &Service{
 		searcher:   searcher,
-		fetcher:     fetcher,
-		safeguard:   safeguardChecker,
-		piiChecker:  piiChecker,
-		ranker:      ranker,
+		fetcher:    fetcher,
+		safeguard:  safeguardChecker,
+		piiChecker: piiChecker,
+		ranker:     ranker,
 	}
 }
 
@@ -91,8 +89,9 @@ func (s *Service) Search(ctx context.Context, query string, opts Options) (Searc
 	if opts.PIICheckEnabled && s.piiChecker != nil {
 		check, err := s.piiChecker.Check(ctx, query)
 		if err != nil {
-			log.WithError(err).Warn("PII safeguard unavailable; allowing search to continue")
-		} else if check.Violation {
+			return SearchOutcome{}, fmt.Errorf("PII check failed: %w", err)
+		}
+		if check.Violation {
 			return SearchOutcome{BlockedReason: check.Rationale}, nil
 		}
 	}
@@ -247,11 +246,7 @@ func filterSearchResults(ctx context.Context, checker SafeguardChecker, ranker d
 	checks := safeguard.CheckItems(ctx, checker, contents)
 	drop := make(map[int]struct{})
 	for i, check := range checks {
-		if check.Err != nil {
-			log.WithError(check.Err).Warn("prompt injection safeguard unavailable; keeping search result")
-			continue
-		}
-		if check.Violation {
+		if check.Err != nil || check.Violation {
 			drop[indexes[i]] = struct{}{}
 		}
 	}
@@ -286,11 +281,7 @@ func filterFetchedPages(ctx context.Context, checker SafeguardChecker, ranker do
 	checks := safeguard.CheckItems(ctx, checker, contents)
 	drop := make(map[int]struct{})
 	for i, check := range checks {
-		if check.Err != nil {
-			log.WithError(check.Err).Warn("prompt injection safeguard unavailable; keeping fetched page")
-			continue
-		}
-		if check.Violation {
+		if check.Err != nil || check.Violation {
 			drop[indexes[i]] = struct{}{}
 		}
 	}
@@ -330,18 +321,18 @@ func filterFetchResults(ctx context.Context, checker SafeguardChecker, ranker do
 
 	checks := safeguard.CheckItems(ctx, checker, contents)
 	for i, check := range checks {
-		if check.Err != nil {
-			log.WithError(check.Err).Warn("prompt injection safeguard unavailable; keeping fetched result")
-			continue
-		}
-		if !check.Violation {
+		if check.Err == nil && !check.Violation {
 			continue
 		}
 
 		resultIndex := indexes[i]
 		filtered[resultIndex].Status = fetch.FetchStatusFailed
 		filtered[resultIndex].Content = ""
-		filtered[resultIndex].Error = check.Rationale
+		if check.Err != nil {
+			filtered[resultIndex].Error = check.Err.Error()
+		} else {
+			filtered[resultIndex].Error = check.Rationale
+		}
 	}
 
 	return filtered
