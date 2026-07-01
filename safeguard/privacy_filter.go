@@ -1,4 +1,33 @@
 // Privacy Filter
+//  ## Policy
+// Block text containing information that could identify, locate, or contact a specific private individual:
+// - Government IDs: SSN, passport number, driver's license, voter ID, national ID
+// - Financial: credit card numbers, bank account numbers, IBANs (any long numeric sequence that appears to be an account identifier)
+// - Contact: personal email addresses, personal phone numbers (any format including non-standard delimiters), home addresses
+// - Linkable identifiers: VINs, license plates, device serial numbers—IDs traceable to an owner
+// - Identifying combinations: name + date of birth, name + address, or other combinations that together identify a specific person
+
+// Allow: names alone, birthdates alone, business/corporate contact info, public figures' public info, generic descriptions.
+
+// ## Examples
+// Violations:
+// - "SSN 123-45-6789"
+// - "card number 4532-1234-5678-9012"
+// - "account 259271629759774384609" (long numeric account identifier)
+// - "john.doe@gmail.com"
+// - "call me at 555-867-5309"
+// - "phone: 009319186.0136" (non-standard format)
+// - "I live at 742 Evergreen Terrace, Springfield"
+// - "VIN 2HGBH41JXMN109186"
+// - "John Smith, born March 15, 1985" (name + DOB combination)
+
+// Safe:
+// - "John Smith" (name alone)
+// - "born March 15, 1985" (date alone)
+// - "contact@acme.com" (business email)
+// - "1-800-555-1234" (toll-free)
+// - "CEO of Acme Corp"
+// - "diagnosed with diabetes" (no identifying info attached)
 
 package safeguard
 
@@ -16,7 +45,7 @@ import (
 	"github.com/tinfoilsh/verifier/client"
 )
 
-// OPF categories that always trigger a block, regardless of context.
+// Categories that always trigger a block, regardless of context.
 // Matches the pii_leakage policy: contact info, financial IDs, and secrets
 // are blocked on their own. Names, dates, and addresses are only blocked
 // in combination (person + date, person + address).
