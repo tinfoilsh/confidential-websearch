@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/tinfoilsh/tinfoil-go/verifier/client"
@@ -35,6 +36,7 @@ type PrivacyFilterClient struct {
 	apiKey       string
 	httpClient   *http.Client
 	secureClient *client.SecureClient
+	mu           sync.Mutex
 }
 
 // NewPrivacyFilterClient creates a client that calls the privacy filter enclave at the given
@@ -70,6 +72,23 @@ type pfRedactResponse struct {
 	DetectedSpans []pfSpan `json:"detected_spans"`
 }
 
+// reverify re-runs attestation verification and returns a fresh HTTP client
+// bound to the new TLS public key. Serialized on mu so concurrent retries
+// don't race on SecureClient.groundTruth or c.httpClient.
+func (c *PrivacyFilterClient) reverify() (*http.Client, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, err := c.secureClient.Verify(); err != nil {
+		return nil, err
+	}
+	newClient, err := c.secureClient.HTTPClient()
+	if err != nil {
+		return nil, err
+	}
+	c.httpClient = newClient
+	return newClient, nil
+}
+
 // Check implements the Checker interface. The content is sent to /redact
 // and the returned spans are evaluated against the deterministic PII policy
 // in code (see applyPIIPolicy), not an LLM prompt.
@@ -99,22 +118,19 @@ func (c *PrivacyFilterClient) redact(ctx context.Context, text string) ([]pfSpan
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		// Re-verify attestation on TLS errors (enclave may have rotated
-		// its certificate after a restart) and retry once.
+		// its certificate after a restart) and retry once. Concurrent retries
+		// serialize on mu to avoid racing on groundTruth and httpClient.
 		if errors.Is(err, client.ErrCertMismatch) || errors.Is(err, client.ErrNoTLS) {
 			log.WithError(err).Warn("privacy filter cert mismatch, re-verifying enclave")
-			if _, rerr := c.secureClient.Verify(); rerr != nil {
-				return nil, fmt.Errorf("privacy filter re-verification failed: %w", rerr)
-			}
-			newClient, rerr := c.secureClient.HTTPClient()
+			retryClient, rerr := c.reverify()
 			if rerr != nil {
 				return nil, fmt.Errorf("privacy filter re-verification failed: %w", rerr)
 			}
-			c.httpClient = newClient
 			req, _ = http.NewRequestWithContext(ctx, "POST",
 				fmt.Sprintf("https://%s/redact", c.enclave), bytes.NewReader(body))
 			req.Header.Set("Authorization", "Bearer "+c.apiKey)
 			req.Header.Set("Content-Type", "application/json")
-			resp, err = c.httpClient.Do(req)
+			resp, err = retryClient.Do(req)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("privacy filter /redact request: %w", err)
