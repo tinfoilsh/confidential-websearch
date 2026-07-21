@@ -60,7 +60,15 @@ func main() {
 	)
 
 	if localTestMode {
-		svc, recorder = newLocalTestService()
+		var piiChecker safeguard.Checker
+		if cfg.PIIEnclave != "" {
+			pf, err := safeguard.NewPrivacyFilterClient(cfg.PIIEnclave, cfg.PIIRepo, cfg.TinfoilAPIKey)
+			if err != nil {
+				log.Fatalf("Failed to create privacy filter PII client: %v", err)
+			}
+			piiChecker = safeguard.Checker(pf)
+		}
+		svc, recorder = newLocalTestService(piiChecker)
 		searcherName = "local-test"
 	} else {
 		if cfg.TinfoilAPIKey == "" {

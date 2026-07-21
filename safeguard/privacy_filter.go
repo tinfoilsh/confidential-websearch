@@ -19,7 +19,7 @@ import (
 	"strings"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/tinfoilsh/verifier/client"
+	"github.com/tinfoilsh/tinfoil-go/verifier/client"
 )
 
 var pfAlwaysBlock = map[string]bool{
