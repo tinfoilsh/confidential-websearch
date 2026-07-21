@@ -9,6 +9,8 @@ containers:
     networks: [web]
     env:
       - SAFEGUARD_MODEL: "gpt-oss-safeguard-120b"
+      - PII_ENCLAVE: "pii-filter.tinfoil.sh"
+      - PII_REPO: "tinfoilsh/confidential-pii-cpu"
       - CONTROL_PLANE_URL: "https://api.tinfoil.sh"
       - USAGE_REPORTER_ID: "websearch-mcp"
     secrets:

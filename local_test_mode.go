@@ -25,7 +25,7 @@ type localTestSafeguard struct{}
 // Check returns a violation when the content contains the trigger phrase so
 // the integration matrix can assert router-side behavior on blocked tool
 // calls (web_search_call.status == "blocked", public reason constant).
-func (localTestSafeguard) Check(_ context.Context, _, content string) (*safeguard.CheckResult, error) {
+func (localTestSafeguard) Check(_ context.Context, content string) (*safeguard.CheckResult, error) {
 	if strings.Contains(strings.ToLower(content), localTestBlockedTrigger) {
 		return &safeguard.CheckResult{
 			Violation: true,
@@ -97,11 +97,11 @@ func (r *LocalCallRecorder) LastFetch() (time.Time, []string) {
 	return r.lastFetchAt, copied
 }
 
-func newLocalTestService() (*tools.Service, *LocalCallRecorder) {
+func newLocalTestService(piiChecker safeguard.Checker) (*tools.Service, *LocalCallRecorder) {
 	recorder := NewLocalCallRecorder()
 	searcher := localTestSearcher{recorder: recorder}
 	fetcher := localTestFetcher{recorder: recorder}
-	return tools.NewService(searcher, fetcher, localTestSafeguard{}, domainrank.NopRanker{}), recorder
+	return tools.NewService(searcher, fetcher, localTestSafeguard{}, piiChecker, domainrank.NopRanker{}), recorder
 }
 
 type localTestSearcher struct {

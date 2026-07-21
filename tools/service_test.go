@@ -48,7 +48,7 @@ type stubSafeguard struct {
 	blocked map[string]string
 }
 
-func (s *stubSafeguard) Check(_ context.Context, _ string, content string) (*safeguard.CheckResult, error) {
+func (s *stubSafeguard) Check(_ context.Context, content string) (*safeguard.CheckResult, error) {
 	if reason, ok := s.blocked[content]; ok {
 		return &safeguard.CheckResult{Violation: true, Rationale: reason}, nil
 	}
@@ -60,7 +60,7 @@ func (s *stubSafeguard) Check(_ context.Context, _ string, content string) (*saf
 func ptrBool(v bool) *bool { return &v }
 
 func TestSearch_RequiresQuery(t *testing.T) {
-	service := NewService(&stubSearcher{}, nil, nil, nil)
+	service := NewService(&stubSearcher{}, nil, nil, nil, nil)
 	_, err := service.Search(context.Background(), "", Options{})
 	if err == nil {
 		t.Fatal("expected error for empty query")
@@ -71,7 +71,7 @@ func TestSearch_ReturnsResults(t *testing.T) {
 	searcher := &stubSearcher{
 		results: []search.Result{{Title: "One", URL: "https://example.com/1"}},
 	}
-	service := NewService(searcher, nil, nil, nil)
+	service := NewService(searcher, nil, nil, nil, nil)
 
 	outcome, err := service.Search(context.Background(), "golang", Options{MaxResults: 3})
 	if err != nil {
@@ -87,7 +87,7 @@ func TestSearch_ReturnsResults(t *testing.T) {
 
 func TestSearch_DefaultMaxResults(t *testing.T) {
 	searcher := &stubSearcher{}
-	service := NewService(searcher, nil, nil, nil)
+	service := NewService(searcher, nil, nil, nil, nil)
 
 	if _, err := service.Search(context.Background(), "golang", Options{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -100,7 +100,7 @@ func TestSearch_DefaultMaxResults(t *testing.T) {
 func TestSearch_PIIBlocksQuery(t *testing.T) {
 	searcher := &stubSearcher{results: []search.Result{{Title: "hit"}}}
 	sg := &stubSafeguard{blocked: map[string]string{"john@example.com": "email detected"}}
-	service := NewService(searcher, nil, sg, nil)
+	service := NewService(searcher, nil, nil, sg, nil)
 
 	outcome, err := service.Search(context.Background(), "john@example.com", Options{PIICheckEnabled: true})
 	if err != nil {
@@ -119,7 +119,7 @@ func TestSearch_InjectionCheckFiltersResults(t *testing.T) {
 		},
 	}
 	sg := &stubSafeguard{blocked: map[string]string{"bad instructions": "injection"}}
-	service := NewService(searcher, nil, sg, nil)
+	service := NewService(searcher, nil, sg, nil, nil)
 
 	outcome, err := service.Search(context.Background(), "topic", Options{InjectionCheckEnabled: ptrBool(true)})
 	if err != nil {
@@ -134,7 +134,7 @@ func TestSearch_InjectionCheckFiltersResults(t *testing.T) {
 }
 
 func TestSearch_UpstreamErrorPropagates(t *testing.T) {
-	service := NewService(&stubSearcher{err: errors.New("boom")}, nil, nil, nil)
+	service := NewService(&stubSearcher{err: errors.New("boom")}, nil, nil, nil, nil)
 	if _, err := service.Search(context.Background(), "topic", Options{}); err == nil {
 		t.Fatal("expected upstream error to propagate")
 	}
@@ -147,7 +147,7 @@ func TestFetchDetailed_PreservesURLOrder(t *testing.T) {
 			{URL: "https://example.com/b", Status: fetch.FetchStatusFailed, Error: "blocked"},
 		},
 	}
-	service := NewService(nil, fetcher, nil, nil)
+	service := NewService(nil, fetcher, nil, nil, nil)
 
 	results := service.FetchDetailed(context.Background(), []string{
 		"https://example.com/a",
@@ -170,7 +170,7 @@ func TestFetchDetailed_InjectionCheckMarksFailure(t *testing.T) {
 		},
 	}
 	sg := &stubSafeguard{blocked: map[string]string{"bad instructions": "injection"}}
-	service := NewService(nil, fetcher, sg, nil)
+	service := NewService(nil, fetcher, sg, nil, nil)
 
 	results := service.FetchDetailed(context.Background(), []string{
 		"https://example.com/a",
@@ -189,7 +189,7 @@ func TestFetchDetailed_InjectionCheckMarksFailure(t *testing.T) {
 }
 
 func TestFetch_EmptyURLsReturnsNil(t *testing.T) {
-	service := NewService(nil, &stubFetcher{}, nil, nil)
+	service := NewService(nil, &stubFetcher{}, nil, nil, nil)
 	if pages := service.Fetch(context.Background(), nil, Options{}); pages != nil {
 		t.Fatalf("expected nil pages, got %+v", pages)
 	}
@@ -205,7 +205,7 @@ func TestFetchDetailed_CapsURLs(t *testing.T) {
 		}
 	}
 	fetcher := &stubFetcher{results: results}
-	service := NewService(nil, fetcher, nil, nil)
+	service := NewService(nil, fetcher, nil, nil, nil)
 
 	got := service.FetchDetailed(context.Background(), urls, Options{})
 	if len(got) != maxFetchURLs {
@@ -225,7 +225,7 @@ type recordingSafeguard struct {
 	checked []string
 }
 
-func (r *recordingSafeguard) Check(_ context.Context, _ string, content string) (*safeguard.CheckResult, error) {
+func (r *recordingSafeguard) Check(_ context.Context, content string) (*safeguard.CheckResult, error) {
 	r.mu.Lock()
 	r.checked = append(r.checked, content)
 	r.mu.Unlock()
@@ -252,7 +252,7 @@ func TestSearch_DefaultSkipsTopBucketHosts(t *testing.T) {
 	}
 	sg := &recordingSafeguard{}
 	ranker := stubRanker{inBucket: map[string]bool{"example.com": true}}
-	service := NewService(searcher, nil, sg, ranker)
+	service := NewService(searcher, nil, sg, nil, ranker)
 
 	if _, err := service.Search(context.Background(), "topic", Options{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -272,7 +272,7 @@ func TestSearch_ExplicitOptInChecksAll(t *testing.T) {
 	}
 	sg := &recordingSafeguard{}
 	ranker := stubRanker{inBucket: map[string]bool{"example.com": true}}
-	service := NewService(searcher, nil, sg, ranker)
+	service := NewService(searcher, nil, sg, nil, ranker)
 
 	if _, err := service.Search(context.Background(), "topic", Options{InjectionCheckEnabled: ptrBool(true)}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -290,7 +290,7 @@ func TestSearch_ExplicitOptOutChecksNothing(t *testing.T) {
 		},
 	}
 	sg := &recordingSafeguard{}
-	service := NewService(searcher, nil, sg, nil)
+	service := NewService(searcher, nil, sg, nil, nil)
 
 	if _, err := service.Search(context.Background(), "topic", Options{InjectionCheckEnabled: ptrBool(false)}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -310,7 +310,7 @@ func TestFetchDetailed_DefaultSkipsTopBucketHosts(t *testing.T) {
 	}
 	sg := &recordingSafeguard{}
 	ranker := stubRanker{inBucket: map[string]bool{"example.com": true}}
-	service := NewService(nil, fetcher, sg, ranker)
+	service := NewService(nil, fetcher, sg, nil, ranker)
 
 	results := service.FetchDetailed(context.Background(), []string{
 		"https://example.com/a",
@@ -337,7 +337,7 @@ func TestFetchDetailed_ExplicitOptInChecksAll(t *testing.T) {
 	}
 	sg := &recordingSafeguard{}
 	ranker := stubRanker{inBucket: map[string]bool{"example.com": true}}
-	service := NewService(nil, fetcher, sg, ranker)
+	service := NewService(nil, fetcher, sg, nil, ranker)
 
 	service.FetchDetailed(context.Background(), []string{
 		"https://example.com/a",
@@ -357,7 +357,7 @@ func TestFetchDetailed_ExplicitOptOutChecksNothing(t *testing.T) {
 		},
 	}
 	sg := &recordingSafeguard{blocked: map[string]string{"bad instructions": "injection"}}
-	service := NewService(nil, fetcher, sg, nil)
+	service := NewService(nil, fetcher, sg, nil, nil)
 
 	results := service.FetchDetailed(context.Background(), []string{"https://example.com/a"}, Options{InjectionCheckEnabled: ptrBool(false)})
 	checked := sg.snapshot()

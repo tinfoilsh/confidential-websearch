@@ -7,7 +7,7 @@ import (
 
 // Checker defines the interface for safety checks
 type Checker interface {
-	Check(ctx context.Context, policy, content string) (*CheckResult, error)
+	Check(ctx context.Context, content string) (*CheckResult, error)
 }
 
 // ItemResult contains the check result for a single item
@@ -20,7 +20,7 @@ type ItemResult struct {
 
 // CheckItems runs parallel safety checks on multiple items.
 // Returns results in index order. On error, Err is set and Violation defaults to false.
-func CheckItems(ctx context.Context, checker Checker, policy string, items []string) []ItemResult {
+func CheckItems(ctx context.Context, checker Checker, items []string) []ItemResult {
 	if len(items) == 0 {
 		return nil
 	}
@@ -33,7 +33,7 @@ func CheckItems(ctx context.Context, checker Checker, policy string, items []str
 		go func(idx int, content string) {
 			defer wg.Done()
 
-			check, err := checker.Check(ctx, policy, content)
+			check, err := checker.Check(ctx, content)
 			if err != nil {
 				results <- ItemResult{Index: idx, Err: err}
 				return
