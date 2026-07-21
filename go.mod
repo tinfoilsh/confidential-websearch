@@ -1,6 +1,6 @@
 module github.com/tinfoilsh/confidential-websearch
 
-go 1.25.9
+go 1.25.8
 
 replace github.com/google/go-sev-guest => github.com/tinfoilsh/go-sev-guest v0.0.0-20250704193550-c725e6216008
 
@@ -10,7 +10,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.5.0
 	github.com/openai/openai-go/v3 v3.42.0
 	github.com/sirupsen/logrus v1.9.4
-	github.com/tinfoilsh/tinfoil-go v0.12.9
+	github.com/tinfoilsh/tinfoil-go v0.12.7
 	github.com/tinfoilsh/usage-reporting-go v0.1.2
 	golang.org/x/net v0.57.0
 	gopkg.in/yaml.v3 v3.0.1
