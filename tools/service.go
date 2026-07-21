@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/tinfoilsh/confidential-websearch/domainrank"
 	"github.com/tinfoilsh/confidential-websearch/fetch"
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
@@ -246,7 +247,11 @@ func filterSearchResults(ctx context.Context, checker SafeguardChecker, ranker d
 	checks := safeguard.CheckItems(ctx, checker, contents)
 	drop := make(map[int]struct{})
 	for i, check := range checks {
-		if check.Err != nil || check.Violation {
+		if check.Err != nil {
+			log.WithError(check.Err).Warn("prompt injection safeguard unavailable; keeping search result")
+			continue
+		}
+		if check.Violation {
 			drop[indexes[i]] = struct{}{}
 		}
 	}
@@ -281,7 +286,11 @@ func filterFetchedPages(ctx context.Context, checker SafeguardChecker, ranker do
 	checks := safeguard.CheckItems(ctx, checker, contents)
 	drop := make(map[int]struct{})
 	for i, check := range checks {
-		if check.Err != nil || check.Violation {
+		if check.Err != nil {
+			log.WithError(check.Err).Warn("prompt injection safeguard unavailable; keeping fetched page")
+			continue
+		}
+		if check.Violation {
 			drop[indexes[i]] = struct{}{}
 		}
 	}
@@ -321,18 +330,18 @@ func filterFetchResults(ctx context.Context, checker SafeguardChecker, ranker do
 
 	checks := safeguard.CheckItems(ctx, checker, contents)
 	for i, check := range checks {
-		if check.Err == nil && !check.Violation {
+		if check.Err != nil {
+			log.WithError(check.Err).Warn("prompt injection safeguard unavailable; keeping fetched result")
+			continue
+		}
+		if !check.Violation {
 			continue
 		}
 
 		resultIndex := indexes[i]
 		filtered[resultIndex].Status = fetch.FetchStatusFailed
 		filtered[resultIndex].Content = ""
-		if check.Err != nil {
-			filtered[resultIndex].Error = check.Err.Error()
-		} else {
-			filtered[resultIndex].Error = check.Rationale
-		}
+		filtered[resultIndex].Error = check.Rationale
 	}
 
 	return filtered
