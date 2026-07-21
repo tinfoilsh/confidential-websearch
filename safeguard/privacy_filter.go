@@ -23,10 +23,11 @@ import (
 )
 
 var pfAlwaysBlock = map[string]bool{
-	"private_email":  true,
-	"private_phone":  true,
-	"account_number": true,
-	"secret":         true,
+	"private_email":   true,
+	"private_phone":   true,
+	"private_address": true,
+	"account_number":  true,
+	"secret":          true,
 }
 
 type PrivacyFilterClient struct {
@@ -101,6 +102,9 @@ func (c *PrivacyFilterClient) redact(ctx context.Context, text string) ([]pfSpan
 		// its certificate after a restart) and retry once.
 		if errors.Is(err, client.ErrCertMismatch) || errors.Is(err, client.ErrNoTLS) {
 			log.WithError(err).Warn("privacy filter cert mismatch, re-verifying enclave")
+			if _, rerr := c.secureClient.Verify(); rerr != nil {
+				return nil, fmt.Errorf("privacy filter re-verification failed: %w", rerr)
+			}
 			newClient, rerr := c.secureClient.HTTPClient()
 			if rerr != nil {
 				return nil, fmt.Errorf("privacy filter re-verification failed: %w", rerr)
