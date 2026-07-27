@@ -23,6 +23,8 @@ const (
 	// defaultMaxContentChars is the per-result snippet/text budget applied
 	// when the caller does not specify max_content_chars.
 	defaultMaxContentChars = 700
+
+	blockedContentError = "content blocked by safety filters"
 )
 
 type URLFetcher interface {
@@ -57,8 +59,8 @@ type Options struct {
 }
 
 type SearchOutcome struct {
-	Results       []search.Result
-	BlockedReason string
+	Results []search.Result
+	Blocked bool
 }
 
 type Service struct {
@@ -93,7 +95,7 @@ func (s *Service) Search(ctx context.Context, query string, opts Options) (Searc
 			return SearchOutcome{}, fmt.Errorf("PII check failed: %w", err)
 		}
 		if check.Violation {
-			return SearchOutcome{BlockedReason: check.Rationale}, nil
+			return SearchOutcome{Blocked: true}, nil
 		}
 	}
 
@@ -248,7 +250,7 @@ func filterSearchResults(ctx context.Context, checker SafeguardChecker, ranker d
 	drop := make(map[int]struct{})
 	for i, check := range checks {
 		if check.Err != nil {
-			log.WithError(check.Err).Warn("prompt injection safeguard unavailable; keeping search result")
+			log.Warn("prompt injection safeguard unavailable; keeping search result")
 			continue
 		}
 		if check.Violation {
@@ -287,7 +289,7 @@ func filterFetchedPages(ctx context.Context, checker SafeguardChecker, ranker do
 	drop := make(map[int]struct{})
 	for i, check := range checks {
 		if check.Err != nil {
-			log.WithError(check.Err).Warn("prompt injection safeguard unavailable; keeping fetched page")
+			log.Warn("prompt injection safeguard unavailable; keeping fetched page")
 			continue
 		}
 		if check.Violation {
@@ -331,7 +333,7 @@ func filterFetchResults(ctx context.Context, checker SafeguardChecker, ranker do
 	checks := safeguard.CheckItems(ctx, checker, contents)
 	for i, check := range checks {
 		if check.Err != nil {
-			log.WithError(check.Err).Warn("prompt injection safeguard unavailable; keeping fetched result")
+			log.Warn("prompt injection safeguard unavailable; keeping fetched result")
 			continue
 		}
 		if !check.Violation {
@@ -341,7 +343,7 @@ func filterFetchResults(ctx context.Context, checker SafeguardChecker, ranker do
 		resultIndex := indexes[i]
 		filtered[resultIndex].Status = fetch.FetchStatusFailed
 		filtered[resultIndex].Content = ""
-		filtered[resultIndex].Error = check.Rationale
+		filtered[resultIndex].Error = blockedContentError
 	}
 
 	return filtered

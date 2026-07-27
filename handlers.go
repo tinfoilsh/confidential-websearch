@@ -26,6 +26,7 @@ const (
 	headerPIICheck       = "X-Tinfoil-Tool-PII-Check"
 	headerInjectionCheck = "X-Tinfoil-Tool-Injection-Check"
 	searchProviderError  = "search provider unavailable; retry after a short delay"
+	blockedQueryError    = "query was blocked by safety filters; rephrase the query to remove personal information or sensitive content, then retry"
 )
 
 // resolveSafetyFlag picks between a per-request header override and the
@@ -153,8 +154,8 @@ func newSearchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Requ
 		if err != nil {
 			return nil, SearchResult{}, errors.New(searchProviderError)
 		}
-		if outcome.BlockedReason != "" {
-			return nil, SearchResult{}, fmt.Errorf("query was blocked by safety filters: %s — rephrase the query to remove personal information or sensitive content, then retry", outcome.BlockedReason)
+		if outcome.Blocked {
+			return nil, SearchResult{}, errors.New(blockedQueryError)
 		}
 
 		return nil, SearchResult{Results: outcome.Results}, nil

@@ -458,8 +458,9 @@ func TestResolveSafetyFlag(t *testing.T) {
 }
 
 func TestSearchHandler_HeaderOverridesEnvDefaults(t *testing.T) {
+	const providerDetail = "provider-secret-sentinel"
 	searcher := &mockSearchProvider{results: []search.Result{{Title: "r", URL: "https://example.com/r", Content: "ok"}}}
-	sg := &mockSafeguard{blocked: map[string]string{"john@example.com": "email detected"}}
+	sg := &mockSafeguard{blocked: map[string]string{"john@example.com": providerDetail}}
 	svc := tools.NewService(searcher, nil, nil, sg, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
@@ -470,6 +471,12 @@ func TestSearchHandler_HeaderOverridesEnvDefaults(t *testing.T) {
 	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "john@example.com"})
 	if err == nil {
 		t.Fatalf("expected PII block when header opts PII check on; got nil error")
+	}
+	if err.Error() != blockedQueryError {
+		t.Fatalf("expected sanitized block error, got %q", err)
+	}
+	if strings.Contains(err.Error(), providerDetail) {
+		t.Fatalf("error exposed safeguard response: %v", err)
 	}
 }
 

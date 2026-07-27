@@ -1,10 +1,14 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
+
+	log "github.com/sirupsen/logrus"
 
 	"github.com/tinfoilsh/confidential-websearch/fetch"
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
@@ -46,16 +50,18 @@ func (f *stubFetcher) FetchURLResults(_ context.Context, _ []string) []fetch.URL
 
 type stubSafeguard struct {
 	blocked map[string]string
+	err     error
 }
 
 func (s *stubSafeguard) Check(_ context.Context, content string) (*safeguard.CheckResult, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
 	if reason, ok := s.blocked[content]; ok {
 		return &safeguard.CheckResult{Violation: true, Rationale: reason}, nil
 	}
 	return &safeguard.CheckResult{}, nil
 }
-
-
 
 func ptrBool(v bool) *bool { return &v }
 
@@ -106,8 +112,57 @@ func TestSearch_PIIBlocksQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if outcome.BlockedReason == "" {
+	if !outcome.Blocked {
 		t.Fatal("expected query to be blocked")
+	}
+}
+
+func TestInjectionSafeguardErrorsDoNotReachLogs(t *testing.T) {
+	const providerDetail = "provider-secret-sentinel"
+	var logs bytes.Buffer
+	previousOutput := log.StandardLogger().Out
+	log.SetOutput(&logs)
+	defer log.SetOutput(previousOutput)
+
+	searcher := &stubSearcher{
+		results: []search.Result{{
+			URL:     "https://example.com",
+			Content: "content",
+		}},
+	}
+	fetcher := &stubFetcher{
+		results: []fetch.URLResult{{
+			URL:     "https://example.com",
+			Status:  fetch.FetchStatusCompleted,
+			Content: "content",
+		}},
+	}
+	service := NewService(
+		searcher,
+		fetcher,
+		&stubSafeguard{err: errors.New(providerDetail)},
+		nil,
+		nil,
+	)
+	options := Options{InjectionCheckEnabled: ptrBool(true)}
+
+	_, err := service.Search(context.Background(), "query", options)
+	if err != nil {
+		t.Fatalf("unexpected search error: %v", err)
+	}
+	_ = service.Fetch(
+		context.Background(),
+		[]string{"https://example.com"},
+		options,
+	)
+	_ = service.FetchDetailed(
+		context.Background(),
+		[]string{"https://example.com"},
+		options,
+	)
+
+	if strings.Contains(logs.String(), providerDetail) {
+		t.Fatalf("log exposed safeguard response: %s", logs.String())
 	}
 }
 
@@ -185,6 +240,9 @@ func TestFetchDetailed_InjectionCheckMarksFailure(t *testing.T) {
 	}
 	if results[1].Content != "" {
 		t.Fatalf("expected unsafe content to be cleared, got %q", results[1].Content)
+	}
+	if results[1].Error != blockedContentError {
+		t.Fatalf("expected sanitized block error, got %q", results[1].Error)
 	}
 }
 

@@ -113,7 +113,7 @@ func (c *PromptInjectionClient) Check(ctx context.Context, content string) (*Che
 	}
 
 	respContent := resp.Choices[0].Message.Content
-	log.Debugf("Safeguard response: len=%d, finish_reason=%s", len(respContent), resp.Choices[0].FinishReason)
+	log.Debugf("Safeguard response: len=%d", len(respContent))
 
 	var result CheckResult
 	if err := json.Unmarshal([]byte(respContent), &result); err != nil {
