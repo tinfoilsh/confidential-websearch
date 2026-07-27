@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -154,7 +155,7 @@ func (p *ExaProvider) Search(ctx context.Context, query string, opts Options) ([
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("exa API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("exa API returned status %d", resp.StatusCode)
 	}
 
 	var data exaResponse
@@ -163,7 +164,7 @@ func (p *ExaProvider) Search(ctx context.Context, query string, opts Options) ([
 	}
 
 	if data.Error != "" {
-		return nil, fmt.Errorf("exa API error: %s", data.Error)
+		return nil, errors.New("exa API returned an error")
 	}
 
 	results := make([]Result, 0, len(data.Results))

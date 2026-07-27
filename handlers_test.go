@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -112,13 +113,20 @@ func TestSearchHandler_EmptyQuery(t *testing.T) {
 }
 
 func TestSearchHandler_SearchError(t *testing.T) {
-	searcher := &mockSearchProvider{err: fmt.Errorf("search failed")}
+	const providerDetail = "provider-secret-sentinel"
+	searcher := &mockSearchProvider{err: fmt.Errorf("%s", providerDetail)}
 	svc := tools.NewService(searcher, nil, nil, nil, nil)
 	handler := newSearchHandler(svc, &config.Config{}, nil)
 
 	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "test"})
 	if err == nil {
 		t.Fatal("expected error")
+	}
+	if err.Error() != searchProviderError {
+		t.Fatalf("expected sanitized error, got %q", err)
+	}
+	if strings.Contains(err.Error(), providerDetail) {
+		t.Fatalf("error exposed provider response: %v", err)
 	}
 }
 

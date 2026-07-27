@@ -26,7 +26,8 @@ const (
 	// crawl. Exa now treats `maxAgeHours` as the single freshness control
 	// (the legacy `livecrawl` flag was deprecated and rejects requests that
 	// set both).
-	exaMaxAgeHours = 2
+	exaMaxAgeHours     = 2
+	fetchProviderError = "upstream content fetch failed"
 )
 
 // FetchedPage represents a fetched URL and its text content
@@ -105,9 +106,9 @@ func (f *Fetcher) FetchURLResults(ctx context.Context, urls []string) []URLResul
 
 	contents, err := f.callExa(ctx, urls)
 	if err != nil {
-		log.Debugf("Exa contents call failed: %v", err)
+		log.Debug("Exa contents call failed")
 		for i := range results {
-			results[i].Error = err.Error()
+			results[i].Error = fetchProviderError
 		}
 		return results
 	}
@@ -154,7 +155,7 @@ func (f *Fetcher) callExa(ctx context.Context, urls []string) (map[string]string
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("exa API status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("exa API status %d", resp.StatusCode)
 	}
 
 	var exaResp exaContentsResponse
