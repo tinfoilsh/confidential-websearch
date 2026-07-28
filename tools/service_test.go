@@ -116,7 +116,7 @@ func TestSearch_DefaultMaxResults(t *testing.T) {
 
 func TestSearch_PIIRedactsQuery(t *testing.T) {
 	searcher := &stubSearcher{results: []search.Result{{Title: "hit"}}}
-	redactor := &stubPIIRedactor{redacted: "[REDACTED] hiking trails"}
+	redactor := &stubPIIRedactor{redacted: "hiking trails"}
 	service := NewService(searcher, nil, nil, redactor, nil)
 
 	outcome, err := service.Search(context.Background(), "john@example.com hiking trails", Options{PIICheckEnabled: true})
@@ -126,7 +126,7 @@ func TestSearch_PIIRedactsQuery(t *testing.T) {
 	if len(outcome.Results) != 1 {
 		t.Fatalf("expected search to proceed, got %d results", len(outcome.Results))
 	}
-	if searcher.query != "[REDACTED] hiking trails" {
+	if searcher.query != "hiking trails" {
 		t.Fatalf("expected redacted query, got %q", searcher.query)
 	}
 }

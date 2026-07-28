@@ -472,7 +472,7 @@ func TestResolveSafetyFlag(t *testing.T) {
 
 func TestSearchHandler_HeaderOverridesEnvDefaults(t *testing.T) {
 	searcher := &mockSearchProvider{results: []search.Result{{Title: "r", URL: "https://example.com/r", Content: "ok"}}}
-	redactor := &mockPIIRedactor{redacted: map[string]string{"john@example.com": "[REDACTED]"}}
+	redactor := &mockPIIRedactor{redacted: map[string]string{"john@example.com hiking trails": "hiking trails"}}
 	svc := tools.NewService(searcher, nil, nil, redactor, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
@@ -480,11 +480,11 @@ func TestSearchHandler_HeaderOverridesEnvDefaults(t *testing.T) {
 	req.Header.Set(headerInjectionCheck, "false")
 
 	handler := newSearchHandler(svc, &config.Config{EnablePIICheck: false, EnableSearchInjectionCheck: true}, req)
-	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "john@example.com"})
+	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "john@example.com hiking trails"})
 	if err != nil {
 		t.Fatalf("unexpected search error: %v", err)
 	}
-	if searcher.lastQuery != "[REDACTED]" {
+	if searcher.lastQuery != "hiking trails" {
 		t.Fatalf("expected redacted search query, got %q", searcher.lastQuery)
 	}
 }

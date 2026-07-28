@@ -26,7 +26,7 @@ func TestApplyPIIPolicy(t *testing.T) {
 				"private_address": "742 Evergreen Terrace",
 				"private_person":  "John Smith",
 			},
-			want: "hiking trails near [REDACTED] for John Smith",
+			want: "hiking trails near for John Smith",
 		},
 		{
 			name:    "date paired with person is masked",
@@ -35,19 +35,19 @@ func TestApplyPIIPolicy(t *testing.T) {
 				"private_person": "John Smith",
 				"private_date":   "March 15, 1985",
 			},
-			want: "records for John Smith born [REDACTED]",
+			want: "records for John Smith born",
 		},
 		{
 			name:    "email is always masked",
 			content: "email john@example.com about trail conditions",
 			spans:   map[string]string{"private_email": "john@example.com"},
-			want:    "email [REDACTED] about trail conditions",
+			want:    "email about trail conditions",
 		},
 		{
 			name:    "unicode offsets are handled",
 			content: "écrivez à john@example.com",
 			spans:   map[string]string{"private_email": "john@example.com"},
-			want:    "écrivez à [REDACTED]",
+			want:    "écrivez à",
 		},
 	}
 

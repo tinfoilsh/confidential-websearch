@@ -25,8 +25,6 @@ import (
 	"github.com/tinfoilsh/tinfoil-go/verifier/client"
 )
 
-const piiRedactionMarker = "[REDACTED]"
-
 var pfAlwaysRedact = map[string]bool{
 	"private_email":  true,
 	"private_phone":  true,
@@ -229,11 +227,10 @@ func applyPIIPolicy(content string, spans []pfSpan) (string, error) {
 	cursor := 0
 	for _, span := range merged {
 		redacted.WriteString(string(runes[cursor:span.start]))
-		redacted.WriteString(piiRedactionMarker)
 		cursor = span.end
 	}
 	redacted.WriteString(string(runes[cursor:]))
-	return redacted.String(), nil
+	return strings.Join(strings.Fields(redacted.String()), " "), nil
 }
 
 // Policy ---
