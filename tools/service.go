@@ -60,27 +60,26 @@ type Options struct {
 
 type SearchOutcome struct {
 	Results []search.Result
-	Blocked bool
 }
 
 type Service struct {
-	searcher   search.Provider
-	fetcher    URLFetcher
-	safeguard  SafeguardChecker
-	piiChecker SafeguardChecker
-	ranker     domainrank.Ranker
+	searcher    search.Provider
+	fetcher     URLFetcher
+	safeguard   SafeguardChecker
+	piiRedactor safeguard.PIIRedactor
+	ranker      domainrank.Ranker
 }
 
-func NewService(searcher search.Provider, fetcher URLFetcher, safeguardChecker SafeguardChecker, piiChecker SafeguardChecker, ranker domainrank.Ranker) *Service {
+func NewService(searcher search.Provider, fetcher URLFetcher, safeguardChecker SafeguardChecker, piiRedactor safeguard.PIIRedactor, ranker domainrank.Ranker) *Service {
 	if ranker == nil {
 		ranker = domainrank.NopRanker{}
 	}
 	return &Service{
-		searcher:   searcher,
-		fetcher:    fetcher,
-		safeguard:  safeguardChecker,
-		piiChecker: piiChecker,
-		ranker:     ranker,
+		searcher:    searcher,
+		fetcher:     fetcher,
+		safeguard:   safeguardChecker,
+		piiRedactor: piiRedactor,
+		ranker:      ranker,
 	}
 }
 
@@ -89,14 +88,13 @@ func (s *Service) Search(ctx context.Context, query string, opts Options) (Searc
 		return SearchOutcome{}, fmt.Errorf("query is required")
 	}
 
-	if opts.PIICheckEnabled && s.piiChecker != nil {
-		check, err := s.piiChecker.Check(ctx, query)
+	searchQuery := query
+	if opts.PIICheckEnabled && s.piiRedactor != nil {
+		redactedQuery, err := s.piiRedactor.Redact(ctx, query)
 		if err != nil {
 			return SearchOutcome{}, fmt.Errorf("PII check failed: %w", err)
 		}
-		if check.Violation {
-			return SearchOutcome{Blocked: true}, nil
-		}
+		searchQuery = redactedQuery
 	}
 
 	maxResults := opts.MaxResults
@@ -114,7 +112,7 @@ func (s *Service) Search(ctx context.Context, query string, opts Options) (Searc
 		contentMode = search.ContentModeHighlights
 	}
 
-	results, err := s.searcher.Search(ctx, query, search.Options{
+	results, err := s.searcher.Search(ctx, searchQuery, search.Options{
 		MaxResults:           maxResults,
 		MaxContentCharacters: maxContentChars,
 		ContentMode:          contentMode,

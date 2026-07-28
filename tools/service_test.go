@@ -18,12 +18,14 @@ import (
 type stubSearcher struct {
 	results []search.Result
 	err     error
+	query   string
 	opts    search.Options
 }
 
 func (s *stubSearcher) Name() string { return "stub" }
 
-func (s *stubSearcher) Search(_ context.Context, _ string, opts search.Options) ([]search.Result, error) {
+func (s *stubSearcher) Search(_ context.Context, query string, opts search.Options) ([]search.Result, error) {
+	s.query = query
 	s.opts = opts
 	return s.results, s.err
 }
@@ -61,6 +63,15 @@ func (s *stubSafeguard) Check(_ context.Context, content string) (*safeguard.Che
 		return &safeguard.CheckResult{Violation: true, Rationale: reason}, nil
 	}
 	return &safeguard.CheckResult{}, nil
+}
+
+type stubPIIRedactor struct {
+	redacted string
+	err      error
+}
+
+func (s *stubPIIRedactor) Redact(_ context.Context, _ string) (string, error) {
+	return s.redacted, s.err
 }
 
 func ptrBool(v bool) *bool { return &v }
@@ -103,17 +114,34 @@ func TestSearch_DefaultMaxResults(t *testing.T) {
 	}
 }
 
-func TestSearch_PIIBlocksQuery(t *testing.T) {
+func TestSearch_PIIRedactsQuery(t *testing.T) {
 	searcher := &stubSearcher{results: []search.Result{{Title: "hit"}}}
-	sg := &stubSafeguard{blocked: map[string]string{"john@example.com": "email detected"}}
-	service := NewService(searcher, nil, nil, sg, nil)
+	redactor := &stubPIIRedactor{redacted: "[REDACTED] hiking trails"}
+	service := NewService(searcher, nil, nil, redactor, nil)
 
-	outcome, err := service.Search(context.Background(), "john@example.com", Options{PIICheckEnabled: true})
+	outcome, err := service.Search(context.Background(), "john@example.com hiking trails", Options{PIICheckEnabled: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !outcome.Blocked {
-		t.Fatal("expected query to be blocked")
+	if len(outcome.Results) != 1 {
+		t.Fatalf("expected search to proceed, got %d results", len(outcome.Results))
+	}
+	if searcher.query != "[REDACTED] hiking trails" {
+		t.Fatalf("expected redacted query, got %q", searcher.query)
+	}
+}
+
+func TestSearch_PIIRedactionFailureStopsSearch(t *testing.T) {
+	searcher := &stubSearcher{}
+	redactor := &stubPIIRedactor{err: errors.New("redaction failed")}
+	service := NewService(searcher, nil, nil, redactor, nil)
+
+	_, err := service.Search(context.Background(), "query", Options{PIICheckEnabled: true})
+	if err == nil {
+		t.Fatal("expected PII redaction failure")
+	}
+	if searcher.query != "" {
+		t.Fatal("expected search not to run")
 	}
 }
 

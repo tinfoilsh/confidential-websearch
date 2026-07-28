@@ -18,12 +18,14 @@ import (
 )
 
 type mockSearchProvider struct {
-	results  []search.Result
-	err      error
-	lastOpts search.Options
+	results   []search.Result
+	err       error
+	lastQuery string
+	lastOpts  search.Options
 }
 
 func (m *mockSearchProvider) Search(ctx context.Context, query string, opts search.Options) ([]search.Result, error) {
+	m.lastQuery = query
 	m.lastOpts = opts
 	if m.err != nil {
 		return nil, m.err
@@ -50,6 +52,17 @@ func (m *mockSafeguard) Check(ctx context.Context, content string) (*safeguard.C
 		return &safeguard.CheckResult{Violation: true, Rationale: reason}, nil
 	}
 	return &safeguard.CheckResult{}, nil
+}
+
+type mockPIIRedactor struct {
+	redacted map[string]string
+}
+
+func (m *mockPIIRedactor) Redact(_ context.Context, content string) (string, error) {
+	if redacted, ok := m.redacted[content]; ok {
+		return redacted, nil
+	}
+	return content, nil
 }
 
 func (m *mockFetcher) FetchURLs(ctx context.Context, urls []string) []fetch.FetchedPage {
@@ -458,10 +471,9 @@ func TestResolveSafetyFlag(t *testing.T) {
 }
 
 func TestSearchHandler_HeaderOverridesEnvDefaults(t *testing.T) {
-	const providerDetail = "provider-secret-sentinel"
 	searcher := &mockSearchProvider{results: []search.Result{{Title: "r", URL: "https://example.com/r", Content: "ok"}}}
-	sg := &mockSafeguard{blocked: map[string]string{"john@example.com": providerDetail}}
-	svc := tools.NewService(searcher, nil, nil, sg, nil)
+	redactor := &mockPIIRedactor{redacted: map[string]string{"john@example.com": "[REDACTED]"}}
+	svc := tools.NewService(searcher, nil, nil, redactor, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	req.Header.Set(headerPIICheck, "true")
@@ -469,14 +481,11 @@ func TestSearchHandler_HeaderOverridesEnvDefaults(t *testing.T) {
 
 	handler := newSearchHandler(svc, &config.Config{EnablePIICheck: false, EnableSearchInjectionCheck: true}, req)
 	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "john@example.com"})
-	if err == nil {
-		t.Fatalf("expected PII block when header opts PII check on; got nil error")
+	if err != nil {
+		t.Fatalf("unexpected search error: %v", err)
 	}
-	if err.Error() != blockedQueryError {
-		t.Fatalf("expected sanitized block error, got %q", err)
-	}
-	if strings.Contains(err.Error(), providerDetail) {
-		t.Fatalf("error exposed safeguard response: %v", err)
+	if searcher.lastQuery != "[REDACTED]" {
+		t.Fatalf("expected redacted search query, got %q", searcher.lastQuery)
 	}
 }
 
