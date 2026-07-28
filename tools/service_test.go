@@ -18,6 +18,7 @@ import (
 type stubSearcher struct {
 	results []search.Result
 	err     error
+	called  bool
 	query   string
 	opts    search.Options
 }
@@ -25,6 +26,7 @@ type stubSearcher struct {
 func (s *stubSearcher) Name() string { return "stub" }
 
 func (s *stubSearcher) Search(_ context.Context, query string, opts search.Options) ([]search.Result, error) {
+	s.called = true
 	s.query = query
 	s.opts = opts
 	return s.results, s.err
@@ -142,6 +144,23 @@ func TestSearch_PIIRedactionFailureStopsSearch(t *testing.T) {
 	}
 	if searcher.query != "" {
 		t.Fatal("expected search not to run")
+	}
+}
+
+func TestSearch_PIIOnlyQuerySkipsProvider(t *testing.T) {
+	searcher := &stubSearcher{}
+	redactor := &stubPIIRedactor{redacted: " "}
+	service := NewService(searcher, nil, nil, redactor, nil)
+
+	outcome, err := service.Search(context.Background(), "john@example.com", Options{PIICheckEnabled: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if searcher.called {
+		t.Fatal("expected empty redacted query not to reach search provider")
+	}
+	if len(outcome.Results) != 0 {
+		t.Fatalf("expected no results, got %d", len(outcome.Results))
 	}
 }
 

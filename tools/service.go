@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strings"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/tinfoilsh/confidential-websearch/domainrank"
@@ -95,6 +96,9 @@ func (s *Service) Search(ctx context.Context, query string, opts Options) (Searc
 			return SearchOutcome{}, fmt.Errorf("PII check failed: %w", err)
 		}
 		searchQuery = redactedQuery
+		if strings.TrimSpace(searchQuery) == "" {
+			return SearchOutcome{}, nil
+		}
 	}
 
 	maxResults := opts.MaxResults

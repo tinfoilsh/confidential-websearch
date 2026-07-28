@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode"
 	"unicode/utf8"
 
 	log "github.com/sirupsen/logrus"
@@ -207,6 +208,25 @@ func applyPIIPolicy(content string, spans []pfSpan) (string, error) {
 		return content, nil
 	}
 
+	for i := range ranges {
+		if ranges[i].start == 0 {
+			for ranges[i].end < len(runes) && unicode.IsSpace(runes[ranges[i].end]) {
+				ranges[i].end++
+			}
+		}
+		if ranges[i].end == len(runes) {
+			for ranges[i].start > 0 && unicode.IsSpace(runes[ranges[i].start-1]) {
+				ranges[i].start--
+			}
+		}
+		if ranges[i].start > 0 && ranges[i].end < len(runes) &&
+			unicode.IsSpace(runes[ranges[i].start-1]) && unicode.IsSpace(runes[ranges[i].end]) {
+			for ranges[i].end < len(runes) && unicode.IsSpace(runes[ranges[i].end]) {
+				ranges[i].end++
+			}
+		}
+	}
+
 	sort.Slice(ranges, func(i, j int) bool {
 		return ranges[i].start < ranges[j].start
 	})
@@ -230,7 +250,7 @@ func applyPIIPolicy(content string, spans []pfSpan) (string, error) {
 		cursor = span.end
 	}
 	redacted.WriteString(string(runes[cursor:]))
-	return strings.Join(strings.Fields(redacted.String()), " "), nil
+	return redacted.String(), nil
 }
 
 // Policy ---

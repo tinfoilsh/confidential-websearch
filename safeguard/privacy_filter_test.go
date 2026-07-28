@@ -44,6 +44,18 @@ func TestApplyPIIPolicy(t *testing.T) {
 			want:    "email about trail conditions",
 		},
 		{
+			name:    "leading PII and adjacent whitespace are removed",
+			content: "john@example.com   hiking trails",
+			spans:   map[string]string{"private_email": "john@example.com"},
+			want:    "hiking trails",
+		},
+		{
+			name:    "unrelated whitespace is preserved",
+			content: "find  trails\tnear\nParis john@example.com",
+			spans:   map[string]string{"private_email": "john@example.com"},
+			want:    "find  trails\tnear\nParis",
+		},
+		{
 			name:    "unicode offsets are handled",
 			content: "écrivez à john@example.com",
 			spans:   map[string]string{"private_email": "john@example.com"},
