@@ -177,9 +177,10 @@ func TestExaProvider_Search_EmptyResults(t *testing.T) {
 }
 
 func TestExaProvider_Search_APIError(t *testing.T) {
+	const providerDetail = "provider-secret-sentinel"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("internal server error"))
+		w.Write([]byte(providerDetail))
 	}))
 	defer server.Close()
 
@@ -192,12 +193,16 @@ func TestExaProvider_Search_APIError(t *testing.T) {
 	if !strings.Contains(err.Error(), "500") {
 		t.Errorf("expected error to contain status code, got: %v", err)
 	}
+	if strings.Contains(err.Error(), providerDetail) {
+		t.Errorf("error exposed provider response: %v", err)
+	}
 }
 
 func TestExaProvider_Search_BadRequest(t *testing.T) {
+	const providerDetail = "provider-secret-sentinel"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error": "invalid request"}`))
+		w.Write([]byte(`{"error": "` + providerDetail + `"}`))
 	}))
 	defer server.Close()
 
@@ -209,6 +214,9 @@ func TestExaProvider_Search_BadRequest(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "400") {
 		t.Errorf("expected error to contain status code, got: %v", err)
+	}
+	if strings.Contains(err.Error(), providerDetail) {
+		t.Errorf("error exposed provider response: %v", err)
 	}
 }
 
@@ -231,9 +239,10 @@ func TestExaProvider_Search_MalformedJSON(t *testing.T) {
 }
 
 func TestExaProvider_Search_ExaErrorField(t *testing.T) {
+	const providerDetail = "provider-secret-sentinel"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := exaResponse{
-			Error: "rate limit exceeded",
+			Error: providerDetail,
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
@@ -246,8 +255,8 @@ func TestExaProvider_Search_ExaErrorField(t *testing.T) {
 		t.Fatal("expected error when API returns error field")
 	}
 
-	if !strings.Contains(err.Error(), "rate limit exceeded") {
-		t.Errorf("expected error message to contain 'rate limit exceeded', got: %v", err)
+	if strings.Contains(err.Error(), providerDetail) {
+		t.Errorf("error exposed provider response: %v", err)
 	}
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -24,6 +25,7 @@ import (
 const (
 	headerPIICheck       = "X-Tinfoil-Tool-PII-Check"
 	headerInjectionCheck = "X-Tinfoil-Tool-Injection-Check"
+	searchProviderError  = "search provider unavailable; retry after a short delay"
 )
 
 // resolveSafetyFlag picks between a per-request header override and the
@@ -149,12 +151,8 @@ func newSearchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Requ
 			MaxAgeHours:           args.MaxAgeHours,
 		})
 		if err != nil {
-			return nil, SearchResult{}, fmt.Errorf("search request failed: %w — try rephrasing the query to be simpler or more specific, or retry after a short delay", err)
+			return nil, SearchResult{}, errors.New(searchProviderError)
 		}
-		if outcome.BlockedReason != "" {
-			return nil, SearchResult{}, fmt.Errorf("query was blocked by safety filters: %s — rephrase the query to remove personal information or sensitive content, then retry", outcome.BlockedReason)
-		}
-
 		return nil, SearchResult{Results: outcome.Results}, nil
 	}
 }

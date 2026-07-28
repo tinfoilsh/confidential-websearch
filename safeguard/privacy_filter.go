@@ -16,19 +16,30 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/tinfoilsh/tinfoil-go/verifier/client"
 )
 
-var pfAlwaysBlock = map[string]bool{
-	"private_email":   true,
-	"private_phone":   true,
+var pfAlwaysRedact = map[string]bool{
+	"private_email":  true,
+	"private_phone":  true,
+	"account_number": true,
+	"secret":         true,
+}
+
+var pfPersonPairRedact = map[string]bool{
 	"private_address": true,
-	"account_number":  true,
-	"secret":          true,
+	"private_date":    true,
+}
+
+type PIIRedactor interface {
+	Redact(ctx context.Context, content string) (string, error)
 }
 
 type PrivacyFilterClient struct {
@@ -89,15 +100,14 @@ func (c *PrivacyFilterClient) reverify() (*http.Client, error) {
 	return newClient, nil
 }
 
-// Check implements the Checker interface. The content is sent to /redact
-// and the returned spans are evaluated against the deterministic PII policy
-// in code (see applyPIIPolicy), not an LLM prompt.
-func (c *PrivacyFilterClient) Check(ctx context.Context, content string) (*CheckResult, error) {
+// Redact sends the content to /redact and masks spans selected by the
+// deterministic PII policy in code.
+func (c *PrivacyFilterClient) Redact(ctx context.Context, content string) (string, error) {
 	spans, err := c.redact(ctx, content)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	return applyPIIPolicy(spans), nil
+	return applyPIIPolicy(content, spans)
 }
 
 // redact calls the privacy filter /redact endpoint and returns the detected spans.
@@ -150,53 +160,101 @@ func (c *PrivacyFilterClient) redact(ctx context.Context, text string) ([]pfSpan
 	return result.DetectedSpans, nil
 }
 
-// applyPIIPolicy evaluates detected spans against the deterministic PII policy.
-// Block if any always-block category is present, or if person + (date or address).
-// The rationale lists exactly which spans tripped the policy.
-func applyPIIPolicy(spans []pfSpan) *CheckResult {
-	labels := make(map[string]bool)
-	var blocked []pfSpan
+// applyPIIPolicy masks always-sensitive spans and masks dates or addresses
+// only when the input also identifies a private person.
+func applyPIIPolicy(content string, spans []pfSpan) (string, error) {
+	hasPrivatePerson := false
 	for _, s := range spans {
-		labels[s.Label] = true
-		if pfAlwaysBlock[s.Label] {
-			blocked = append(blocked, s)
+		if s.Label == "private_person" {
+			hasPrivatePerson = true
+			break
 		}
 	}
 
-	if len(blocked) > 0 {
-		parts := make([]string, len(blocked))
-		for i, s := range blocked {
-			parts[i] = fmt.Sprintf("%s(%q)", s.Label, s.Text)
-		}
-		return &CheckResult{
-			Violation: true,
-			Rationale: "pii: " + strings.Join(parts, ", "),
+	selected := make([]pfSpan, 0, len(spans))
+	for _, s := range spans {
+		if pfAlwaysRedact[s.Label] || hasPrivatePerson && pfPersonPairRedact[s.Label] {
+			selected = append(selected, s)
 		}
 	}
 
-	hasPerson := labels["private_person"]
-	hasDate := labels["private_date"]
-	hasAddress := labels["private_address"]
+	runes := []rune(content)
+	type redactionRange struct {
+		start int
+		end   int
+	}
+	ranges := make([]redactionRange, 0, len(selected))
+	for _, s := range selected {
+		start, end := s.Start, s.End
+		if start < 0 || end <= start {
+			return "", fmt.Errorf("invalid %s span bounds", s.Label)
+		}
+		if end <= len(runes) && string(runes[start:end]) == s.Text {
+			ranges = append(ranges, redactionRange{start: start, end: end})
+			continue
+		}
+		if end <= len(content) && content[start:end] == s.Text &&
+			utf8.ValidString(content[:start]) && utf8.ValidString(content[:end]) {
+			ranges = append(ranges, redactionRange{
+				start: utf8.RuneCountInString(content[:start]),
+				end:   utf8.RuneCountInString(content[:end]),
+			})
+			continue
+		}
+		return "", fmt.Errorf("could not locate %s span", s.Label)
+	}
 
-	if hasPerson && (hasDate || hasAddress) {
-		var combo []string
-		if hasDate {
-			combo = append(combo, "date")
+	if len(ranges) == 0 {
+		return content, nil
+	}
+
+	for i := range ranges {
+		if ranges[i].start == 0 {
+			for ranges[i].end < len(runes) && unicode.IsSpace(runes[ranges[i].end]) {
+				ranges[i].end++
+			}
 		}
-		if hasAddress {
-			combo = append(combo, "address")
+		if ranges[i].end == len(runes) {
+			for ranges[i].start > 0 && unicode.IsSpace(runes[ranges[i].start-1]) {
+				ranges[i].start--
+			}
 		}
-		return &CheckResult{
-			Violation: true,
-			Rationale: fmt.Sprintf("pii: person+%s combination", strings.Join(combo, "+")),
+		if ranges[i].start > 0 && ranges[i].end < len(runes) &&
+			unicode.IsSpace(runes[ranges[i].start-1]) && unicode.IsSpace(runes[ranges[i].end]) {
+			for ranges[i].end < len(runes) && unicode.IsSpace(runes[ranges[i].end]) {
+				ranges[i].end++
+			}
 		}
 	}
 
-	return &CheckResult{Violation: false}
+	sort.Slice(ranges, func(i, j int) bool {
+		return ranges[i].start < ranges[j].start
+	})
+	merged := ranges[:1]
+	for _, current := range ranges[1:] {
+		last := &merged[len(merged)-1]
+		if current.start <= last.end {
+			if current.end > last.end {
+				last.end = current.end
+			}
+			continue
+		}
+		merged = append(merged, current)
+	}
+
+	var redacted strings.Builder
+	redacted.Grow(len(content))
+	cursor := 0
+	for _, span := range merged {
+		redacted.WriteString(string(runes[cursor:span.start]))
+		cursor = span.end
+	}
+	redacted.WriteString(string(runes[cursor:]))
+	return redacted.String(), nil
 }
 
 // Policy ---
-// Block text containing information that could identify, locate, or contact a specific private individual:
+// Mask text containing information that could identify, locate, or contact a specific private individual:
 // - Government IDs: SSN, passport number, driver's license, voter ID, national ID
 // - Financial: credit card numbers, bank account numbers, IBANs (any long numeric sequence that appears to be an account identifier)
 // - Contact: personal email addresses, personal phone numbers (any format including non-standard delimiters), home addresses

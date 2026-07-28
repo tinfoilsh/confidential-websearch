@@ -105,8 +105,7 @@ func (r *CloudflareRanker) fetchDataset(ctx context.Context) (map[string]struct{
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("cloudflare radar status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("cloudflare radar status %d", resp.StatusCode)
 	}
 
 	return parseDomainList(io.LimitReader(resp.Body, maxResponseBytes))

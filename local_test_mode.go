@@ -97,11 +97,11 @@ func (r *LocalCallRecorder) LastFetch() (time.Time, []string) {
 	return r.lastFetchAt, copied
 }
 
-func newLocalTestService(piiChecker safeguard.Checker) (*tools.Service, *LocalCallRecorder) {
+func newLocalTestService(piiRedactor safeguard.PIIRedactor) (*tools.Service, *LocalCallRecorder) {
 	recorder := NewLocalCallRecorder()
 	searcher := localTestSearcher{recorder: recorder}
 	fetcher := localTestFetcher{recorder: recorder}
-	return tools.NewService(searcher, fetcher, localTestSafeguard{}, piiChecker, domainrank.NopRanker{}), recorder
+	return tools.NewService(searcher, fetcher, localTestSafeguard{}, piiRedactor, domainrank.NopRanker{}), recorder
 }
 
 type localTestSearcher struct {

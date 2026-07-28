@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -117,9 +118,10 @@ func TestFetchURLResults_EmptyTextMarksFailed(t *testing.T) {
 }
 
 func TestFetchURLs_NonOKStatusMarksAllFailed(t *testing.T) {
+	const providerDetail = "provider-secret-sentinel"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("internal error"))
+		w.Write([]byte(providerDetail))
 	}))
 	defer server.Close()
 
@@ -136,8 +138,11 @@ func TestFetchURLs_NonOKStatusMarksAllFailed(t *testing.T) {
 		if r.Status != FetchStatusFailed {
 			t.Fatalf("result %d: expected failed status, got %q", i, r.Status)
 		}
-		if r.Error == "" {
-			t.Fatalf("result %d: expected error", i)
+		if r.Error != fetchProviderError {
+			t.Fatalf("result %d: expected sanitized error, got %q", i, r.Error)
+		}
+		if strings.Contains(r.Error, providerDetail) {
+			t.Fatalf("result %d: error exposed provider response", i)
 		}
 	}
 }

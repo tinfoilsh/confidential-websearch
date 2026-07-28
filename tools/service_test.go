@@ -1,10 +1,14 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
+
+	log "github.com/sirupsen/logrus"
 
 	"github.com/tinfoilsh/confidential-websearch/fetch"
 	"github.com/tinfoilsh/confidential-websearch/safeguard"
@@ -14,12 +18,16 @@ import (
 type stubSearcher struct {
 	results []search.Result
 	err     error
+	called  bool
+	query   string
 	opts    search.Options
 }
 
 func (s *stubSearcher) Name() string { return "stub" }
 
-func (s *stubSearcher) Search(_ context.Context, _ string, opts search.Options) ([]search.Result, error) {
+func (s *stubSearcher) Search(_ context.Context, query string, opts search.Options) ([]search.Result, error) {
+	s.called = true
+	s.query = query
 	s.opts = opts
 	return s.results, s.err
 }
@@ -46,16 +54,27 @@ func (f *stubFetcher) FetchURLResults(_ context.Context, _ []string) []fetch.URL
 
 type stubSafeguard struct {
 	blocked map[string]string
+	err     error
 }
 
 func (s *stubSafeguard) Check(_ context.Context, content string) (*safeguard.CheckResult, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
 	if reason, ok := s.blocked[content]; ok {
 		return &safeguard.CheckResult{Violation: true, Rationale: reason}, nil
 	}
 	return &safeguard.CheckResult{}, nil
 }
 
+type stubPIIRedactor struct {
+	redacted string
+	err      error
+}
 
+func (s *stubPIIRedactor) Redact(_ context.Context, _ string) (string, error) {
+	return s.redacted, s.err
+}
 
 func ptrBool(v bool) *bool { return &v }
 
@@ -97,17 +116,100 @@ func TestSearch_DefaultMaxResults(t *testing.T) {
 	}
 }
 
-func TestSearch_PIIBlocksQuery(t *testing.T) {
+func TestSearch_PIIRedactsQuery(t *testing.T) {
 	searcher := &stubSearcher{results: []search.Result{{Title: "hit"}}}
-	sg := &stubSafeguard{blocked: map[string]string{"john@example.com": "email detected"}}
-	service := NewService(searcher, nil, nil, sg, nil)
+	redactor := &stubPIIRedactor{redacted: "hiking trails"}
+	service := NewService(searcher, nil, nil, redactor, nil)
+
+	outcome, err := service.Search(context.Background(), "john@example.com hiking trails", Options{PIICheckEnabled: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(outcome.Results) != 1 {
+		t.Fatalf("expected search to proceed, got %d results", len(outcome.Results))
+	}
+	if searcher.query != "hiking trails" {
+		t.Fatalf("expected redacted query, got %q", searcher.query)
+	}
+}
+
+func TestSearch_PIIRedactionFailureStopsSearch(t *testing.T) {
+	searcher := &stubSearcher{}
+	redactor := &stubPIIRedactor{err: errors.New("redaction failed")}
+	service := NewService(searcher, nil, nil, redactor, nil)
+
+	_, err := service.Search(context.Background(), "query", Options{PIICheckEnabled: true})
+	if err == nil {
+		t.Fatal("expected PII redaction failure")
+	}
+	if searcher.query != "" {
+		t.Fatal("expected search not to run")
+	}
+}
+
+func TestSearch_PIIOnlyQuerySkipsProvider(t *testing.T) {
+	searcher := &stubSearcher{}
+	redactor := &stubPIIRedactor{redacted: " "}
+	service := NewService(searcher, nil, nil, redactor, nil)
 
 	outcome, err := service.Search(context.Background(), "john@example.com", Options{PIICheckEnabled: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if outcome.BlockedReason == "" {
-		t.Fatal("expected query to be blocked")
+	if searcher.called {
+		t.Fatal("expected empty redacted query not to reach search provider")
+	}
+	if len(outcome.Results) != 0 {
+		t.Fatalf("expected no results, got %d", len(outcome.Results))
+	}
+}
+
+func TestInjectionSafeguardErrorsDoNotReachLogs(t *testing.T) {
+	const providerDetail = "provider-secret-sentinel"
+	var logs bytes.Buffer
+	previousOutput := log.StandardLogger().Out
+	log.SetOutput(&logs)
+	defer log.SetOutput(previousOutput)
+
+	searcher := &stubSearcher{
+		results: []search.Result{{
+			URL:     "https://example.com",
+			Content: "content",
+		}},
+	}
+	fetcher := &stubFetcher{
+		results: []fetch.URLResult{{
+			URL:     "https://example.com",
+			Status:  fetch.FetchStatusCompleted,
+			Content: "content",
+		}},
+	}
+	service := NewService(
+		searcher,
+		fetcher,
+		&stubSafeguard{err: errors.New(providerDetail)},
+		nil,
+		nil,
+	)
+	options := Options{InjectionCheckEnabled: ptrBool(true)}
+
+	_, err := service.Search(context.Background(), "query", options)
+	if err != nil {
+		t.Fatalf("unexpected search error: %v", err)
+	}
+	_ = service.Fetch(
+		context.Background(),
+		[]string{"https://example.com"},
+		options,
+	)
+	_ = service.FetchDetailed(
+		context.Background(),
+		[]string{"https://example.com"},
+		options,
+	)
+
+	if strings.Contains(logs.String(), providerDetail) {
+		t.Fatalf("log exposed safeguard response: %s", logs.String())
 	}
 }
 
@@ -185,6 +287,9 @@ func TestFetchDetailed_InjectionCheckMarksFailure(t *testing.T) {
 	}
 	if results[1].Content != "" {
 		t.Fatalf("expected unsafe content to be cleared, got %q", results[1].Content)
+	}
+	if results[1].Error != blockedContentError {
+		t.Fatalf("expected sanitized block error, got %q", results[1].Error)
 	}
 }
 

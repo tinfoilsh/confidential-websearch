@@ -63,7 +63,7 @@ func TestInTopBucket_ExactAndRegistrableMatches(t *testing.T) {
 	}{
 		{"python.org", true},
 		{"www.python.org", true},
-		{"docs.python.org", true},  // eTLD+1 fallback
+		{"docs.python.org", true}, // eTLD+1 fallback
 		{"example.com:443", true},
 		{"evil.example", false},
 		{"", false},
@@ -117,9 +117,10 @@ func TestRefresh_ReplacesSnapshot(t *testing.T) {
 }
 
 func TestRefresh_NonOKResponseLeavesSnapshotIntact(t *testing.T) {
+	const providerDetail = "provider-secret-sentinel"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("boom"))
+		w.Write([]byte(providerDetail))
 	}))
 	defer server.Close()
 
@@ -131,8 +132,12 @@ func TestRefresh_NonOKResponseLeavesSnapshotIntact(t *testing.T) {
 	preloaded := map[string]struct{}{"example.com": {}}
 	r.domains.Store(&preloaded)
 
-	if err := r.Refresh(context.Background()); err == nil {
+	err := r.Refresh(context.Background())
+	if err == nil {
 		t.Fatal("expected error from 500 response")
+	}
+	if strings.Contains(err.Error(), providerDetail) {
+		t.Fatalf("error exposed provider response: %v", err)
 	}
 	if !r.InTopBucket("example.com") {
 		t.Fatal("previous snapshot should still serve lookups after a failed refresh")
