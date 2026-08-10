@@ -22,6 +22,7 @@ type Result struct {
 	Content       string `json:"content"`
 	Favicon       string `json:"favicon,omitempty"`
 	PublishedDate string `json:"published_date,omitempty"`
+	Author        string `json:"author,omitempty"`
 }
 
 type ContentMode string

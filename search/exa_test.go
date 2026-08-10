@@ -51,6 +51,7 @@ func TestExaProvider_Search_Success(t *testing.T) {
 				Highlights    any    `json:"highlights"`
 				Favicon       string `json:"favicon"`
 				PublishedDate string `json:"publishedDate"`
+				Author        string `json:"author"`
 			}{
 				{
 					Title:         "Result 1",
@@ -58,6 +59,7 @@ func TestExaProvider_Search_Success(t *testing.T) {
 					Text:          "Content 1",
 					Favicon:       "https://example.com/favicon.ico",
 					PublishedDate: "2024-01-01",
+					Author:        "Alex Example",
 				},
 				{
 					Title:         "Result 2",
@@ -97,6 +99,9 @@ func TestExaProvider_Search_Success(t *testing.T) {
 	}
 	if results[0].PublishedDate != "2024-01-01" {
 		t.Errorf("expected date '2024-01-01', got '%s'", results[0].PublishedDate)
+	}
+	if results[0].Author != "Alex Example" {
+		t.Errorf("expected author 'Alex Example', got '%s'", results[0].Author)
 	}
 }
 
@@ -158,6 +163,7 @@ func TestExaProvider_Search_EmptyResults(t *testing.T) {
 				Highlights    any    `json:"highlights"`
 				Favicon       string `json:"favicon"`
 				PublishedDate string `json:"publishedDate"`
+				Author        string `json:"author"`
 			}{},
 		}
 		w.Header().Set("Content-Type", "application/json")
