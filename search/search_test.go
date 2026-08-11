@@ -47,6 +47,7 @@ func TestResult_Fields(t *testing.T) {
 		Content:       "Test content",
 		Favicon:       "https://example.com/favicon.ico",
 		PublishedDate: "2024-01-01",
+		Author:        "Alex Example",
 	}
 
 	if r.Title != "Test Title" {
@@ -63,5 +64,8 @@ func TestResult_Fields(t *testing.T) {
 	}
 	if r.PublishedDate != "2024-01-01" {
 		t.Errorf("PublishedDate mismatch")
+	}
+	if r.Author != "Alex Example" {
+		t.Errorf("Author mismatch")
 	}
 }

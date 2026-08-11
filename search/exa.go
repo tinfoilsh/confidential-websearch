@@ -74,6 +74,7 @@ type exaResponse struct {
 		Highlights    any    `json:"highlights"`
 		Favicon       string `json:"favicon"`
 		PublishedDate string `json:"publishedDate"`
+		Author        string `json:"author"`
 	} `json:"results"`
 	Error string `json:"error,omitempty"`
 }
@@ -175,6 +176,7 @@ func (p *ExaProvider) Search(ctx context.Context, query string, opts Options) ([
 			Content:       exaResultContent(item.Text, item.Highlights),
 			Favicon:       item.Favicon,
 			PublishedDate: item.PublishedDate,
+			Author:        item.Author,
 		})
 	}
 

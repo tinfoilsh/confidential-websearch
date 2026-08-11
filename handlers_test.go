@@ -609,7 +609,13 @@ func TestMCPServer_SearchToolCall(t *testing.T) {
 
 	searcher := &mockSearchProvider{
 		results: []search.Result{
-			{Title: "Go Programming", URL: "https://go.dev", Content: "The Go programming language"},
+			{
+				Title:         "Go Programming",
+				URL:           "https://go.dev",
+				Content:       "The Go programming language",
+				PublishedDate: "2026-08-10",
+				Author:        "The Go Authors",
+			},
 		},
 	}
 	cfg := &config.Config{}
@@ -645,6 +651,18 @@ func TestMCPServer_SearchToolCall(t *testing.T) {
 
 	if len(result.Content) == 0 {
 		t.Fatal("expected content in result")
+	}
+	structured, _ := result.StructuredContent.(map[string]any)
+	results, _ := structured["results"].([]any)
+	if len(results) != 1 {
+		t.Fatalf("expected one structured result, got %#v", result.StructuredContent)
+	}
+	first, _ := results[0].(map[string]any)
+	if first["author"] != "The Go Authors" {
+		t.Fatalf("expected structured author metadata, got %#v", first)
+	}
+	if first["published_date"] != "2026-08-10" {
+		t.Fatalf("expected structured publication date, got %#v", first)
 	}
 }
 

@@ -118,9 +118,11 @@ func (s localTestSearcher) Search(_ context.Context, query string, opts search.O
 	}
 	results := []search.Result{
 		{
-			Title:   "Local Cat Almanac 2026",
-			URL:     "https://local.test/cats/almanac",
-			Content: "A short almanac entry about Nimbus the cat and the morning routine.",
+			Title:         "Local Cat Almanac 2026",
+			URL:           "https://local.test/cats/almanac",
+			Content:       "A short almanac entry about Nimbus the cat and the morning routine.",
+			PublishedDate: "2026-01-15",
+			Author:        "Local Test Authors",
 		},
 		{
 			Title:   "Neighborhood Cat Gazette",

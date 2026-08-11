@@ -78,7 +78,7 @@ The server exposes two MCP tools. All arguments are passed as JSON in the standa
 
 ### `search`
 
-Search the web and return ranked results with titles, URLs, snippets, and publication dates.
+Search the web and return ranked results with titles, URLs, snippets, publication dates, and authors.
 
 #### Arguments
 
@@ -106,7 +106,8 @@ Search the web and return ranked results with titles, URLs, snippets, and public
       "url": "string",
       "content": "string",
       "favicon": "string (optional)",
-      "published_date": "string (optional, ISO-8601)"
+      "published_date": "string (optional, ISO-8601)",
+      "author": "string (optional)"
     }
   ]
 }
