@@ -100,6 +100,12 @@ func (c *PrivacyFilterClient) reverify() (*http.Client, error) {
 	return newClient, nil
 }
 
+func (c *PrivacyFilterClient) currentHTTPClient() *http.Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.httpClient
+}
+
 // Redact sends the content to /redact and masks spans selected by the
 // deterministic PII policy in code.
 func (c *PrivacyFilterClient) Redact(ctx context.Context, content string) (string, error) {
@@ -112,6 +118,9 @@ func (c *PrivacyFilterClient) Redact(ctx context.Context, content string) (strin
 
 // redact calls the privacy filter /redact endpoint and returns the detected spans.
 func (c *PrivacyFilterClient) redact(ctx context.Context, text string) ([]pfSpan, error) {
+	ctx, cancel := context.WithTimeout(ctx, safeguardRequestTimeout)
+	defer cancel()
+
 	body, err := json.Marshal(pfRedactRequest{Text: text})
 	if err != nil {
 		return nil, fmt.Errorf("marshal redact request: %w", err)
@@ -125,7 +134,7 @@ func (c *PrivacyFilterClient) redact(ctx context.Context, text string) ([]pfSpan
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.currentHTTPClient().Do(req)
 	if err != nil {
 		// Re-verify attestation on TLS errors (enclave may have rotated
 		// its certificate after a restart) and retry once. Concurrent retries

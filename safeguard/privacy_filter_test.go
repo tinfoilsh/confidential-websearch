@@ -1,10 +1,51 @@
 package safeguard
 
 import (
+	"context"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestPrivacyFilterRedactAppliesRequestTimeout(t *testing.T) {
+	startedAt := time.Now()
+	var deadline time.Time
+	client := &PrivacyFilterClient{
+		enclave: "privacy.example.com",
+		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			deadline, _ = req.Context().Deadline()
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"detected_spans":[]}`)),
+				Header:     make(http.Header),
+			}, nil
+		})},
+	}
+
+	redacted, err := client.Redact(context.Background(), "public search")
+	if err != nil {
+		t.Fatalf("Redact: %v", err)
+	}
+	if redacted != "public search" {
+		t.Fatalf("got %q, want unchanged content", redacted)
+	}
+	if deadline.IsZero() {
+		t.Fatal("expected request context to have a deadline")
+	}
+	remaining := deadline.Sub(startedAt)
+	if remaining < safeguardRequestTimeout-time.Second || remaining > safeguardRequestTimeout+time.Second {
+		t.Fatalf("expected deadline near %v, got %v", safeguardRequestTimeout, remaining)
+	}
+}
 
 func TestApplyPIIPolicy(t *testing.T) {
 	tests := []struct {
