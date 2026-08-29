@@ -79,7 +79,7 @@ func resolveInjectionCheck(req *http.Request, fallback bool) *bool {
 
 type SearchArgs struct {
 	Query               string   `json:"query" jsonschema:"Natural language search query. Be specific and descriptive for better results. Max ~400 characters."`
-	MaxResults          int      `json:"max_results,omitempty" jsonschema:"Number of results to return (1-30). Defaults to 10 if omitted. Use fewer for focused queries and more for broad research."`
+	MaxResults          int      `json:"max_results,omitempty" jsonschema:"Number of results to return (1-30). Defaults to 8 if omitted or set to 0. Use fewer for focused queries and more for broad research."`
 	UserLocationCountry string   `json:"user_location_country,omitempty" jsonschema:"ISO 3166-1 alpha-2 country code to bias results toward (e.g. 'US', 'GB', 'DE'). Maps to OpenAI web_search_options.user_location.approximate.country."`
 	AllowedDomains      []string `json:"allowed_domains,omitempty" jsonschema:"If set, only return results from these domains. Maps to OpenAI filters.allowed_domains."`
 	ExcludedDomains     []string `json:"excluded_domains,omitempty" jsonschema:"If set, drop results from these domains. Useful for filtering out aggregators, SEO farms, or known-low-quality sources."`
@@ -109,6 +109,12 @@ func newSearchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Requ
 	return func(ctx context.Context, req *mcp.CallToolRequest, args SearchArgs) (*mcp.CallToolResult, SearchResult, error) {
 		if args.Query == "" {
 			return nil, SearchResult{}, fmt.Errorf("the 'query' parameter is required: provide a non-empty search query string describing what you want to find")
+		}
+		if args.MaxResults < 0 {
+			return nil, SearchResult{}, fmt.Errorf("'max_results' must be non-negative; use 0 to apply the default")
+		}
+		if args.MaxResults > tools.MaxSearchResults {
+			return nil, SearchResult{}, fmt.Errorf("'max_results' must not exceed %d", tools.MaxSearchResults)
 		}
 
 		contentMode, err := parseContentMode(args.ContentMode)
@@ -161,6 +167,9 @@ func newFetchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Reque
 	return func(ctx context.Context, req *mcp.CallToolRequest, args FetchArgs) (*mcp.CallToolResult, FetchResult, error) {
 		if len(args.URLs) == 0 {
 			return nil, FetchResult{}, fmt.Errorf("the 'urls' parameter is required: provide at least one valid HTTP or HTTPS URL to fetch")
+		}
+		if len(args.URLs) > tools.MaxFetchURLs {
+			return nil, FetchResult{}, fmt.Errorf("'urls' must contain at most %d entries", tools.MaxFetchURLs)
 		}
 
 		urls, rejected := splitAllowedURLs(args.URLs, normalizeDomains(args.AllowedDomains))

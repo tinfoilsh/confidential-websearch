@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unicode"
 	"unicode/utf8"
 
@@ -45,7 +46,7 @@ type PIIRedactor interface {
 type PrivacyFilterClient struct {
 	enclave      string
 	apiKey       string
-	httpClient   *http.Client
+	httpClient   atomic.Pointer[http.Client]
 	secureClient *client.SecureClient
 	mu           sync.Mutex
 }
@@ -60,12 +61,13 @@ func NewPrivacyFilterClient(enclave, repo, apiKey string) (*PrivacyFilterClient,
 		return nil, fmt.Errorf("failed to verify privacy filter enclave: %w", err)
 	}
 	log.WithField("enclave", enclave).Info("privacy filter PII checker verified")
-	return &PrivacyFilterClient{
+	privacyClient := &PrivacyFilterClient{
 		enclave:      enclave,
 		apiKey:       apiKey,
-		httpClient:   httpClient,
 		secureClient: sc,
-	}, nil
+	}
+	privacyClient.httpClient.Store(httpClient)
+	return privacyClient, nil
 }
 
 type pfRedactRequest struct {
@@ -85,7 +87,7 @@ type pfRedactResponse struct {
 
 // reverify re-runs attestation verification and returns a fresh HTTP client
 // bound to the new TLS public key. Serialized on mu so concurrent retries
-// don't race on SecureClient.groundTruth or c.httpClient.
+// don't race while refreshing SecureClient ground truth.
 func (c *PrivacyFilterClient) reverify() (*http.Client, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -96,8 +98,12 @@ func (c *PrivacyFilterClient) reverify() (*http.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	c.httpClient = newClient
+	c.httpClient.Store(newClient)
 	return newClient, nil
+}
+
+func (c *PrivacyFilterClient) currentHTTPClient() *http.Client {
+	return c.httpClient.Load()
 }
 
 // Redact sends the content to /redact and masks spans selected by the
@@ -112,6 +118,9 @@ func (c *PrivacyFilterClient) Redact(ctx context.Context, content string) (strin
 
 // redact calls the privacy filter /redact endpoint and returns the detected spans.
 func (c *PrivacyFilterClient) redact(ctx context.Context, text string) ([]pfSpan, error) {
+	ctx, cancel := context.WithTimeout(ctx, safeguardRequestTimeout)
+	defer cancel()
+
 	body, err := json.Marshal(pfRedactRequest{Text: text})
 	if err != nil {
 		return nil, fmt.Errorf("marshal redact request: %w", err)
@@ -125,11 +134,11 @@ func (c *PrivacyFilterClient) redact(ctx context.Context, text string) ([]pfSpan
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.currentHTTPClient().Do(req)
 	if err != nil {
 		// Re-verify attestation on TLS errors (enclave may have rotated
 		// its certificate after a restart) and retry once. Concurrent retries
-		// serialize on mu to avoid racing on groundTruth and httpClient.
+		// serialize on mu while refreshing attestation state.
 		if errors.Is(err, client.ErrCertMismatch) || errors.Is(err, client.ErrNoTLS) {
 			log.WithError(err).Warn("privacy filter cert mismatch, re-verifying enclave")
 			retryClient, rerr := c.reverify()

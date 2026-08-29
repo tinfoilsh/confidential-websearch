@@ -3,7 +3,10 @@ package safeguard
 import (
 	"context"
 	"sync"
+	"time"
 )
+
+const safeguardRequestTimeout = 5 * time.Minute
 
 // Checker defines the interface for safety checks
 type Checker interface {
@@ -33,7 +36,10 @@ func CheckItems(ctx context.Context, checker Checker, items []string) []ItemResu
 		go func(idx int, content string) {
 			defer wg.Done()
 
-			check, err := checker.Check(ctx, content)
+			checkCtx, cancel := context.WithTimeout(ctx, safeguardRequestTimeout)
+			defer cancel()
+
+			check, err := checker.Check(checkCtx, content)
 			if err != nil {
 				results <- ItemResult{Index: idx, Err: err}
 				return
