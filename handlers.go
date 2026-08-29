@@ -79,7 +79,7 @@ func resolveInjectionCheck(req *http.Request, fallback bool) *bool {
 
 type SearchArgs struct {
 	Query               string   `json:"query" jsonschema:"Natural language search query. Be specific and descriptive for better results. Max ~400 characters."`
-	MaxResults          int      `json:"max_results,omitempty" jsonschema:"Number of results to return (1-30). Defaults to 10 if omitted. Use fewer for focused queries and more for broad research."`
+	MaxResults          int      `json:"max_results,omitempty" jsonschema:"Number of results to return (1-30). Defaults to 8 if omitted or set to 0. Use fewer for focused queries and more for broad research."`
 	UserLocationCountry string   `json:"user_location_country,omitempty" jsonschema:"ISO 3166-1 alpha-2 country code to bias results toward (e.g. 'US', 'GB', 'DE'). Maps to OpenAI web_search_options.user_location.approximate.country."`
 	AllowedDomains      []string `json:"allowed_domains,omitempty" jsonschema:"If set, only return results from these domains. Maps to OpenAI filters.allowed_domains."`
 	ExcludedDomains     []string `json:"excluded_domains,omitempty" jsonschema:"If set, drop results from these domains. Useful for filtering out aggregators, SEO farms, or known-low-quality sources."`
