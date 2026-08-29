@@ -17,13 +17,17 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func TestPrivacyFilterRedactAppliesRequestTimeout(t *testing.T) {
-	startedAt := time.Now()
-	var deadline time.Time
+	var hasDeadline bool
+	var remaining time.Duration
 	client := &PrivacyFilterClient{
 		enclave: "privacy.example.com",
 	}
 	client.httpClient.Store(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		deadline, _ = req.Context().Deadline()
+		deadline, ok := req.Context().Deadline()
+		hasDeadline = ok
+		if ok {
+			remaining = time.Until(deadline)
+		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(`{"detected_spans":[]}`)),
@@ -38,13 +42,10 @@ func TestPrivacyFilterRedactAppliesRequestTimeout(t *testing.T) {
 	if redacted != "public search" {
 		t.Fatalf("got %q, want unchanged content", redacted)
 	}
-	if deadline.IsZero() {
+	if !hasDeadline {
 		t.Fatal("expected request context to have a deadline")
 	}
-	remaining := deadline.Sub(startedAt)
-	if remaining < safeguardRequestTimeout-time.Second || remaining > safeguardRequestTimeout+time.Second {
-		t.Fatalf("expected deadline near %v, got %v", safeguardRequestTimeout, remaining)
-	}
+	assertRequestTimeout(t, remaining)
 }
 
 func TestApplyPIIPolicy(t *testing.T) {
