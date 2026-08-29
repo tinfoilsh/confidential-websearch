@@ -14,8 +14,11 @@ import (
 )
 
 const (
-	// maxFetchURLs caps how many URLs a single fetch tool call may process.
-	maxFetchURLs = 20
+	// MaxFetchURLs caps how many URLs a single fetch tool call may process.
+	MaxFetchURLs = 20
+
+	// MaxSearchResults caps how many results a single search tool call may return.
+	MaxSearchResults = 30
 
 	// defaultMaxResults is the search result count applied when the caller
 	// does not specify max_results.
@@ -105,6 +108,9 @@ func (s *Service) Search(ctx context.Context, query string, opts Options) (Searc
 	if maxResults <= 0 {
 		maxResults = defaultMaxResults
 	}
+	if maxResults > MaxSearchResults {
+		maxResults = MaxSearchResults
+	}
 
 	maxContentChars := opts.MaxContentCharacters
 	if maxContentChars <= 0 {
@@ -131,6 +137,9 @@ func (s *Service) Search(ctx context.Context, query string, opts Options) (Searc
 	if err != nil {
 		return SearchOutcome{}, err
 	}
+	if len(results) > maxResults {
+		results = results[:maxResults]
+	}
 
 	enabled, explicit := resolveInjectionCheck(opts.InjectionCheckEnabled)
 	if enabled && len(results) > 0 && s.safeguard != nil {
@@ -144,8 +153,8 @@ func (s *Service) Fetch(ctx context.Context, urls []string, opts Options) []fetc
 	if len(urls) == 0 || s.fetcher == nil {
 		return nil
 	}
-	if len(urls) > maxFetchURLs {
-		urls = urls[:maxFetchURLs]
+	if len(urls) > MaxFetchURLs {
+		urls = urls[:MaxFetchURLs]
 	}
 
 	pages := s.fetcher.FetchURLs(ctx, urls)
@@ -161,8 +170,8 @@ func (s *Service) FetchDetailed(ctx context.Context, urls []string, opts Options
 	if len(urls) == 0 || s.fetcher == nil {
 		return nil
 	}
-	if len(urls) > maxFetchURLs {
-		urls = urls[:maxFetchURLs]
+	if len(urls) > MaxFetchURLs {
+		urls = urls[:MaxFetchURLs]
 	}
 
 	detailedFetcher, ok := s.fetcher.(DetailedURLFetcher)

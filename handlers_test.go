@@ -161,6 +161,21 @@ func TestSearchHandler_ForwardsMaxResults(t *testing.T) {
 	}
 }
 
+func TestSearchHandler_RejectsInvalidMaxResults(t *testing.T) {
+	service := tools.NewService(&mockSearchProvider{}, nil, nil, nil, nil)
+	handler := newSearchHandler(service, &config.Config{}, nil)
+
+	for _, maxResults := range []int{-1, tools.MaxSearchResults + 1} {
+		_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{
+			Query:      "test",
+			MaxResults: maxResults,
+		})
+		if err == nil {
+			t.Fatalf("expected max_results=%d to be rejected", maxResults)
+		}
+	}
+}
+
 func TestSearchHandler_PIICheckDisabled(t *testing.T) {
 	searcher := &mockSearchProvider{results: []search.Result{{Title: "Result"}}}
 
@@ -365,6 +380,23 @@ func TestFetchHandler_EmptyURLs(t *testing.T) {
 	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, FetchArgs{URLs: []string{}})
 	if err == nil {
 		t.Fatal("expected error for empty URLs")
+	}
+}
+
+func TestFetchHandler_RejectsTooManyURLs(t *testing.T) {
+	service := tools.NewService(nil, &mockFetcher{}, nil, nil, nil)
+	handler := newFetchHandler(service, &config.Config{}, nil)
+	urls := make([]string, tools.MaxFetchURLs+1)
+	for i := range urls {
+		urls[i] = fmt.Sprintf("https://example.com/%d", i)
+	}
+
+	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, FetchArgs{
+		URLs:           urls,
+		AllowedDomains: []string{"different.example.com"},
+	})
+	if err == nil {
+		t.Fatalf("expected more than %d URLs to be rejected", tools.MaxFetchURLs)
 	}
 }
 

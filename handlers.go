@@ -110,6 +110,9 @@ func newSearchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Requ
 		if args.Query == "" {
 			return nil, SearchResult{}, fmt.Errorf("the 'query' parameter is required: provide a non-empty search query string describing what you want to find")
 		}
+		if args.MaxResults < 0 || args.MaxResults > tools.MaxSearchResults {
+			return nil, SearchResult{}, fmt.Errorf("'max_results' must be between 1 and %d when provided", tools.MaxSearchResults)
+		}
 
 		contentMode, err := parseContentMode(args.ContentMode)
 		if err != nil {
@@ -161,6 +164,9 @@ func newFetchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Reque
 	return func(ctx context.Context, req *mcp.CallToolRequest, args FetchArgs) (*mcp.CallToolResult, FetchResult, error) {
 		if len(args.URLs) == 0 {
 			return nil, FetchResult{}, fmt.Errorf("the 'urls' parameter is required: provide at least one valid HTTP or HTTPS URL to fetch")
+		}
+		if len(args.URLs) > tools.MaxFetchURLs {
+			return nil, FetchResult{}, fmt.Errorf("'urls' must contain at most %d entries", tools.MaxFetchURLs)
 		}
 
 		urls, rejected := splitAllowedURLs(args.URLs, normalizeDomains(args.AllowedDomains))

@@ -116,6 +116,23 @@ func TestSearch_DefaultMaxResults(t *testing.T) {
 	}
 }
 
+func TestSearch_CapsMaxResults(t *testing.T) {
+	results := make([]search.Result, MaxSearchResults+5)
+	searcher := &stubSearcher{results: results}
+	service := NewService(searcher, nil, nil, nil, nil)
+
+	outcome, err := service.Search(context.Background(), "golang", Options{MaxResults: MaxSearchResults + 5})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if searcher.opts.MaxResults != MaxSearchResults {
+		t.Fatalf("expected provider limit %d, got %d", MaxSearchResults, searcher.opts.MaxResults)
+	}
+	if len(outcome.Results) != MaxSearchResults {
+		t.Fatalf("expected at most %d results, got %d", MaxSearchResults, len(outcome.Results))
+	}
+}
+
 func TestSearch_PIIRedactsQuery(t *testing.T) {
 	searcher := &stubSearcher{results: []search.Result{{Title: "hit"}}}
 	redactor := &stubPIIRedactor{redacted: "hiking trails"}
@@ -301,11 +318,11 @@ func TestFetch_EmptyURLsReturnsNil(t *testing.T) {
 }
 
 func TestFetchDetailed_CapsURLs(t *testing.T) {
-	urls := make([]string, maxFetchURLs+5)
-	results := make([]fetch.URLResult, 0, maxFetchURLs)
+	urls := make([]string, MaxFetchURLs+5)
+	results := make([]fetch.URLResult, 0, MaxFetchURLs)
 	for i := range urls {
 		urls[i] = "https://example.com/" + string(rune('a'+i%26))
-		if i < maxFetchURLs {
+		if i < MaxFetchURLs {
 			results = append(results, fetch.URLResult{URL: urls[i], Status: fetch.FetchStatusCompleted, Content: "ok"})
 		}
 	}
@@ -313,8 +330,8 @@ func TestFetchDetailed_CapsURLs(t *testing.T) {
 	service := NewService(nil, fetcher, nil, nil, nil)
 
 	got := service.FetchDetailed(context.Background(), urls, Options{})
-	if len(got) != maxFetchURLs {
-		t.Fatalf("expected cap at %d, got %d", maxFetchURLs, len(got))
+	if len(got) != MaxFetchURLs {
+		t.Fatalf("expected cap at %d, got %d", MaxFetchURLs, len(got))
 	}
 }
 
