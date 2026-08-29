@@ -121,7 +121,7 @@ Fetch one or more web pages via the Exa Contents API and return the page text.
 
 | Name              | Type     | Required | Default | Description                                                                                                                                     |
 | ----------------- | -------- | -------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `urls`            | string[] | yes      | -       | One or more HTTP/HTTPS URLs. Capped at 20 per request. Each page is fetched via Exa Contents (livecrawl preferred, with a short cache horizon). |
+| `urls`            | string[] | yes      | -       | One or more HTTP/HTTPS URLs. Requests containing more than 20 URLs are rejected. Each page is fetched via Exa Contents (livecrawl preferred, with a short cache horizon). |
 | `allowed_domains` | string[] | no       | -       | If set, reject any URL whose host is not in this list before it is sent to the renderer.                                                        |
 
 #### Response
