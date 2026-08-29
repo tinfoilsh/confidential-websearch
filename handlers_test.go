@@ -165,13 +165,23 @@ func TestSearchHandler_RejectsInvalidMaxResults(t *testing.T) {
 	service := tools.NewService(&mockSearchProvider{}, nil, nil, nil, nil)
 	handler := newSearchHandler(service, &config.Config{}, nil)
 
-	for _, maxResults := range []int{-1, tools.MaxSearchResults + 1} {
+	tests := []struct {
+		maxResults int
+		wantError  string
+	}{
+		{maxResults: -1, wantError: "must be non-negative"},
+		{maxResults: tools.MaxSearchResults + 1, wantError: "must not exceed"},
+	}
+	for _, test := range tests {
 		_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{
 			Query:      "test",
-			MaxResults: maxResults,
+			MaxResults: test.maxResults,
 		})
 		if err == nil {
-			t.Fatalf("expected max_results=%d to be rejected", maxResults)
+			t.Fatalf("expected max_results=%d to be rejected", test.maxResults)
+		}
+		if !strings.Contains(err.Error(), test.wantError) {
+			t.Fatalf("expected error containing %q, got %q", test.wantError, err)
 		}
 	}
 }

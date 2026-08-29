@@ -110,8 +110,11 @@ func newSearchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Requ
 		if args.Query == "" {
 			return nil, SearchResult{}, fmt.Errorf("the 'query' parameter is required: provide a non-empty search query string describing what you want to find")
 		}
-		if args.MaxResults < 0 || args.MaxResults > tools.MaxSearchResults {
-			return nil, SearchResult{}, fmt.Errorf("'max_results' must be between 1 and %d when provided", tools.MaxSearchResults)
+		if args.MaxResults < 0 {
+			return nil, SearchResult{}, fmt.Errorf("'max_results' must be non-negative; use 0 to apply the default")
+		}
+		if args.MaxResults > tools.MaxSearchResults {
+			return nil, SearchResult{}, fmt.Errorf("'max_results' must not exceed %d", tools.MaxSearchResults)
 		}
 
 		contentMode, err := parseContentMode(args.ContentMode)
