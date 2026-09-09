@@ -30,6 +30,8 @@ shim:
   paths:
     - /mcp
     - /health
+    - /metrics
   authenticated: true
   authenticated-endpoints:
     - /mcp
+    - /metrics

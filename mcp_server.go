@@ -32,13 +32,13 @@ func newMCPServer(svc *tools.Service, cfg *config.Config, descriptions config.To
 		Name:        "search",
 		Description: descriptions.Search,
 		InputSchema: searchSchema,
-	}, newSearchHandlerWithUsage(svc, cfg, reporter, request))
+	}, instrumentTool("search", newSearchHandlerWithUsage(svc, cfg, reporter, request)))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "fetch",
 		Description: descriptions.Fetch,
 		InputSchema: fetchSchema,
-	}, newFetchHandlerWithUsage(svc, cfg, reporter, request))
+	}, instrumentTool("fetch", newFetchHandlerWithUsage(svc, cfg, reporter, request)))
 
 	return server
 }
