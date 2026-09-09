@@ -38,22 +38,27 @@ const (
 // in-flight metrics. A non-nil error from the handler is counted as an
 // error outcome; MCP-level tool errors returned inside the result (IsError)
 // are also counted so provider failures surfaced to the model are visible.
+// Bookkeeping runs in a defer so a panicking handler (recovered upstream by
+// net/http) still releases the in-flight slot and is counted as an error.
 func instrumentTool[In, Out any](tool string, next mcp.ToolHandlerFor[In, Out]) mcp.ToolHandlerFor[In, Out] {
-	return func(ctx context.Context, req *mcp.CallToolRequest, args In) (*mcp.CallToolResult, Out, error) {
+	return func(ctx context.Context, req *mcp.CallToolRequest, args In) (result *mcp.CallToolResult, out Out, err error) {
 		metricToolInflight.WithLabelValues(tool).Inc()
 		start := time.Now()
+		completed := false
 
-		result, out, err := next(ctx, req, args)
+		defer func() {
+			metricToolInflight.WithLabelValues(tool).Dec()
+			metricToolDuration.WithLabelValues(tool).Observe(time.Since(start).Seconds())
 
-		metricToolInflight.WithLabelValues(tool).Dec()
-		metricToolDuration.WithLabelValues(tool).Observe(time.Since(start).Seconds())
+			outcome := outcomeOK
+			if !completed || err != nil || (result != nil && result.IsError) {
+				outcome = outcomeError
+			}
+			metricToolCalls.WithLabelValues(tool, outcome).Inc()
+		}()
 
-		outcome := outcomeOK
-		if err != nil || (result != nil && result.IsError) {
-			outcome = outcomeError
-		}
-		metricToolCalls.WithLabelValues(tool, outcome).Inc()
-
+		result, out, err = next(ctx, req, args)
+		completed = true
 		return result, out, err
 	}
 }
