@@ -81,3 +81,28 @@ func TestInstrumentToolTracksInflight(t *testing.T) {
 		t.Fatalf("inflight after call = %v, want 0", got)
 	}
 }
+
+func TestInstrumentToolRecordsPanicAsError(t *testing.T) {
+	const tool = "test_panic"
+	errBefore := toolCalls(t, tool, outcomeError)
+
+	panicking := instrumentTool(tool, func(context.Context, *mcp.CallToolRequest, noArgs) (*mcp.CallToolResult, noOut, error) {
+		panic("handler exploded")
+	})
+
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("panic should propagate to the caller")
+			}
+		}()
+		_, _, _ = panicking(context.Background(), nil, noArgs{})
+	}()
+
+	if got := toolCalls(t, tool, outcomeError) - errBefore; got != 1 {
+		t.Fatalf("error outcomes = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(metricToolInflight.WithLabelValues(tool)); got != 0 {
+		t.Fatalf("inflight after panic = %v, want 0", got)
+	}
+}
