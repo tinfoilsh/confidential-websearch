@@ -185,6 +185,17 @@ func TestReportSessionDeduplicatesRequestID(t *testing.T) {
 	defer reporter.Close(context.Background())
 
 	req := newUsageRequest("request-1")
+	if err := usagereporting.SetHeaders(req.Header, usagereporting.Context{
+		ContextID:           "request-1",
+		RootRequestID:       "request-1",
+		ParentService:       usagereporting.ServiceRouter,
+		APIKeyHash:          usagereporting.HashAPIKey("tk_test"),
+		Depth:               1,
+		BillCustomerRequest: true,
+		IssuedAt:            time.Now().UTC(),
+	}, "secret"); err != nil {
+		t.Fatalf("set usage context headers: %v", err)
+	}
 	if err := reporter.ReportSession(context.Background(), req); err != nil {
 		t.Fatalf("report session: %v", err)
 	}
@@ -196,6 +207,34 @@ func TestReportSessionDeduplicatesRequestID(t *testing.T) {
 	batch := singleBatch(t, batches)
 	if got := len(batch.Events); got != 1 {
 		t.Fatalf("expected one deduplicated event, got %d", got)
+	}
+}
+
+func TestReportSessionBillsDirectCallerPerRequestDespiteRequestID(t *testing.T) {
+	reporter, batches, closeServer := newTestReporter(t, "secret")
+	defer closeServer()
+	defer reporter.Close(context.Background())
+
+	req := newUsageRequest("request-1")
+	if err := reporter.ReportSession(context.Background(), req); err != nil {
+		t.Fatalf("report session: %v", err)
+	}
+	if err := reporter.ReportSession(context.Background(), req); err != nil {
+		t.Fatalf("report session: %v", err)
+	}
+	reporter.client.Flush(context.Background())
+
+	batch := singleBatch(t, batches)
+	if got := len(batch.Events); got != 2 {
+		t.Fatalf("expected two billed events for direct caller, got %d", got)
+	}
+	for _, event := range batch.Events {
+		if event.RequestID == "request-1" {
+			t.Fatal("expected generated request ID, kept client-supplied value")
+		}
+		if event.CustomerRequests != 1 {
+			t.Fatalf("customer request mismatch: got %d want 1", event.CustomerRequests)
+		}
 	}
 }
 

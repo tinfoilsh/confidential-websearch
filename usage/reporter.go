@@ -77,6 +77,11 @@ func validateReporterEndpoint(endpoint string) error {
 // header is present but fails verification (bad signature, stale, malformed),
 // the request is rejected: an attacker tampering with that header must not be
 // allowed to silently fall through to the direct-billing default.
+//
+// The client-supplied request ID is only used as a billing dedup key when the
+// request carries a valid signed usage context (i.e. the caller is a trusted
+// upstream such as the model router). Direct callers could otherwise pick and
+// reuse an ID to collapse many billable calls into the dedup window.
 func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 	if r == nil {
 		return nil
@@ -85,9 +90,6 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 		return nil
 	}
 	rc := contextFromRequest(req)
-	if rc.RequestID == "" {
-		rc.RequestID = uuid.NewString()
-	}
 	now := time.Now().UTC()
 
 	customerRequests := int64(1)
@@ -96,6 +98,7 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 		"route":     rc.Route,
 		"streaming": map[bool]string{true: "true", false: "false"}[rc.Streaming],
 	}
+	trusted := false
 	if r.usageContextSecret != "" {
 		usageCtx, ok, err := usagereporting.FromHeaders(req.Header, r.usageContextSecret, now, usageContextMaxSkew)
 		if err != nil {
@@ -123,7 +126,11 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 			if usageCtx.Depth > 0 {
 				attributes["depth"] = strconv.Itoa(usageCtx.Depth)
 			}
+			trusted = true
 		}
+	}
+	if !trusted || rc.RequestID == "" {
+		rc.RequestID = uuid.NewString()
 	}
 
 	r.mu.Lock()
