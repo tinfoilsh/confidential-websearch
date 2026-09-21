@@ -93,10 +93,7 @@ func TestLoggingProcess(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 			panic("request panic")
 		}))
-		response, err := server.Client().Get(server.URL)
-		if response != nil {
-			response.Body.Close()
-		}
+		_, err := server.Client().Get(server.URL)
 		server.Close()
 		if err == nil {
 			t.Fatal("expected the panicking handler to close the connection")
