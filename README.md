@@ -45,10 +45,12 @@ export USAGE_CONTEXT_SECRET="your-usage-context-secret"
 go run .
 
 # with verbose logging
-go run . -v
+LOCAL_TEST_MODE=1 go run . -v
 ```
 
 For local development without real upstream providers, set `LOCAL_TEST_MODE=1` to use built-in deterministic fixtures instead of Exa. In that mode the server also mounts `GET /debug/last-call`, which returns the arguments of the most recent MCP tool call and is consumed by the eval harness.
+
+Logging is disabled unless `LOCAL_TEST_MODE=1`; `-v` only enables debug logs in that mode. Production fatal errors still exit with a nonzero status without emitting a log message.
 
 See [`local_testing.md`](./local_testing.md) for the full runbook, including how to exercise the server through the model router and the eval harness.
 

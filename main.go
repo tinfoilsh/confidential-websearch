@@ -35,13 +35,14 @@ var (
 )
 
 func main() {
+	localTestMode := isLocalTestMode()
+	configureLogging(localTestMode)
 	flag.Parse()
-	if *verbose {
+	if localTestMode && *verbose {
 		log.SetLevel(log.DebugLevel)
 	}
 
 	cfg := config.Load()
-	localTestMode := isLocalTestMode()
 	toolDescriptions, err := config.LoadToolDescriptions()
 	if err != nil {
 		log.Fatalf("Failed to load tool descriptions: %v", err)

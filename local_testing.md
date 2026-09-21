@@ -10,6 +10,11 @@ router guide focuses on model-facing behavior.
 
 ## 1. Choose a mode
 
+Server logging is enabled only when `LOCAL_TEST_MODE=1`. Add `-v` to `go run .`
+for debug logs in fixture mode. In all other modes, including real-provider
+mode, application and dependency logs are discarded even with `-v`; fatal
+errors still terminate the process with a nonzero exit code.
+
 ### Fixture mode
 
 Use this when you want deterministic local behavior without calling Exa.
