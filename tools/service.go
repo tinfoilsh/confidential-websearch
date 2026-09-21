@@ -63,7 +63,11 @@ type Options struct {
 }
 
 type SearchOutcome struct {
-	Results []search.Result
+	Results       []search.Result
+	PIIChecked    bool
+	PIIMasked     bool
+	RedactedQuery *string
+	PIIRedactions []safeguard.PIIRedaction
 }
 
 type Service struct {
@@ -92,15 +96,21 @@ func (s *Service) Search(ctx context.Context, query string, opts Options) (Searc
 		return SearchOutcome{}, fmt.Errorf("query is required")
 	}
 
+	outcome := SearchOutcome{PIIRedactions: []safeguard.PIIRedaction{}}
 	searchQuery := query
 	if opts.PIICheckEnabled && s.piiRedactor != nil {
-		redactedQuery, err := s.piiRedactor.Redact(ctx, query)
+		redaction, err := s.piiRedactor.Redact(ctx, query)
 		if err != nil {
 			return SearchOutcome{}, fmt.Errorf("PII check failed: %w", err)
 		}
-		searchQuery = redactedQuery
+		searchQuery = redaction.Text
+		outcome.PIIChecked = true
+		outcome.PIIMasked = len(redaction.Redactions) > 0
+		outcome.RedactedQuery = &searchQuery
+		outcome.PIIRedactions = append(outcome.PIIRedactions, redaction.Redactions...)
 		if strings.TrimSpace(searchQuery) == "" {
-			return SearchOutcome{}, nil
+			outcome.Results = []search.Result{}
+			return outcome, nil
 		}
 	}
 
@@ -146,7 +156,8 @@ func (s *Service) Search(ctx context.Context, query string, opts Options) (Searc
 		results = filterSearchResults(ctx, s.safeguard, s.ranker, explicit, results)
 	}
 
-	return SearchOutcome{Results: results}, nil
+	outcome.Results = results
+	return outcome, nil
 }
 
 func (s *Service) Fetch(ctx context.Context, urls []string, opts Options) []fetch.FetchedPage {

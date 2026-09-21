@@ -40,7 +40,20 @@ var pfPersonPairRedact = map[string]bool{
 }
 
 type PIIRedactor interface {
-	Redact(ctx context.Context, content string) (string, error)
+	Redact(ctx context.Context, content string) (PIIRedactionResult, error)
+}
+
+type PIIRedactionResult struct {
+	Text       string
+	Redactions []PIIRedaction
+}
+
+// PIIRedaction identifies a removed span without copying its sensitive text.
+// Offsets are zero-based Unicode code points in the original input, end-exclusive.
+type PIIRedaction struct {
+	Type  string `json:"type"`
+	Start int    `json:"start"`
+	End   int    `json:"end"`
 }
 
 type PrivacyFilterClient struct {
@@ -108,10 +121,10 @@ func (c *PrivacyFilterClient) currentHTTPClient() *http.Client {
 
 // Redact sends the content to /redact and masks spans selected by the
 // deterministic PII policy in code.
-func (c *PrivacyFilterClient) Redact(ctx context.Context, content string) (string, error) {
+func (c *PrivacyFilterClient) Redact(ctx context.Context, content string) (PIIRedactionResult, error) {
 	spans, err := c.redact(ctx, content)
 	if err != nil {
-		return "", err
+		return PIIRedactionResult{}, err
 	}
 	return applyPIIPolicy(content, spans)
 }
@@ -171,7 +184,7 @@ func (c *PrivacyFilterClient) redact(ctx context.Context, text string) ([]pfSpan
 
 // applyPIIPolicy masks always-sensitive spans and masks dates or addresses
 // only when the input also identifies a private person.
-func applyPIIPolicy(content string, spans []pfSpan) (string, error) {
+func applyPIIPolicy(content string, spans []pfSpan) (PIIRedactionResult, error) {
 	hasPrivatePerson := false
 	for _, s := range spans {
 		if s.Label == "private_person" {
@@ -193,29 +206,39 @@ func applyPIIPolicy(content string, spans []pfSpan) (string, error) {
 		end   int
 	}
 	ranges := make([]redactionRange, 0, len(selected))
+	redactions := make([]PIIRedaction, 0, len(selected))
 	for _, s := range selected {
 		start, end := s.Start, s.End
 		if start < 0 || end <= start {
-			return "", fmt.Errorf("invalid %s span bounds", s.Label)
+			return PIIRedactionResult{}, fmt.Errorf("invalid %s span bounds", s.Label)
 		}
 		if end <= len(runes) && string(runes[start:end]) == s.Text {
 			ranges = append(ranges, redactionRange{start: start, end: end})
+			redactions = append(redactions, PIIRedaction{Type: s.Label, Start: start, End: end})
 			continue
 		}
 		if end <= len(content) && content[start:end] == s.Text &&
 			utf8.ValidString(content[:start]) && utf8.ValidString(content[:end]) {
-			ranges = append(ranges, redactionRange{
-				start: utf8.RuneCountInString(content[:start]),
-				end:   utf8.RuneCountInString(content[:end]),
-			})
+			start, end = utf8.RuneCountInString(content[:start]), utf8.RuneCountInString(content[:end])
+			ranges = append(ranges, redactionRange{start: start, end: end})
+			redactions = append(redactions, PIIRedaction{Type: s.Label, Start: start, End: end})
 			continue
 		}
-		return "", fmt.Errorf("could not locate %s span", s.Label)
+		return PIIRedactionResult{}, fmt.Errorf("could not locate %s span", s.Label)
 	}
 
 	if len(ranges) == 0 {
-		return content, nil
+		return PIIRedactionResult{Text: content, Redactions: redactions}, nil
 	}
+	sort.Slice(redactions, func(i, j int) bool {
+		if redactions[i].Start != redactions[j].Start {
+			return redactions[i].Start < redactions[j].Start
+		}
+		if redactions[i].End != redactions[j].End {
+			return redactions[i].End < redactions[j].End
+		}
+		return redactions[i].Type < redactions[j].Type
+	})
 
 	for i := range ranges {
 		if ranges[i].start == 0 {
@@ -259,7 +282,7 @@ func applyPIIPolicy(content string, spans []pfSpan) (string, error) {
 		cursor = span.end
 	}
 	redacted.WriteString(string(runes[cursor:]))
-	return redacted.String(), nil
+	return PIIRedactionResult{Text: redacted.String(), Redactions: redactions}, nil
 }
 
 // Policy ---

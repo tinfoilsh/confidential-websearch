@@ -109,9 +109,26 @@ Search the web and return ranked results with titles, URLs, snippets, publicatio
       "published_date": "string (optional, ISO-8601)",
       "author": "string (optional)"
     }
+  ],
+  "pii_checked": true,
+  "pii_masked": true,
+  "redacted_query": "hiking trails",
+  "pii_redactions": [
+    { "type": "private_email", "start": 0, "end": 16 }
   ]
 }
 ```
+
+This example represents a search for `john@example.com hiking trails` whose detected email was removed. The payload is returned in MCP `result.structuredContent` and as JSON text in `result.content`.
+
+| Field | Meaning |
+|-------|---------|
+| `pii_checked` | Whether the PII check completed. `false` means it did not run, not that the query is free of PII. |
+| `pii_masked` | Whether any sensitive spans were removed. Search is not blocked by this flag. |
+| `redacted_query` | Query after filtering. Present only when `pii_checked` is `true`, including an empty string if everything was removed. |
+| `pii_redactions` | Removed spans, sorted by original position. Each has a `type` and zero-based Unicode code point offsets in the original query (`start` inclusive, `end` exclusive). Empty when nothing was removed. |
+
+Redaction metadata does not repeat sensitive values. Use the offsets against the original query to identify what was removed. Offsets exclude whitespace removed during cleanup and are not UTF-8 byte or UTF-16 code unit offsets. Older server versions may omit these fields; absence does not indicate whether filtering ran.
 
 ### `fetch`
 
@@ -221,11 +238,15 @@ When this server runs behind the Tinfoil model router, the router can override t
 
 Missing, empty, or unparseable values fall back to the env default, so a malformed header can never silently weaken filtering below what the operator configured.
 
+Direct MCP callers can use the same headers without the model router. Send them on the HTTP request carrying `tools/call`, not only during initialization. `X-Tinfoil-Tool-PII-Check: true` enables masking for the `search` query, not for `fetch` URLs or returned content. Inspect `pii_checked` and `pii_redactions` in the search result to confirm execution and identify removed spans.
+
 ## Safety Features
 
 ### PII Detection
 
-Blocks outgoing search queries that would leak sensitive personally identifiable information. Returns a response to the model/user showing what was wrong.
+Removes detected sensitive spans from outgoing search queries and searches with the remaining text. Personal emails, personal phone numbers, account numbers, and secrets are removed. Private dates and addresses are removed when a private person is also detected in the query; names alone are left unchanged. Detection is model-based, so invented names or email addresses do not guarantee a particular classification.
+
+When the check completes, `pii_checked` is `true`, even when nothing was masked. If masking leaves an empty or whitespace-only query, the server skips Exa and returns an empty `results` array with the redaction metadata. If the check fails, the server skips Exa and returns a sanitized MCP tool error (`isError: true`). In local test mode without `PII_ENCLAVE`, no check runs and `pii_checked` is `false` even when requested.
 
 ### Prompt Injection Detection
 
