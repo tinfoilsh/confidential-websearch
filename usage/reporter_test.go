@@ -179,41 +179,7 @@ func TestNewReporterRequiresUsageContextSecret(t *testing.T) {
 	}
 }
 
-func TestReportSessionDeduplicatesRequestID(t *testing.T) {
-	reporter, batches, closeServer := newTestReporter(t, "secret")
-	defer closeServer()
-	defer reporter.Close(context.Background())
-
-	req := newUsageRequest("request-1")
-	if err := usagereporting.SetHeaders(req.Header, usagereporting.Context{
-		ContextID:           "request-1",
-		RootRequestID:       "request-1",
-		ParentService:       usagereporting.ServiceRouter,
-		APIKeyHash:          usagereporting.HashAPIKey("tk_test"),
-		Depth:               1,
-		BillCustomerRequest: true,
-		IssuedAt:            time.Now().UTC(),
-	}, "secret"); err != nil {
-		t.Fatalf("set usage context headers: %v", err)
-	}
-	if err := reporter.ReportSession(context.Background(), req); err != nil {
-		t.Fatalf("report session: %v", err)
-	}
-	if err := reporter.ReportSession(context.Background(), req); err != nil {
-		t.Fatalf("report session: %v", err)
-	}
-	reporter.client.Flush(context.Background())
-
-	batch := singleBatch(t, batches)
-	if got := len(batch.Events); got != 1 {
-		t.Fatalf("expected one deduplicated event, got %d", got)
-	}
-	if got := batch.Events[0].RequestID; got != "request-1" {
-		t.Fatalf("request id mismatch: got %q want %q", got, "request-1")
-	}
-}
-
-func TestReportSessionDedupKeyComesFromSignedContext(t *testing.T) {
+func TestReportSessionDeduplicatesOnSignedContextID(t *testing.T) {
 	reporter, batches, closeServer := newTestReporter(t, "secret")
 	defer closeServer()
 	defer reporter.Close(context.Background())
@@ -305,7 +271,7 @@ func newTestReporter(t *testing.T, secret string) (*Reporter, <-chan usagereport
 
 func newUsageRequest(requestID string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
-	req.Header.Set(headerRequestID, requestID)
+	req.Header.Set("X-Tinfoil-Tool-Request-Id", requestID)
 	req.Header.Set(headerModel, "gpt-oss-120b")
 	req.Header.Set(headerRoute, "/v1/chat/completions")
 	req.Header.Set(headerStreaming, "true")

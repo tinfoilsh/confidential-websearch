@@ -78,11 +78,11 @@ func validateReporterEndpoint(endpoint string) error {
 // the request is rejected: an attacker tampering with that header must not be
 // allowed to silently fall through to the direct-billing default.
 //
-// The billing dedup key is only taken from the request when it carries a valid
-// signed usage context (i.e. the caller is a trusted upstream such as the model
-// router), preferring the signed ContextID over the unsigned request-id header.
-// Direct callers could otherwise pick and reuse an ID to collapse many billable
-// calls into the dedup window.
+// The billing dedup key is the ContextID inside a valid signed usage context
+// (set by trusted upstreams such as the model router). Every other call gets a
+// fresh server-generated ID; request-id headers are never trusted, since a
+// direct caller could otherwise reuse an ID to collapse many billable calls
+// into the dedup window.
 func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 	if r == nil {
 		return nil
@@ -99,7 +99,7 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 		"route":     rc.Route,
 		"streaming": map[bool]string{true: "true", false: "false"}[rc.Streaming],
 	}
-	trusted := false
+	requestID := uuid.NewString()
 	if r.usageContextSecret != "" {
 		usageCtx, ok, err := usagereporting.FromHeaders(req.Header, r.usageContextSecret, now, usageContextMaxSkew)
 		if err != nil {
@@ -117,7 +117,7 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 			}
 			if usageCtx.ContextID != "" {
 				attributes["context_id"] = usageCtx.ContextID
-				rc.RequestID = usageCtx.ContextID
+				requestID = usageCtx.ContextID
 			}
 			if usageCtx.RootRequestID != "" {
 				attributes["root_request_id"] = usageCtx.RootRequestID
@@ -128,28 +128,24 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 			if usageCtx.Depth > 0 {
 				attributes["depth"] = strconv.Itoa(usageCtx.Depth)
 			}
-			trusted = true
 		}
-	}
-	if !trusted || rc.RequestID == "" {
-		rc.RequestID = uuid.NewString()
 	}
 
 	r.mu.Lock()
-	for requestID, reportedAt := range r.reportedAt {
+	for id, reportedAt := range r.reportedAt {
 		if reportedAt.Before(now.Add(-sessionCacheTTL)) {
-			delete(r.reportedAt, requestID)
+			delete(r.reportedAt, id)
 		}
 	}
-	if _, ok := r.reportedAt[rc.RequestID]; ok {
+	if _, ok := r.reportedAt[requestID]; ok {
 		r.mu.Unlock()
 		return nil
 	}
-	r.reportedAt[rc.RequestID] = now
+	r.reportedAt[requestID] = now
 	r.mu.Unlock()
 
 	r.client.AddEvent(usagereporting.Event{
-		RequestID:  rc.RequestID,
+		RequestID:  requestID,
 		OccurredAt: now,
 		APIKey:     bearerToken(rc.AuthHeader),
 		Operation: usagereporting.Operation{
