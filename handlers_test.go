@@ -523,11 +523,15 @@ func TestResolveSafetyFlag(t *testing.T) {
 }
 
 func TestSearchHandler_HeaderOverridesEnvDefaults(t *testing.T) {
+	const email = "john@example.com"
+	const redactedQuery = "hiking trails"
+	const query = email + " " + redactedQuery
+	wantRedaction := safeguard.PIIRedaction{Type: "private_email", Start: 0, End: len(email)}
 	searcher := &mockSearchProvider{results: []search.Result{{Title: "r", URL: "https://example.com/r", Content: "ok"}}}
 	redactor := &mockPIIRedactor{
-		redacted: map[string]string{"john@example.com hiking trails": "hiking trails"},
+		redacted: map[string]string{query: redactedQuery},
 		redactions: map[string][]safeguard.PIIRedaction{
-			"john@example.com hiking trails": {{Type: "private_email", Start: 0, End: 16}},
+			query: {wantRedaction},
 		},
 	}
 	svc := tools.NewService(searcher, nil, nil, redactor, nil)
@@ -537,15 +541,18 @@ func TestSearchHandler_HeaderOverridesEnvDefaults(t *testing.T) {
 	req.Header.Set(headerInjectionCheck, "false")
 
 	handler := newSearchHandler(svc, &config.Config{EnablePIICheck: false, EnableSearchInjectionCheck: true}, req)
-	_, result, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "john@example.com hiking trails"})
+	_, result, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: query})
 	if err != nil {
 		t.Fatalf("unexpected search error: %v", err)
 	}
-	if searcher.lastQuery != "hiking trails" {
+	if searcher.lastQuery != redactedQuery {
 		t.Fatalf("expected redacted search query, got %q", searcher.lastQuery)
 	}
 	if !result.PIIChecked || !result.PIIMasked || len(result.PIIRedactions) != 1 {
 		t.Fatalf("expected check and masking metadata, got %+v", result)
+	}
+	if result.PIIRedactions[0] != wantRedaction {
+		t.Fatalf("got redaction %+v, want %+v", result.PIIRedactions[0], wantRedaction)
 	}
 }
 
