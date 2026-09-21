@@ -208,6 +208,43 @@ func TestReportSessionDeduplicatesRequestID(t *testing.T) {
 	if got := len(batch.Events); got != 1 {
 		t.Fatalf("expected one deduplicated event, got %d", got)
 	}
+	if got := batch.Events[0].RequestID; got != "request-1" {
+		t.Fatalf("request id mismatch: got %q want %q", got, "request-1")
+	}
+}
+
+func TestReportSessionDedupKeyComesFromSignedContext(t *testing.T) {
+	reporter, batches, closeServer := newTestReporter(t, "secret")
+	defer closeServer()
+	defer reporter.Close(context.Background())
+
+	signedCtx := usagereporting.Context{
+		ContextID:           "signed-context-1",
+		RootRequestID:       "signed-context-1",
+		ParentService:       usagereporting.ServiceRouter,
+		APIKeyHash:          usagereporting.HashAPIKey("tk_test"),
+		Depth:               1,
+		BillCustomerRequest: true,
+		IssuedAt:            time.Now().UTC(),
+	}
+	for _, headerID := range []string{"header-a", "header-b"} {
+		req := newUsageRequest(headerID)
+		if err := usagereporting.SetHeaders(req.Header, signedCtx, "secret"); err != nil {
+			t.Fatalf("set usage context headers: %v", err)
+		}
+		if err := reporter.ReportSession(context.Background(), req); err != nil {
+			t.Fatalf("report session: %v", err)
+		}
+	}
+	reporter.client.Flush(context.Background())
+
+	batch := singleBatch(t, batches)
+	if got := len(batch.Events); got != 1 {
+		t.Fatalf("expected one event keyed by signed context id, got %d", got)
+	}
+	if got := batch.Events[0].RequestID; got != "signed-context-1" {
+		t.Fatalf("request id mismatch: got %q want %q", got, "signed-context-1")
+	}
 }
 
 func TestReportSessionBillsDirectCallerPerRequestDespiteRequestID(t *testing.T) {

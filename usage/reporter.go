@@ -78,10 +78,11 @@ func validateReporterEndpoint(endpoint string) error {
 // the request is rejected: an attacker tampering with that header must not be
 // allowed to silently fall through to the direct-billing default.
 //
-// The client-supplied request ID is only used as a billing dedup key when the
-// request carries a valid signed usage context (i.e. the caller is a trusted
-// upstream such as the model router). Direct callers could otherwise pick and
-// reuse an ID to collapse many billable calls into the dedup window.
+// The billing dedup key is only taken from the request when it carries a valid
+// signed usage context (i.e. the caller is a trusted upstream such as the model
+// router), preferring the signed ContextID over the unsigned request-id header.
+// Direct callers could otherwise pick and reuse an ID to collapse many billable
+// calls into the dedup window.
 func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 	if r == nil {
 		return nil
@@ -116,6 +117,7 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 			}
 			if usageCtx.ContextID != "" {
 				attributes["context_id"] = usageCtx.ContextID
+				rc.RequestID = usageCtx.ContextID
 			}
 			if usageCtx.RootRequestID != "" {
 				attributes["root_request_id"] = usageCtx.RootRequestID
