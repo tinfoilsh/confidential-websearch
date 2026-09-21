@@ -2,7 +2,14 @@ tools:
   search:
     description: >-
       Search the web for current information. Returns ranked results with
-      titles, URLs, snippets, and publication dates. Accepted arguments:
+      titles, URLs, snippets, and publication dates. Also returns pii_checked
+      (whether the PII check completed), pii_masked (whether any spans were
+      removed), redacted_query (query after filtering, only when checked),
+      and pii_redactions (removed spans with type and zero-based Unicode code
+      point offsets in the original query: start inclusive, end exclusive).
+      Removed text is not repeated. Masking does not block the search; an
+      empty remaining query skips the provider and returns no results.
+      Accepted arguments:
       query (required, string); max_results (int, 1-30);
       user_location_country (ISO country code); allowed_domains ([]string);
       excluded_domains ([]string); content_mode ("highlights"|"text");
