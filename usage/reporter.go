@@ -77,6 +77,12 @@ func validateReporterEndpoint(endpoint string) error {
 // header is present but fails verification (bad signature, stale, malformed),
 // the request is rejected: an attacker tampering with that header must not be
 // allowed to silently fall through to the direct-billing default.
+//
+// The billing dedup key is the ContextID inside a valid signed usage context
+// (set by trusted upstreams such as the model router). Every other call gets a
+// fresh server-generated ID; request-id headers are never trusted, since a
+// direct caller could otherwise reuse an ID to collapse many billable calls
+// into the dedup window.
 func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 	if r == nil {
 		return nil
@@ -85,9 +91,6 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 		return nil
 	}
 	rc := contextFromRequest(req)
-	if rc.RequestID == "" {
-		rc.RequestID = uuid.NewString()
-	}
 	now := time.Now().UTC()
 
 	customerRequests := int64(1)
@@ -96,6 +99,7 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 		"route":     rc.Route,
 		"streaming": map[bool]string{true: "true", false: "false"}[rc.Streaming],
 	}
+	requestID := uuid.NewString()
 	if r.usageContextSecret != "" {
 		usageCtx, ok, err := usagereporting.FromHeaders(req.Header, r.usageContextSecret, now, usageContextMaxSkew)
 		if err != nil {
@@ -113,6 +117,7 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 			}
 			if usageCtx.ContextID != "" {
 				attributes["context_id"] = usageCtx.ContextID
+				requestID = usageCtx.ContextID
 			}
 			if usageCtx.RootRequestID != "" {
 				attributes["root_request_id"] = usageCtx.RootRequestID
@@ -127,20 +132,20 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 	}
 
 	r.mu.Lock()
-	for requestID, reportedAt := range r.reportedAt {
+	for id, reportedAt := range r.reportedAt {
 		if reportedAt.Before(now.Add(-sessionCacheTTL)) {
-			delete(r.reportedAt, requestID)
+			delete(r.reportedAt, id)
 		}
 	}
-	if _, ok := r.reportedAt[rc.RequestID]; ok {
+	if _, ok := r.reportedAt[requestID]; ok {
 		r.mu.Unlock()
 		return nil
 	}
-	r.reportedAt[rc.RequestID] = now
+	r.reportedAt[requestID] = now
 	r.mu.Unlock()
 
 	r.client.AddEvent(usagereporting.Event{
-		RequestID:  rc.RequestID,
+		RequestID:  requestID,
 		OccurredAt: now,
 		APIKey:     bearerToken(rc.AuthHeader),
 		Operation: usagereporting.Operation{
