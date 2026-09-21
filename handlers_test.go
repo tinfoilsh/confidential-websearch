@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -55,14 +58,21 @@ func (m *mockSafeguard) Check(ctx context.Context, content string) (*safeguard.C
 }
 
 type mockPIIRedactor struct {
-	redacted map[string]string
+	redacted   map[string]string
+	redactions map[string][]safeguard.PIIRedaction
+	err        error
+	calls      int
 }
 
-func (m *mockPIIRedactor) Redact(_ context.Context, content string) (string, error) {
-	if redacted, ok := m.redacted[content]; ok {
-		return redacted, nil
+func (m *mockPIIRedactor) Redact(_ context.Context, content string) (safeguard.PIIRedactionResult, error) {
+	m.calls++
+	if m.err != nil {
+		return safeguard.PIIRedactionResult{}, m.err
 	}
-	return content, nil
+	if redacted, ok := m.redacted[content]; ok {
+		return safeguard.PIIRedactionResult{Text: redacted, Redactions: m.redactions[content]}, nil
+	}
+	return safeguard.PIIRedactionResult{Text: content}, nil
 }
 
 func (m *mockFetcher) FetchURLs(ctx context.Context, urls []string) []fetch.FetchedPage {
@@ -513,8 +523,17 @@ func TestResolveSafetyFlag(t *testing.T) {
 }
 
 func TestSearchHandler_HeaderOverridesEnvDefaults(t *testing.T) {
+	const email = "john@example.com"
+	const redactedQuery = "hiking trails"
+	const query = email + " " + redactedQuery
+	wantRedaction := safeguard.PIIRedaction{Type: "private_email", Start: 0, End: len(email)}
 	searcher := &mockSearchProvider{results: []search.Result{{Title: "r", URL: "https://example.com/r", Content: "ok"}}}
-	redactor := &mockPIIRedactor{redacted: map[string]string{"john@example.com hiking trails": "hiking trails"}}
+	redactor := &mockPIIRedactor{
+		redacted: map[string]string{query: redactedQuery},
+		redactions: map[string][]safeguard.PIIRedaction{
+			query: {wantRedaction},
+		},
+	}
 	svc := tools.NewService(searcher, nil, nil, redactor, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
@@ -522,12 +541,18 @@ func TestSearchHandler_HeaderOverridesEnvDefaults(t *testing.T) {
 	req.Header.Set(headerInjectionCheck, "false")
 
 	handler := newSearchHandler(svc, &config.Config{EnablePIICheck: false, EnableSearchInjectionCheck: true}, req)
-	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "john@example.com hiking trails"})
+	_, result, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: query})
 	if err != nil {
 		t.Fatalf("unexpected search error: %v", err)
 	}
-	if searcher.lastQuery != "hiking trails" {
+	if searcher.lastQuery != redactedQuery {
 		t.Fatalf("expected redacted search query, got %q", searcher.lastQuery)
+	}
+	if !result.PIIChecked || !result.PIIMasked || len(result.PIIRedactions) != 1 {
+		t.Fatalf("expected check and masking metadata, got %+v", result)
+	}
+	if result.PIIRedactions[0] != wantRedaction {
+		t.Fatalf("got redaction %+v, want %+v", result.PIIRedactions[0], wantRedaction)
 	}
 }
 
@@ -720,5 +745,146 @@ func mustJSON(t *testing.T, v any) map[string]any {
 	default:
 		t.Fatalf("unsupported type for mustJSON: %T", v)
 		return nil
+	}
+}
+
+func TestMCPHTTP_PIIRedactionMetadata(t *testing.T) {
+	const email = "john@example.com"
+	const query = email + " hiking trails"
+	const safeQuery = "hiking trails"
+	const privateError = "privacy provider failure with " + email
+	span := safeguard.PIIRedaction{Type: "private_email", Start: 0, End: len(email)}
+	tests := []struct {
+		name         string
+		header       string
+		fallback     bool
+		query        string
+		redacted     string
+		masked       bool
+		checked      bool
+		unconfigured bool
+		fail         bool
+	}{
+		{name: "true overrides disabled default", header: "true", query: query, redacted: safeQuery, masked: true, checked: true},
+		{name: "false overrides enabled default", header: "false", fallback: true, query: query},
+		{name: "absent uses enabled default", fallback: true, query: query, redacted: safeQuery, masked: true, checked: true},
+		{name: "absent uses disabled default", query: query},
+		{name: "malformed uses enabled default", header: "maybe", fallback: true, query: query, redacted: safeQuery, masked: true, checked: true},
+		{name: "no masks still reports check", header: "true", query: "John Smith hiking trails", redacted: "John Smith hiking trails", checked: true},
+		{name: "entire query removed", header: "true", query: email, masked: true, checked: true},
+		{name: "only whitespace remains", header: "true", query: email, redacted: " ", masked: true, checked: true},
+		{name: "missing local redactor is not checked", header: "true", query: query, unconfigured: true},
+		{name: "failure stops provider without exposing details", header: "true", query: query, fail: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			searcher := &mockSearchProvider{results: []search.Result{{Title: "Trail guide"}}}
+			redactor := &mockPIIRedactor{
+				redacted:   map[string]string{tc.query: tc.redacted},
+				redactions: map[string][]safeguard.PIIRedaction{},
+			}
+			if tc.masked {
+				redactor.redactions[tc.query] = []safeguard.PIIRedaction{span}
+			}
+			if tc.fail {
+				redactor.err = errors.New(privateError)
+			}
+			var configured safeguard.PIIRedactor = redactor
+			if tc.unconfigured {
+				configured = nil
+			}
+			svc := tools.NewService(searcher, nil, nil, configured, nil)
+			handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+				return newMCPServer(svc, &config.Config{EnablePIICheck: tc.fallback}, config.ToolDescriptions{}, nil, r)
+			}, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
+			body, err := json.Marshal(map[string]any{
+				"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+				"params": map[string]any{"name": "search", "arguments": SearchArgs{Query: tc.query}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(string(body)))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "application/json, text/event-stream")
+			if tc.header != "" {
+				req.Header.Set(headerPIICheck, tc.header)
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, req)
+			if response.Code != http.StatusOK {
+				t.Fatalf("HTTP %d: %s", response.Code, response.Body.String())
+			}
+			var envelope struct {
+				Result mcp.CallToolResult `json:"result"`
+				Error  json.RawMessage    `json:"error"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+				t.Fatal(err)
+			}
+			if len(envelope.Error) > 0 {
+				t.Fatalf("unexpected protocol error: %s", envelope.Error)
+			}
+			result := envelope.Result
+			if result.IsError != tc.fail {
+				t.Fatalf("unexpected tool result: %s", response.Body.String())
+			}
+			if strings.Contains(response.Body.String(), email) || strings.Contains(response.Body.String(), privateError) {
+				t.Fatalf("response echoed sensitive text: %s", response.Body.String())
+			}
+			if tc.fail {
+				if searcher.lastQuery != "" || redactor.calls != 1 {
+					t.Fatal("PII failure must stop search after running the check")
+				}
+				if len(result.Content) != 1 || result.Content[0].(*mcp.TextContent).Text != searchProviderError {
+					t.Fatalf("expected sanitized tool error, got %+v", result.Content)
+				}
+				return
+			}
+			structured, ok := result.StructuredContent.(map[string]any)
+			if !ok || structured["pii_checked"] != tc.checked || structured["pii_masked"] != tc.masked {
+				t.Fatalf("incorrect PII flags: %#v", result.StructuredContent)
+			}
+			redactions, ok := structured["pii_redactions"].([]any)
+			if !ok {
+				t.Fatalf("expected redaction array, got %#v", structured["pii_redactions"])
+			}
+			if tc.masked {
+				want := map[string]any{"type": span.Type, "start": float64(span.Start), "end": float64(span.End)}
+				if len(redactions) != 1 || !reflect.DeepEqual(redactions[0], want) {
+					t.Fatalf("incorrect removed spans: %#v", redactions)
+				}
+			} else if len(redactions) != 0 {
+				t.Fatalf("expected no redactions, got %#v", redactions)
+			}
+			wantQuery := tc.query
+			if tc.checked {
+				wantQuery = tc.redacted
+				if structured["redacted_query"] != tc.redacted || redactor.calls != 1 {
+					t.Fatalf("check did not return its sanitized query: %#v", structured)
+				}
+			} else if _, present := structured["redacted_query"]; present || redactor.calls != 0 {
+				t.Fatal("unchecked query must not be echoed as redacted")
+			}
+			if strings.TrimSpace(wantQuery) == "" {
+				wantQuery = ""
+				if results, ok := structured["results"].([]any); !ok || len(results) != 0 {
+					t.Fatalf("expected empty result array: %#v", structured["results"])
+				}
+			}
+			if searcher.lastQuery != wantQuery {
+				t.Fatalf("provider received %q, want %q", searcher.lastQuery, wantQuery)
+			}
+			if len(result.Content) != 1 {
+				t.Fatalf("expected JSON text content, got %+v", result.Content)
+			}
+			var textResult map[string]any
+			if err := json.Unmarshal([]byte(result.Content[0].(*mcp.TextContent).Text), &textResult); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(textResult, structured) {
+				t.Fatalf("text and structured results differ: %#v vs %#v", textResult, structured)
+			}
+		})
 	}
 }

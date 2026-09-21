@@ -68,12 +68,15 @@ func (s *stubSafeguard) Check(_ context.Context, content string) (*safeguard.Che
 }
 
 type stubPIIRedactor struct {
-	redacted string
-	err      error
+	redacted   string
+	redactions []safeguard.PIIRedaction
+	called     bool
+	err        error
 }
 
-func (s *stubPIIRedactor) Redact(_ context.Context, _ string) (string, error) {
-	return s.redacted, s.err
+func (s *stubPIIRedactor) Redact(_ context.Context, _ string) (safeguard.PIIRedactionResult, error) {
+	s.called = true
+	return safeguard.PIIRedactionResult{Text: s.redacted, Redactions: s.redactions}, s.err
 }
 
 func ptrBool(v bool) *bool { return &v }
@@ -135,7 +138,10 @@ func TestSearch_CapsMaxResults(t *testing.T) {
 
 func TestSearch_PIIRedactsQuery(t *testing.T) {
 	searcher := &stubSearcher{results: []search.Result{{Title: "hit"}}}
-	redactor := &stubPIIRedactor{redacted: "hiking trails"}
+	redactor := &stubPIIRedactor{
+		redacted:   "hiking trails",
+		redactions: []safeguard.PIIRedaction{{Type: "private_email", Start: 0, End: 16}},
+	}
 	service := NewService(searcher, nil, nil, redactor, nil)
 
 	outcome, err := service.Search(context.Background(), "john@example.com hiking trails", Options{PIICheckEnabled: true})
@@ -148,6 +154,12 @@ func TestSearch_PIIRedactsQuery(t *testing.T) {
 	if searcher.query != "hiking trails" {
 		t.Fatalf("expected redacted query, got %q", searcher.query)
 	}
+	if !outcome.PIIChecked || !outcome.PIIMasked || outcome.RedactedQuery == nil || *outcome.RedactedQuery != searcher.query {
+		t.Fatalf("incorrect redaction metadata: %+v", outcome)
+	}
+	if len(outcome.PIIRedactions) != 1 || outcome.PIIRedactions[0] != redactor.redactions[0] {
+		t.Fatalf("expected removed email span, got %+v", outcome.PIIRedactions)
+	}
 }
 
 func TestSearch_PIIRedactionFailureStopsSearch(t *testing.T) {
@@ -159,14 +171,58 @@ func TestSearch_PIIRedactionFailureStopsSearch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected PII redaction failure")
 	}
-	if searcher.query != "" {
+	if searcher.called {
 		t.Fatal("expected search not to run")
+	}
+}
+
+func TestSearch_PIICheckState(t *testing.T) {
+	const query = "John Smith hiking trails"
+	for _, tc := range []struct {
+		name       string
+		enabled    bool
+		configured bool
+		checked    bool
+	}{
+		{name: "checked without redactions", enabled: true, configured: true, checked: true},
+		{name: "disabled", configured: true},
+		{name: "local test mode without redactor", enabled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			searcher := &stubSearcher{}
+			redactor := &stubPIIRedactor{redacted: query}
+			var configured safeguard.PIIRedactor
+			if tc.configured {
+				configured = redactor
+			}
+			service := NewService(searcher, nil, nil, configured, nil)
+			got, err := service.Search(context.Background(), query, Options{PIICheckEnabled: tc.enabled})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !searcher.called || searcher.query != query {
+				t.Fatalf("expected original query to be searched: %+v", searcher)
+			}
+			if got.PIIChecked != tc.checked || redactor.called != tc.checked || got.PIIMasked || len(got.PIIRedactions) != 0 {
+				t.Fatalf("incorrect PII state: %+v, redactor called %v", got, redactor.called)
+			}
+			if tc.checked {
+				if got.RedactedQuery == nil || *got.RedactedQuery != query {
+					t.Fatalf("expected checked query, got %+v", got)
+				}
+			} else if got.RedactedQuery != nil {
+				t.Fatal("unchecked query must not be echoed as redacted")
+			}
+		})
 	}
 }
 
 func TestSearch_PIIOnlyQuerySkipsProvider(t *testing.T) {
 	searcher := &stubSearcher{}
-	redactor := &stubPIIRedactor{redacted: " "}
+	redactor := &stubPIIRedactor{
+		redacted:   "",
+		redactions: []safeguard.PIIRedaction{{Type: "private_email", Start: 0, End: 16}},
+	}
 	service := NewService(searcher, nil, nil, redactor, nil)
 
 	outcome, err := service.Search(context.Background(), "john@example.com", Options{PIICheckEnabled: true})
@@ -178,6 +234,9 @@ func TestSearch_PIIOnlyQuerySkipsProvider(t *testing.T) {
 	}
 	if len(outcome.Results) != 0 {
 		t.Fatalf("expected no results, got %d", len(outcome.Results))
+	}
+	if !outcome.PIIChecked || !outcome.PIIMasked || outcome.RedactedQuery == nil || *outcome.RedactedQuery != "" || len(outcome.PIIRedactions) != 1 {
+		t.Fatalf("expected metadata even when entire query was removed: %+v", outcome)
 	}
 }
 
