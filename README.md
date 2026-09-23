@@ -27,17 +27,19 @@ export USAGE_CONTEXT_SECRET="your-usage-context-secret"
 go run ./cmd/websearch-mcp
 ```
 
-Set `LOCAL_TEST_MODE=1` to serve deterministic fixtures instead of calling Exa; add `-v` for debug logs. See [`local_testing.md`](./local_testing.md) for the full runbook, including the eval harness and running behind the model router.
+Set `LOCAL_TEST_MODE=1` to serve deterministic fixtures instead of calling Exa; add `-v` for debug logs. See [`docs/local_testing.md`](./docs/local_testing.md) for the full runbook, including the eval harness and running behind the model router.
 
 ## Architecture Overview
 
-- **[mcp_server.go](mcp_server.go)**: MCP transport and tool registration
-- **[config/](config/)**: Environment variables and tool definitions
-- **[handlers.go](handlers.go)**: `search` and `fetch` tool handlers and per-request safety header handling
-- **[search/](search/)**, **[fetch/](fetch/)**: Exa search and contents clients
-- **[safeguard/](safeguard/)**: PII masking and prompt-injection filtering
-- **[domainrank/](domainrank/)**: Cloudflare Radar top-domain list used to skip injection checks
-- **[usage/](usage/)**: Usage reporting to the control plane
+- **[cmd/websearch-mcp/](cmd/websearch-mcp/)**: Server entry point, wiring, and HTTP routes
+- **[internal/server/](internal/server/)**: MCP tool registration, `search` and `fetch` handlers, per-request safety header handling, and metrics
+- **[internal/tools/](internal/tools/)**: Orchestration of search, fetch, PII masking, and injection checks
+- **[internal/config/](internal/config/)**: Environment variables and tool definitions
+- **[internal/search/](internal/search/)**, **[internal/fetch/](internal/fetch/)**: Exa search and contents clients
+- **[internal/safeguard/](internal/safeguard/)**: PII masking and prompt-injection filtering
+- **[internal/domainrank/](internal/domainrank/)**: Cloudflare Radar top-domain list used to skip injection checks
+- **[internal/usage/](internal/usage/)**: Usage reporting to the control plane
+- **[internal/localtest/](internal/localtest/)**: Deterministic fixtures served when `LOCAL_TEST_MODE=1`
 - **[evals/](evals/)**: Eval harness for tool behavior
 
 ## Reporting Vulnerabilities
