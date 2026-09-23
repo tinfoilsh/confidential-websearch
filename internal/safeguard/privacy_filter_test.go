@@ -37,7 +37,7 @@ func TestPrivacyFilterRedactAppliesRequestTimeout(t *testing.T) {
 		}, nil
 	})})
 
-	redacted, err := client.Redact(context.Background(), "public search")
+	redacted, err := client.Redact(context.Background(), "public search", "Bearer tk_customer")
 	if err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestPrivacyFilterRedactReturnsRemovedSpans(t *testing.T) {
 			Header:     make(http.Header),
 		}, nil
 	})})
-	got, err := client.Redact(context.Background(), query)
+	got, err := client.Redact(context.Background(), query, "Bearer tk_customer")
 	if err != nil {
 		t.Fatal(err)
 	}

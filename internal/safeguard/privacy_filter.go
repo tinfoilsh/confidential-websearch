@@ -14,7 +14,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -40,13 +39,16 @@ var pfPersonPairRedact = map[string]bool{
 }
 
 type PIIRedactor interface {
-	Redact(ctx context.Context, content string) (PIIRedactionResult, error)
+	Redact(ctx context.Context, content, authorization string) (PIIRedactionResult, error)
 }
 
 type PIIRedactionResult struct {
-	Text       string
-	Redactions []PIIRedaction
+	Text             string
+	Redactions       []PIIRedaction
+	BillableRequests *int `json:"-"`
 }
+
+const billableRequestsHeader = "X-Tinfoil-Billable-Requests"
 
 // PIIRedaction identifies a removed span without copying its sensitive text.
 // Offsets are zero-based Unicode code points in the original input, end-exclusive.
@@ -58,7 +60,6 @@ type PIIRedaction struct {
 
 type PrivacyFilterClient struct {
 	enclave      string
-	apiKey       string
 	httpClient   atomic.Pointer[http.Client]
 	secureClient *client.SecureClient
 	mu           sync.Mutex
@@ -67,7 +68,7 @@ type PrivacyFilterClient struct {
 // NewPrivacyFilterClient creates a client that calls the privacy filter enclave at the given
 // domain. The repo is used for attestation verification (code measurement
 // pinned to the GitHub repo's signed release).
-func NewPrivacyFilterClient(enclave, repo, apiKey string) (*PrivacyFilterClient, error) {
+func NewPrivacyFilterClient(enclave, repo string) (*PrivacyFilterClient, error) {
 	sc := client.NewSecureClient(enclave, repo)
 	httpClient, err := sc.HTTPClient()
 	if err != nil {
@@ -76,7 +77,6 @@ func NewPrivacyFilterClient(enclave, repo, apiKey string) (*PrivacyFilterClient,
 	log.WithField("enclave", enclave).Info("privacy filter PII checker verified")
 	privacyClient := &PrivacyFilterClient{
 		enclave:      enclave,
-		apiKey:       apiKey,
 		secureClient: sc,
 	}
 	privacyClient.httpClient.Store(httpClient)
@@ -121,30 +121,37 @@ func (c *PrivacyFilterClient) currentHTTPClient() *http.Client {
 
 // Redact sends the content to /redact and masks spans selected by the
 // deterministic PII policy in code.
-func (c *PrivacyFilterClient) Redact(ctx context.Context, content string) (PIIRedactionResult, error) {
-	spans, err := c.redact(ctx, content)
+func (c *PrivacyFilterClient) Redact(ctx context.Context, content, authorization string) (PIIRedactionResult, error) {
+	spans, billable, err := c.redact(ctx, content, authorization)
 	if err != nil {
-		return PIIRedactionResult{}, err
+		return PIIRedactionResult{BillableRequests: billable}, err
 	}
-	return applyPIIPolicy(content, spans)
+	result, err := applyPIIPolicy(content, spans)
+	result.BillableRequests = billable
+	return result, err
 }
 
 // redact calls the privacy filter /redact endpoint and returns the detected spans.
-func (c *PrivacyFilterClient) redact(ctx context.Context, text string) ([]pfSpan, error) {
+func (c *PrivacyFilterClient) redact(ctx context.Context, text, authorization string) ([]pfSpan, *int, error) {
+	unbilled := 0
+	parts := strings.Fields(authorization)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return nil, &unbilled, errors.New("customer bearer credential required for privacy filter")
+	}
 	ctx, cancel := context.WithTimeout(ctx, safeguardRequestTimeout)
 	defer cancel()
 
 	body, err := json.Marshal(pfRedactRequest{Text: text})
 	if err != nil {
-		return nil, fmt.Errorf("marshal redact request: %w", err)
+		return nil, &unbilled, fmt.Errorf("marshal redact request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST",
 		fmt.Sprintf("https://%s/redact", c.enclave), bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, &unbilled, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Authorization", authorization)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.currentHTTPClient().Do(req)
@@ -156,30 +163,37 @@ func (c *PrivacyFilterClient) redact(ctx context.Context, text string) ([]pfSpan
 			log.WithError(err).Warn("privacy filter cert mismatch, re-verifying enclave")
 			retryClient, rerr := c.reverify()
 			if rerr != nil {
-				return nil, fmt.Errorf("privacy filter re-verification failed: %w", rerr)
+				return nil, &unbilled, fmt.Errorf("privacy filter re-verification failed: %w", rerr)
 			}
 			req, _ = http.NewRequestWithContext(ctx, "POST",
 				fmt.Sprintf("https://%s/redact", c.enclave), bytes.NewReader(body))
-			req.Header.Set("Authorization", "Bearer "+c.apiKey)
+			req.Header.Set("Authorization", authorization)
 			req.Header.Set("Content-Type", "application/json")
 			resp, err = retryClient.Do(req)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("privacy filter /redact request: %w", err)
+			return nil, nil, fmt.Errorf("privacy filter /redact request: %w", err)
 		}
 	}
 	defer resp.Body.Close()
+	charged := 0
+	switch resp.Header.Get(billableRequestsHeader) {
+	case "":
+	case "1":
+		charged = 1
+	default:
+		return nil, nil, errors.New("invalid privacy filter billing receipt")
+	}
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("privacy filter /redact returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, &charged, fmt.Errorf("privacy filter /redact returned %d", resp.StatusCode)
 	}
 
 	var result pfRedactResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode privacy filter response: %w", err)
+		return nil, &charged, fmt.Errorf("decode privacy filter response: %w", err)
 	}
-	return result.DetectedSpans, nil
+	return result.DetectedSpans, &charged, nil
 }
 
 // applyPIIPolicy masks always-sensitive spans and masks dates or addresses

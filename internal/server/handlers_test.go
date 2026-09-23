@@ -64,7 +64,7 @@ type mockPIIRedactor struct {
 	calls      int
 }
 
-func (m *mockPIIRedactor) Redact(_ context.Context, content string) (safeguard.PIIRedactionResult, error) {
+func (m *mockPIIRedactor) Redact(_ context.Context, content string, _ string) (safeguard.PIIRedactionResult, error) {
 	m.calls++
 	if m.err != nil {
 		return safeguard.PIIRedactionResult{}, m.err
@@ -141,15 +141,13 @@ func TestSearchHandler_SearchError(t *testing.T) {
 	svc := tools.NewService(searcher, nil, nil, nil, nil)
 	handler := newSearchHandler(svc, &config.Config{}, nil)
 
-	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "test"})
-	if err == nil {
-		t.Fatal("expected error")
+	callResult, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchArgs{Query: "test"})
+	if err != nil || callResult == nil || !callResult.IsError {
+		t.Fatalf("expected MCP tool error, got %+v, %v", callResult, err)
 	}
-	if err.Error() != searchProviderError {
-		t.Fatalf("expected sanitized error, got %q", err)
-	}
-	if strings.Contains(err.Error(), providerDetail) {
-		t.Fatalf("error exposed provider response: %v", err)
+	message := callResult.Content[0].(*mcp.TextContent).Text
+	if message != searchProviderError || strings.Contains(message, providerDetail) {
+		t.Fatalf("expected sanitized error, got %q", message)
 	}
 }
 
