@@ -23,9 +23,10 @@ import (
 // to its env-driven defaults, so self-hosted deployments keep working without
 // the router in front of them.
 const (
-	headerPIICheck       = "X-Tinfoil-Tool-PII-Check"
-	headerInjectionCheck = "X-Tinfoil-Tool-Injection-Check"
-	searchProviderError  = "search provider unavailable; retry after a short delay"
+	headerPIICheck         = "X-Tinfoil-Tool-PII-Check"
+	headerInjectionCheck   = "X-Tinfoil-Tool-Injection-Check"
+	searchProviderError    = "search provider unavailable; retry after a short delay"
+	piiFilterRequestsField = "pii_filter_requests"
 )
 
 // resolveSafetyFlag picks between a per-request header override and the
@@ -167,12 +168,11 @@ func newSearchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Requ
 			MaxAgeHours:           args.MaxAgeHours,
 		})
 		if err != nil {
-			result := SearchResult{PIIFilterRequests: outcome.PIIFilterRequests}
 			return &mcp.CallToolResult{
 				IsError:           true,
 				Content:           []mcp.Content{&mcp.TextContent{Text: searchProviderError}},
-				StructuredContent: result,
-			}, result, nil
+				StructuredContent: map[string]any{piiFilterRequestsField: outcome.PIIFilterRequests},
+			}, SearchResult{}, nil
 		}
 		return nil, SearchResult{
 			PIIFilterRequests: outcome.PIIFilterRequests,

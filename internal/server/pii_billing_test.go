@@ -77,6 +77,11 @@ func TestMCPPreservesEndpointBillingOnSearchFailure(t *testing.T) {
 				t.Fatalf("missing structured billing: %s", response.Body.String())
 			}
 			value, present := structured["pii_filter_requests"]
+			if envelope.Result.IsError {
+				if _, present := structured["pii_checked"]; present {
+					t.Fatal("error result must not imply the filter was unchecked")
+				}
+			}
 			if !present || tc.unknown && value != nil || !tc.unknown && value != float64(count) {
 				t.Fatalf("receipt lost: %v", structured)
 			}

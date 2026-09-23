@@ -30,12 +30,26 @@ func NewMCPServer(svc *tools.Service, cfg *config.Config, descriptions config.To
 	if err != nil {
 		panic(fmt.Sprintf("building fetch input schema: %v", err))
 	}
+	searchOutputSchema, err := jsonschema.For[SearchResult](nil)
+	if err != nil {
+		panic(fmt.Sprintf("building search output schema: %v", err))
+	}
+	searchHandler := instrumentTool("search", newSearchHandlerWithUsage(svc, cfg, reporter, request))
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "search",
-		Description: descriptions.Search,
-		InputSchema: searchSchema,
-	}, instrumentTool("search", newSearchHandlerWithUsage(svc, cfg, reporter, request)))
+		Name:         "search",
+		Description:  descriptions.Search,
+		InputSchema:  searchSchema,
+		OutputSchema: searchOutputSchema,
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args SearchArgs) (*mcp.CallToolResult, any, error) {
+		result, output, err := searchHandler(ctx, req, args)
+		if result != nil && result.IsError {
+			// Nil output preserves the receipt-only error without synthesizing
+			// successful-search fields or validating it as a successful result.
+			return result, nil, err
+		}
+		return result, output, err
+	})
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "fetch",
