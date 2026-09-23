@@ -21,6 +21,7 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/internal/config"
 	"github.com/tinfoilsh/confidential-websearch/internal/domainrank"
 	"github.com/tinfoilsh/confidential-websearch/internal/fetch"
+	"github.com/tinfoilsh/confidential-websearch/internal/localtest"
 	"github.com/tinfoilsh/confidential-websearch/internal/safeguard"
 	"github.com/tinfoilsh/confidential-websearch/internal/search"
 	"github.com/tinfoilsh/confidential-websearch/internal/server"
@@ -36,7 +37,7 @@ var (
 )
 
 func main() {
-	localTestMode := isLocalTestMode()
+	localTestMode := localtest.Enabled()
 	configureLogging(localTestMode)
 	flag.Parse()
 	if localTestMode && *verbose {
@@ -59,7 +60,7 @@ func main() {
 	var (
 		svc          *tools.Service
 		searcherName string
-		recorder     *LocalCallRecorder
+		recorder     *localtest.CallRecorder
 	)
 
 	if localTestMode {
@@ -71,7 +72,7 @@ func main() {
 			}
 			piiRedactor = pf
 		}
-		svc, recorder = newLocalTestService(piiRedactor)
+		svc, recorder = localtest.NewService(piiRedactor)
 		searcherName = "local-test"
 	} else {
 		if cfg.TinfoilAPIKey == "" {

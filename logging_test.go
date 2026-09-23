@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	log "github.com/sirupsen/logrus"
+
+	"github.com/tinfoilsh/confidential-websearch/internal/localtest"
 )
 
 const (
@@ -79,7 +81,7 @@ func TestLoggingProcess(t *testing.T) {
 		main()
 		t.Fatal("startup should fail without the usage reporter secret")
 	case loggingTestEmit:
-		configureLogging(isLocalTestMode())
+		configureLogging(localtest.Enabled())
 		if os.Getenv(loggingTestVerboseEnv) == "1" {
 			log.SetLevel(log.DebugLevel)
 		}

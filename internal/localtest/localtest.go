@@ -1,4 +1,4 @@
-package main
+package localtest
 
 import (
 	"context"
@@ -35,11 +35,13 @@ func (localTestSafeguard) Check(_ context.Context, content string) (*safeguard.C
 	return &safeguard.CheckResult{Violation: false}, nil
 }
 
-func isLocalTestMode() bool {
+// Enabled reports whether the server should serve deterministic fixtures
+// instead of calling real providers.
+func Enabled() bool {
 	return os.Getenv("LOCAL_TEST_MODE") == "1"
 }
 
-// LocalCallRecorder captures the most recent search and fetch calls seen by
+// CallRecorder captures the most recent search and fetch calls seen by
 // the fixture-mode MCP service. The eval harness reads this record through
 // the /debug/last-call endpoint to assert that request-shaping options
 // (user_location, allowed_domains, excluded_domains, category, etc.) are
@@ -47,7 +49,7 @@ func isLocalTestMode() bool {
 //
 // The recorder is only wired up when LOCAL_TEST_MODE=1 so it cannot leak
 // request metadata from a real deployment.
-type LocalCallRecorder struct {
+type CallRecorder struct {
 	mu sync.Mutex
 
 	lastSearchAt    time.Time
@@ -58,13 +60,13 @@ type LocalCallRecorder struct {
 	lastFetchURLs []string
 }
 
-// NewLocalCallRecorder returns an empty recorder ready to be handed to the
+// NewCallRecorder returns an empty recorder ready to be handed to the
 // fixture searcher/fetcher.
-func NewLocalCallRecorder() *LocalCallRecorder {
-	return &LocalCallRecorder{}
+func NewCallRecorder() *CallRecorder {
+	return &CallRecorder{}
 }
 
-func (r *LocalCallRecorder) recordSearch(query string, opts search.Options) {
+func (r *CallRecorder) recordSearch(query string, opts search.Options) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.lastSearchAt = time.Now().UTC()
@@ -72,7 +74,7 @@ func (r *LocalCallRecorder) recordSearch(query string, opts search.Options) {
 	r.lastSearchOpts = opts
 }
 
-func (r *LocalCallRecorder) recordFetch(urls []string) {
+func (r *CallRecorder) recordFetch(urls []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.lastFetchAt = time.Now().UTC()
@@ -82,14 +84,14 @@ func (r *LocalCallRecorder) recordFetch(urls []string) {
 }
 
 // LastSearch returns a snapshot of the most recent search call.
-func (r *LocalCallRecorder) LastSearch() (time.Time, string, search.Options) {
+func (r *CallRecorder) LastSearch() (time.Time, string, search.Options) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.lastSearchAt, r.lastSearchQuery, r.lastSearchOpts
 }
 
 // LastFetch returns a snapshot of the most recent fetch call.
-func (r *LocalCallRecorder) LastFetch() (time.Time, []string) {
+func (r *CallRecorder) LastFetch() (time.Time, []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	copied := make([]string, len(r.lastFetchURLs))
@@ -97,15 +99,17 @@ func (r *LocalCallRecorder) LastFetch() (time.Time, []string) {
 	return r.lastFetchAt, copied
 }
 
-func newLocalTestService(piiRedactor safeguard.PIIRedactor) (*tools.Service, *LocalCallRecorder) {
-	recorder := NewLocalCallRecorder()
+// NewService builds a tools.Service backed by fixture search, fetch, and
+// safeguard implementations, along with the recorder they report to.
+func NewService(piiRedactor safeguard.PIIRedactor) (*tools.Service, *CallRecorder) {
+	recorder := NewCallRecorder()
 	searcher := localTestSearcher{recorder: recorder}
 	fetcher := localTestFetcher{recorder: recorder}
 	return tools.NewService(searcher, fetcher, localTestSafeguard{}, piiRedactor, domainrank.NopRanker{}), recorder
 }
 
 type localTestSearcher struct {
-	recorder *LocalCallRecorder
+	recorder *CallRecorder
 }
 
 func (localTestSearcher) Name() string {
@@ -143,7 +147,7 @@ func (s localTestSearcher) Search(_ context.Context, query string, opts search.O
 }
 
 type localTestFetcher struct {
-	recorder *LocalCallRecorder
+	recorder *CallRecorder
 }
 
 func (f localTestFetcher) FetchURLs(ctx context.Context, urls []string) []fetch.FetchedPage {
