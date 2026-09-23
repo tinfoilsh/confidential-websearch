@@ -332,6 +332,10 @@ github.com/tinfoilsh/tinfoil-go v0.15.2 h1:etQEW4S0o4C/b1c2JaT/fNrtn9Ll4vPrjq230
 github.com/tinfoilsh/tinfoil-go v0.15.2/go.mod h1:efO+aJz4bZsfzSEJo5EuXetJoxk2DQTSAzb9teydnvY=
 github.com/tinfoilsh/usage-reporting-go v0.1.2 h1:OFGCzVAHkiPcLZFTXDeacVv/2KefHgKPFFZsrVILQXE=
 github.com/tinfoilsh/usage-reporting-go v0.1.2/go.mod h1:1lXVGmDbEmlAdUo+0YPsUYuFVtr74xycCs0K4fSnwYs=
+github.com/tinfoilsh/usage-reporting-go v0.1.4-0.20260923182043-56112aba6ae9 h1:djjQ1Rj5zREBFxoWc2590fqCyk0DMs8zD//pK8sZ+6Y=
+github.com/tinfoilsh/usage-reporting-go v0.1.4-0.20260923182043-56112aba6ae9/go.mod h1:1lXVGmDbEmlAdUo+0YPsUYuFVtr74xycCs0K4fSnwYs=
+github.com/tinfoilsh/usage-reporting-go v0.1.4 h1:RS2DhXG6VitnlZb2628gqO16ZU1NxGJ1gQdqzlp50Es=
+github.com/tinfoilsh/usage-reporting-go v0.1.4/go.mod h1:1lXVGmDbEmlAdUo+0YPsUYuFVtr74xycCs0K4fSnwYs=
 github.com/tink-crypto/tink-go-awskms/v3 v3.0.0 h1:XSohRhCkXAVI0iaCnWB/GS05TEmpnKurQmzaY1jzt3Y=
 github.com/tink-crypto/tink-go-awskms/v3 v3.0.0/go.mod h1:+7MXsShLzVbSQ6dI0Pe4JuZM52jD1jQ1itAygd/MDsA=
 github.com/tink-crypto/tink-go-gcpkms/v2 v2.3.0 h1:3s6YMgMOBZRU8qG6ybpKSF2Sau+y3sMvxR911M59SwA=

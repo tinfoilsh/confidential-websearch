@@ -10,7 +10,7 @@ require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/sirupsen/logrus v1.9.4
 	github.com/tinfoilsh/tinfoil-go v0.15.2
-	github.com/tinfoilsh/usage-reporting-go v0.1.2
+	github.com/tinfoilsh/usage-reporting-go v0.1.4
 	golang.org/x/net v0.57.0
 	gopkg.in/yaml.v3 v3.0.1
 )

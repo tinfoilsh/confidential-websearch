@@ -93,41 +93,19 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 	rc := contextFromRequest(req)
 	now := time.Now().UTC()
 
-	customerRequests := int64(1)
-	attributes := map[string]string{
-		"model":     rc.Model,
-		"route":     rc.Route,
-		"streaming": map[bool]string{true: "true", false: "false"}[rc.Streaming],
+	usageCtx, attributes, err := r.verifiedContext(req, rc, now)
+	if err != nil {
+		return err
 	}
+
+	customerRequests := int64(1)
 	requestID := uuid.NewString()
-	if r.usageContextSecret != "" {
-		usageCtx, ok, err := usagereporting.FromHeaders(req.Header, r.usageContextSecret, now, usageContextMaxSkew)
-		if err != nil {
-			return fmt.Errorf("verify usage context: %w", err)
+	if usageCtx != nil {
+		if !usageCtx.BillCustomerRequest {
+			customerRequests = 0
 		}
-		if ok {
-			if !usagereporting.VerifyAPIKeyHash(bearerToken(rc.AuthHeader), usageCtx.APIKeyHash) {
-				return fmt.Errorf("verify usage context api key: mismatch")
-			}
-			if usageCtx.Depth > usageContextMaxDepth {
-				return fmt.Errorf("verify usage context depth: %d exceeds max %d", usageCtx.Depth, usageContextMaxDepth)
-			}
-			if !usageCtx.BillCustomerRequest {
-				customerRequests = 0
-			}
-			if usageCtx.ContextID != "" {
-				attributes["context_id"] = usageCtx.ContextID
-				requestID = usageCtx.ContextID
-			}
-			if usageCtx.RootRequestID != "" {
-				attributes["root_request_id"] = usageCtx.RootRequestID
-			}
-			if usageCtx.ParentService != "" {
-				attributes["parent_service"] = usageCtx.ParentService
-			}
-			if usageCtx.Depth > 0 {
-				attributes["depth"] = strconv.Itoa(usageCtx.Depth)
-			}
+		if usageCtx.ContextID != "" {
+			requestID = usageCtx.ContextID
 		}
 	}
 
@@ -156,6 +134,77 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 		Attributes:       attributes,
 	})
 	return nil
+}
+
+// ReportPIICheck records one privacy filter run. Unlike the session event it
+// is billed on every call regardless of the parent's BillCustomerRequest
+// flag: the filter is priced independently of web search, and the parent
+// request has not already paid for it. Each run gets a fresh event ID so
+// several searches inside one session are each charged.
+func (r *Reporter) ReportPIICheck(ctx context.Context, req *http.Request) error {
+	if r == nil || req == nil {
+		return nil
+	}
+	rc := contextFromRequest(req)
+	now := time.Now().UTC()
+
+	_, attributes, err := r.verifiedContext(req, rc, now)
+	if err != nil {
+		return err
+	}
+
+	r.client.AddEvent(usagereporting.Event{
+		RequestID:  uuid.NewString(),
+		OccurredAt: now,
+		APIKey:     bearerToken(rc.AuthHeader),
+		Operation: usagereporting.Operation{
+			Service: usagereporting.ServicePIIFilter,
+			Name:    usagereporting.OperationPIIFilterRedact,
+		},
+		CustomerRequests: 1,
+		Attributes:       attributes,
+	})
+	return nil
+}
+
+// verifiedContext parses and verifies the optional signed usage-context
+// header and returns it with the shared billing attributes. A header that is
+// present but invalid is an error rather than a fallthrough to direct billing.
+func (r *Reporter) verifiedContext(req *http.Request, rc requestContext, now time.Time) (*usagereporting.Context, map[string]string, error) {
+	attributes := map[string]string{
+		"model":     rc.Model,
+		"route":     rc.Route,
+		"streaming": map[bool]string{true: "true", false: "false"}[rc.Streaming],
+	}
+	if r.usageContextSecret == "" {
+		return nil, attributes, nil
+	}
+	usageCtx, ok, err := usagereporting.FromHeaders(req.Header, r.usageContextSecret, now, usageContextMaxSkew)
+	if err != nil {
+		return nil, nil, fmt.Errorf("verify usage context: %w", err)
+	}
+	if !ok {
+		return nil, attributes, nil
+	}
+	if !usagereporting.VerifyAPIKeyHash(bearerToken(rc.AuthHeader), usageCtx.APIKeyHash) {
+		return nil, nil, fmt.Errorf("verify usage context api key: mismatch")
+	}
+	if usageCtx.Depth > usageContextMaxDepth {
+		return nil, nil, fmt.Errorf("verify usage context depth: %d exceeds max %d", usageCtx.Depth, usageContextMaxDepth)
+	}
+	if usageCtx.ContextID != "" {
+		attributes["context_id"] = usageCtx.ContextID
+	}
+	if usageCtx.RootRequestID != "" {
+		attributes["root_request_id"] = usageCtx.RootRequestID
+	}
+	if usageCtx.ParentService != "" {
+		attributes["parent_service"] = usageCtx.ParentService
+	}
+	if usageCtx.Depth > 0 {
+		attributes["depth"] = strconv.Itoa(usageCtx.Depth)
+	}
+	return &usageCtx, attributes, nil
 }
 
 func (r *Reporter) Close(ctx context.Context) {
