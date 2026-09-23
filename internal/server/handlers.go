@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -24,9 +23,10 @@ import (
 // to its env-driven defaults, so self-hosted deployments keep working without
 // the router in front of them.
 const (
-	headerPIICheck       = "X-Tinfoil-Tool-PII-Check"
-	headerInjectionCheck = "X-Tinfoil-Tool-Injection-Check"
-	searchProviderError  = "search provider unavailable; retry after a short delay"
+	headerPIICheck         = "X-Tinfoil-Tool-PII-Check"
+	headerInjectionCheck   = "X-Tinfoil-Tool-Injection-Check"
+	searchProviderError    = "search provider unavailable; retry after a short delay"
+	piiFilterRequestsField = "pii_filter_requests"
 )
 
 // resolveSafetyFlag picks between a per-request header override and the
@@ -93,11 +93,12 @@ type SearchArgs struct {
 }
 
 type SearchResult struct {
-	Results       []search.Result          `json:"results"`
-	PIIChecked    bool                     `json:"pii_checked" jsonschema:"Whether the PII check completed for this query."`
-	PIIMasked     bool                     `json:"pii_masked" jsonschema:"Whether sensitive spans were removed. This does not mean the search was blocked."`
-	RedactedQuery *string                  `json:"redacted_query,omitempty" jsonschema:"Query after PII filtering. Present only when pii_checked is true. An empty or whitespace-only query is not sent to the search provider."`
-	PIIRedactions []safeguard.PIIRedaction `json:"pii_redactions" jsonschema:"Removed spans by category and zero-based Unicode code point offsets in the original query, with exclusive end offsets. Does not include removed text."`
+	PIIFilterRequests *int                     `json:"pii_filter_requests" jsonschema:"Billable privacy filter requests reported by the endpoint. Null means billing is unknown. Independent of whether PII was detected or search succeeded."`
+	Results           []search.Result          `json:"results"`
+	PIIChecked        bool                     `json:"pii_checked" jsonschema:"Whether the PII check completed for this query."`
+	PIIMasked         bool                     `json:"pii_masked" jsonschema:"Whether sensitive spans were removed. This does not mean the search was blocked."`
+	RedactedQuery     *string                  `json:"redacted_query,omitempty" jsonschema:"Query after PII filtering. Present only when pii_checked is true. An empty or whitespace-only query is not sent to the search provider."`
+	PIIRedactions     []safeguard.PIIRedaction `json:"pii_redactions" jsonschema:"Removed spans by category and zero-based Unicode code point offsets in the original query, with exclusive end offsets. Does not include removed text."`
 }
 
 type FetchArgs struct {
@@ -147,11 +148,16 @@ func newSearchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Requ
 			return nil, SearchResult{}, err
 		}
 
+		authorization := ""
+		if httpReq != nil {
+			authorization = httpReq.Header.Get("Authorization")
+		}
 		outcome, err := svc.Search(ctx, args.Query, tools.Options{
 			MaxResults:            args.MaxResults,
 			MaxContentCharacters:  args.MaxContentChars,
 			ContentMode:           contentMode,
 			PIICheckEnabled:       resolveSafetyFlag(httpReq, headerPIICheck, cfg.EnablePIICheck),
+			PIIAuthorization:      authorization,
 			InjectionCheckEnabled: resolveInjectionCheck(httpReq, cfg.EnableSearchInjectionCheck),
 			UserLocationCountry:   strings.ToUpper(strings.TrimSpace(args.UserLocationCountry)),
 			AllowedDomains:        normalizeDomains(args.AllowedDomains),
@@ -162,14 +168,19 @@ func newSearchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Requ
 			MaxAgeHours:           args.MaxAgeHours,
 		})
 		if err != nil {
-			return nil, SearchResult{}, errors.New(searchProviderError)
+			return &mcp.CallToolResult{
+				IsError:           true,
+				Content:           []mcp.Content{&mcp.TextContent{Text: searchProviderError}},
+				StructuredContent: map[string]any{piiFilterRequestsField: outcome.PIIFilterRequests},
+			}, SearchResult{}, nil
 		}
 		return nil, SearchResult{
-			Results:       outcome.Results,
-			PIIChecked:    outcome.PIIChecked,
-			PIIMasked:     outcome.PIIMasked,
-			RedactedQuery: outcome.RedactedQuery,
-			PIIRedactions: outcome.PIIRedactions,
+			PIIFilterRequests: outcome.PIIFilterRequests,
+			Results:           outcome.Results,
+			PIIChecked:        outcome.PIIChecked,
+			PIIMasked:         outcome.PIIMasked,
+			RedactedQuery:     outcome.RedactedQuery,
+			PIIRedactions:     outcome.PIIRedactions,
 		}, nil
 	}
 }

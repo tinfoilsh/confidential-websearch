@@ -136,37 +136,6 @@ func (r *Reporter) ReportSession(ctx context.Context, req *http.Request) error {
 	return nil
 }
 
-// ReportPIICheck records one privacy filter run. Unlike the session event it
-// is billed on every call regardless of the parent's BillCustomerRequest
-// flag: the filter is priced independently of web search, and the parent
-// request has not already paid for it. Each run gets a fresh event ID so
-// several searches inside one session are each charged.
-func (r *Reporter) ReportPIICheck(ctx context.Context, req *http.Request) error {
-	if r == nil || req == nil {
-		return nil
-	}
-	rc := contextFromRequest(req)
-	now := time.Now().UTC()
-
-	_, attributes, err := r.verifiedContext(req, rc, now)
-	if err != nil {
-		return err
-	}
-
-	r.client.AddEvent(usagereporting.Event{
-		RequestID:  uuid.NewString(),
-		OccurredAt: now,
-		APIKey:     bearerToken(rc.AuthHeader),
-		Operation: usagereporting.Operation{
-			Service: usagereporting.ServicePIIFilter,
-			Name:    usagereporting.OperationPIIFilterRedact,
-		},
-		CustomerRequests: 1,
-		Attributes:       attributes,
-	})
-	return nil
-}
-
 // verifiedContext parses and verifies the optional signed usage-context
 // header and returns it with the shared billing attributes. A header that is
 // present but invalid is an error rather than a fallthrough to direct billing.

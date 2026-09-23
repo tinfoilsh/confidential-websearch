@@ -48,6 +48,7 @@ type Options struct {
 	MaxContentCharacters int
 	ContentMode          search.ContentMode
 	PIICheckEnabled      bool
+	PIIAuthorization     string `json:"-"`
 	// InjectionCheckEnabled is the resolved decision for prompt-injection
 	// filtering on this request: nil means "use the operator default and let
 	// the service skip top-bucket domains", a non-nil pointer is an explicit
@@ -63,11 +64,12 @@ type Options struct {
 }
 
 type SearchOutcome struct {
-	Results       []search.Result
-	PIIChecked    bool
-	PIIMasked     bool
-	RedactedQuery *string
-	PIIRedactions []safeguard.PIIRedaction
+	PIIFilterRequests *int
+	Results           []search.Result
+	PIIChecked        bool
+	PIIMasked         bool
+	RedactedQuery     *string
+	PIIRedactions     []safeguard.PIIRedaction
 }
 
 type Service struct {
@@ -96,12 +98,14 @@ func (s *Service) Search(ctx context.Context, query string, opts Options) (Searc
 		return SearchOutcome{}, fmt.Errorf("query is required")
 	}
 
-	outcome := SearchOutcome{PIIRedactions: []safeguard.PIIRedaction{}}
+	noFilterRequests := 0
+	outcome := SearchOutcome{PIIRedactions: []safeguard.PIIRedaction{}, PIIFilterRequests: &noFilterRequests}
 	searchQuery := query
 	if opts.PIICheckEnabled && s.piiRedactor != nil {
-		redaction, err := s.piiRedactor.Redact(ctx, query)
+		redaction, err := s.piiRedactor.Redact(ctx, query, opts.PIIAuthorization)
+		outcome.PIIFilterRequests = redaction.BillableRequests
 		if err != nil {
-			return SearchOutcome{}, fmt.Errorf("PII check failed: %w", err)
+			return outcome, fmt.Errorf("PII check failed: %w", err)
 		}
 		searchQuery = redaction.Text
 		outcome.PIIChecked = true
@@ -145,7 +149,7 @@ func (s *Service) Search(ctx context.Context, query string, opts Options) (Searc
 		MaxAgeHours:          opts.MaxAgeHours,
 	})
 	if err != nil {
-		return SearchOutcome{}, err
+		return outcome, err
 	}
 	if len(results) > maxResults {
 		results = results[:maxResults]

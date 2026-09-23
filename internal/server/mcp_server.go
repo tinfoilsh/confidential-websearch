@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	log "github.com/sirupsen/logrus"
 
 	"github.com/tinfoilsh/confidential-websearch/internal/config"
 	"github.com/tinfoilsh/confidential-websearch/internal/tools"
@@ -31,12 +30,26 @@ func NewMCPServer(svc *tools.Service, cfg *config.Config, descriptions config.To
 	if err != nil {
 		panic(fmt.Sprintf("building fetch input schema: %v", err))
 	}
+	searchOutputSchema, err := jsonschema.For[SearchResult](nil)
+	if err != nil {
+		panic(fmt.Sprintf("building search output schema: %v", err))
+	}
+	searchHandler := instrumentTool("search", newSearchHandlerWithUsage(svc, cfg, reporter, request))
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "search",
-		Description: descriptions.Search,
-		InputSchema: searchSchema,
-	}, instrumentTool("search", newSearchHandlerWithUsage(svc, cfg, reporter, request)))
+		Name:         "search",
+		Description:  descriptions.Search,
+		InputSchema:  searchSchema,
+		OutputSchema: searchOutputSchema,
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args SearchArgs) (*mcp.CallToolResult, any, error) {
+		result, output, err := searchHandler(ctx, req, args)
+		if result != nil && result.IsError {
+			// Nil output preserves the receipt-only error without synthesizing
+			// successful-search fields or validating it as a successful result.
+			return result, nil, err
+		}
+		return result, output, err
+	})
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "fetch",
@@ -71,13 +84,7 @@ func newSearchHandlerWithUsage(svc *tools.Service, cfg *config.Config, reporter 
 		if err := reporter.ReportSession(ctx, httpReq); err != nil {
 			return nil, SearchResult{}, err
 		}
-		callResult, result, err := inner(ctx, req, args)
-		if err == nil && result.PIIChecked {
-			if reportErr := reporter.ReportPIICheck(ctx, httpReq); reportErr != nil {
-				log.WithError(reportErr).Error("failed to report privacy filter usage")
-			}
-		}
-		return callResult, result, err
+		return inner(ctx, req, args)
 	}
 }
 

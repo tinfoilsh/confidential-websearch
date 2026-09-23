@@ -66,7 +66,7 @@ func main() {
 	if localTestMode {
 		var piiRedactor safeguard.PIIRedactor
 		if cfg.PIIEnclave != "" {
-			pf, err := safeguard.NewPrivacyFilterClient(cfg.PIIEnclave, cfg.PIIRepo, cfg.TinfoilAPIKey)
+			pf, err := safeguard.NewPrivacyFilterClient(cfg.PIIEnclave, cfg.PIIRepo)
 			if err != nil {
 				log.Fatalf("Failed to create privacy filter PII client: %v", err)
 			}
@@ -97,7 +97,7 @@ func main() {
 		if cfg.PIIEnclave == "" {
 			log.Fatal("PII_ENCLAVE is required")
 		}
-		pf, err := safeguard.NewPrivacyFilterClient(cfg.PIIEnclave, cfg.PIIRepo, cfg.TinfoilAPIKey)
+		pf, err := safeguard.NewPrivacyFilterClient(cfg.PIIEnclave, cfg.PIIRepo)
 		if err != nil {
 			log.Fatalf("Failed to create privacy filter PII client: %v", err)
 		}

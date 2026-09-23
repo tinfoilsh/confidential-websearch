@@ -74,7 +74,7 @@ type stubPIIRedactor struct {
 	err        error
 }
 
-func (s *stubPIIRedactor) Redact(_ context.Context, _ string) (safeguard.PIIRedactionResult, error) {
+func (s *stubPIIRedactor) Redact(_ context.Context, _ string, _ string) (safeguard.PIIRedactionResult, error) {
 	s.called = true
 	return safeguard.PIIRedactionResult{Text: s.redacted, Redactions: s.redactions}, s.err
 }
