@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/tinfoilsh/confidential-websearch/config"
+	"github.com/tinfoilsh/confidential-websearch/internal/config"
 )
 
 func TestNewUsageReporterSkipsSecretsInLocalTestMode(t *testing.T) {

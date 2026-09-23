@@ -18,13 +18,15 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/tinfoilsh/tinfoil-go"
 
-	"github.com/tinfoilsh/confidential-websearch/config"
-	"github.com/tinfoilsh/confidential-websearch/domainrank"
-	"github.com/tinfoilsh/confidential-websearch/fetch"
-	"github.com/tinfoilsh/confidential-websearch/safeguard"
-	"github.com/tinfoilsh/confidential-websearch/search"
-	"github.com/tinfoilsh/confidential-websearch/tools"
-	"github.com/tinfoilsh/confidential-websearch/usage"
+	"github.com/tinfoilsh/confidential-websearch/internal/config"
+	"github.com/tinfoilsh/confidential-websearch/internal/domainrank"
+	"github.com/tinfoilsh/confidential-websearch/internal/fetch"
+	"github.com/tinfoilsh/confidential-websearch/internal/localtest"
+	"github.com/tinfoilsh/confidential-websearch/internal/safeguard"
+	"github.com/tinfoilsh/confidential-websearch/internal/search"
+	"github.com/tinfoilsh/confidential-websearch/internal/server"
+	"github.com/tinfoilsh/confidential-websearch/internal/tools"
+	"github.com/tinfoilsh/confidential-websearch/internal/usage"
 
 	usagereporting "github.com/tinfoilsh/usage-reporting-go"
 )
@@ -35,7 +37,7 @@ var (
 )
 
 func main() {
-	localTestMode := isLocalTestMode()
+	localTestMode := localtest.Enabled()
 	configureLogging(localTestMode)
 	flag.Parse()
 	if localTestMode && *verbose {
@@ -58,7 +60,7 @@ func main() {
 	var (
 		svc          *tools.Service
 		searcherName string
-		recorder     *LocalCallRecorder
+		recorder     *localtest.CallRecorder
 	)
 
 	if localTestMode {
@@ -70,7 +72,7 @@ func main() {
 			}
 			piiRedactor = pf
 		}
-		svc, recorder = newLocalTestService(piiRedactor)
+		svc, recorder = localtest.NewService(piiRedactor)
 		searcherName = "local-test"
 	} else {
 		if cfg.TinfoilAPIKey == "" {
@@ -120,7 +122,7 @@ func main() {
 	}
 
 	handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
-		return newMCPServer(svc, cfg, toolDescriptions, reporter, r)
+		return server.NewMCPServer(svc, cfg, toolDescriptions, reporter, version, r)
 	}, &mcp.StreamableHTTPOptions{Stateless: true})
 
 	mux := http.NewServeMux()

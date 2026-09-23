@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"context"
@@ -13,11 +13,11 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/tinfoilsh/confidential-websearch/config"
-	"github.com/tinfoilsh/confidential-websearch/fetch"
-	"github.com/tinfoilsh/confidential-websearch/safeguard"
-	"github.com/tinfoilsh/confidential-websearch/search"
-	"github.com/tinfoilsh/confidential-websearch/tools"
+	"github.com/tinfoilsh/confidential-websearch/internal/config"
+	"github.com/tinfoilsh/confidential-websearch/internal/fetch"
+	"github.com/tinfoilsh/confidential-websearch/internal/safeguard"
+	"github.com/tinfoilsh/confidential-websearch/internal/search"
+	"github.com/tinfoilsh/confidential-websearch/internal/tools"
 )
 
 type mockSearchProvider struct {
@@ -795,7 +795,7 @@ func TestMCPHTTP_PIIRedactionMetadata(t *testing.T) {
 			}
 			svc := tools.NewService(searcher, nil, nil, configured, nil)
 			handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
-				return newMCPServer(svc, &config.Config{EnablePIICheck: tc.fallback}, config.ToolDescriptions{}, nil, r)
+				return NewMCPServer(svc, &config.Config{EnablePIICheck: tc.fallback}, config.ToolDescriptions{}, nil, "test", r)
 			}, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
 			body, err := json.Marshal(map[string]any{
 				"jsonrpc": "2.0", "id": 1, "method": "tools/call",

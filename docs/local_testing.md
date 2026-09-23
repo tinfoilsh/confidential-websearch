@@ -10,7 +10,7 @@ router guide focuses on model-facing behavior.
 
 ## 1. Choose a mode
 
-Server logging is enabled only when `LOCAL_TEST_MODE=1`. Add `-v` to `go run .`
+Server logging is enabled only when `LOCAL_TEST_MODE=1`. Add `-v` to `go run ./cmd/websearch-mcp`
 for debug logs in fixture mode. In all other modes, including real-provider
 mode, application and dependency logs are discarded even with `-v`; fatal
 errors still terminate the process with a nonzero exit code.
@@ -22,7 +22,7 @@ Use this when you want deterministic local behavior without calling Exa.
 ```bash
 LOCAL_TEST_MODE=1 \
 LISTEN_ADDR=127.0.0.1:8091 \
-go run .
+go run ./cmd/websearch-mcp
 ```
 
 ### Real-provider mode
@@ -33,7 +33,7 @@ repo has a local `.env`, load it first.
 ```bash
 set -a && . ./.env && set +a
 LISTEN_ADDR=127.0.0.1:8091 \
-go run .
+go run ./cmd/websearch-mcp
 ```
 
 ## 2. Smoke test the HTTP surface
