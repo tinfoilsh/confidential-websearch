@@ -1,6 +1,6 @@
 .env 
 .idea/
-websearch-mcp
+/websearch-mcp
 ext.yml
 tuf-repo-cdn.sigstore.dev.json
 evals/.env
