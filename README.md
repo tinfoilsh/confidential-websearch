@@ -24,7 +24,7 @@ export EXA_API_KEY="your-exa-api-key"
 export USAGE_REPORTER_SECRET="your-usage-reporter-secret"
 export USAGE_CONTEXT_SECRET="your-usage-context-secret"
 
-go run .
+go run ./cmd/websearch-mcp
 ```
 
 Set `LOCAL_TEST_MODE=1` to serve deterministic fixtures instead of calling Exa; add `-v` for debug logs. See [`local_testing.md`](./local_testing.md) for the full runbook, including the eval harness and running behind the model router.
