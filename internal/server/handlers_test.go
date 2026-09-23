@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"context"
@@ -795,7 +795,7 @@ func TestMCPHTTP_PIIRedactionMetadata(t *testing.T) {
 			}
 			svc := tools.NewService(searcher, nil, nil, configured, nil)
 			handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
-				return newMCPServer(svc, &config.Config{EnablePIICheck: tc.fallback}, config.ToolDescriptions{}, nil, r)
+				return NewMCPServer(svc, &config.Config{EnablePIICheck: tc.fallback}, config.ToolDescriptions{}, nil, "test", r)
 			}, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
 			body, err := json.Marshal(map[string]any{
 				"jsonrpc": "2.0", "id": 1, "method": "tools/call",

@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"context"
@@ -13,7 +13,10 @@ import (
 	"github.com/tinfoilsh/confidential-websearch/internal/usage"
 )
 
-func newMCPServer(svc *tools.Service, cfg *config.Config, descriptions config.ToolDescriptions, reporter *usage.Reporter, request *http.Request) *mcp.Server {
+// NewMCPServer builds an MCP server exposing the search and fetch tools for a
+// single HTTP request. The request is captured so per-request safety headers
+// and usage context can be read by the tool handlers.
+func NewMCPServer(svc *tools.Service, cfg *config.Config, descriptions config.ToolDescriptions, reporter *usage.Reporter, version string, request *http.Request) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "confidential-websearch",
 		Version: version,
