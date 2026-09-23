@@ -13,11 +13,11 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/tinfoilsh/confidential-websearch/config"
-	"github.com/tinfoilsh/confidential-websearch/fetch"
-	"github.com/tinfoilsh/confidential-websearch/safeguard"
-	"github.com/tinfoilsh/confidential-websearch/search"
-	"github.com/tinfoilsh/confidential-websearch/tools"
+	"github.com/tinfoilsh/confidential-websearch/internal/config"
+	"github.com/tinfoilsh/confidential-websearch/internal/fetch"
+	"github.com/tinfoilsh/confidential-websearch/internal/safeguard"
+	"github.com/tinfoilsh/confidential-websearch/internal/search"
+	"github.com/tinfoilsh/confidential-websearch/internal/tools"
 )
 
 type mockSearchProvider struct {

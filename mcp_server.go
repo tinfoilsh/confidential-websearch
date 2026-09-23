@@ -8,9 +8,9 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/tinfoilsh/confidential-websearch/config"
-	"github.com/tinfoilsh/confidential-websearch/tools"
-	"github.com/tinfoilsh/confidential-websearch/usage"
+	"github.com/tinfoilsh/confidential-websearch/internal/config"
+	"github.com/tinfoilsh/confidential-websearch/internal/tools"
+	"github.com/tinfoilsh/confidential-websearch/internal/usage"
 )
 
 func newMCPServer(svc *tools.Service, cfg *config.Config, descriptions config.ToolDescriptions, reporter *usage.Reporter, request *http.Request) *mcp.Server {

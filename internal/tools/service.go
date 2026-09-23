@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/tinfoilsh/confidential-websearch/domainrank"
-	"github.com/tinfoilsh/confidential-websearch/fetch"
-	"github.com/tinfoilsh/confidential-websearch/safeguard"
-	"github.com/tinfoilsh/confidential-websearch/search"
+	"github.com/tinfoilsh/confidential-websearch/internal/domainrank"
+	"github.com/tinfoilsh/confidential-websearch/internal/fetch"
+	"github.com/tinfoilsh/confidential-websearch/internal/safeguard"
+	"github.com/tinfoilsh/confidential-websearch/internal/search"
 )
 
 const (

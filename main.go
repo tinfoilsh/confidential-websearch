@@ -18,13 +18,13 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/tinfoilsh/tinfoil-go"
 
-	"github.com/tinfoilsh/confidential-websearch/config"
-	"github.com/tinfoilsh/confidential-websearch/domainrank"
-	"github.com/tinfoilsh/confidential-websearch/fetch"
-	"github.com/tinfoilsh/confidential-websearch/safeguard"
-	"github.com/tinfoilsh/confidential-websearch/search"
-	"github.com/tinfoilsh/confidential-websearch/tools"
-	"github.com/tinfoilsh/confidential-websearch/usage"
+	"github.com/tinfoilsh/confidential-websearch/internal/config"
+	"github.com/tinfoilsh/confidential-websearch/internal/domainrank"
+	"github.com/tinfoilsh/confidential-websearch/internal/fetch"
+	"github.com/tinfoilsh/confidential-websearch/internal/safeguard"
+	"github.com/tinfoilsh/confidential-websearch/internal/search"
+	"github.com/tinfoilsh/confidential-websearch/internal/tools"
+	"github.com/tinfoilsh/confidential-websearch/internal/usage"
 
 	usagereporting "github.com/tinfoilsh/usage-reporting-go"
 )
