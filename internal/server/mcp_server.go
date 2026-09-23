@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	log "github.com/sirupsen/logrus"
 
 	"github.com/tinfoilsh/confidential-websearch/internal/config"
 	"github.com/tinfoilsh/confidential-websearch/internal/tools"
@@ -70,7 +71,13 @@ func newSearchHandlerWithUsage(svc *tools.Service, cfg *config.Config, reporter 
 		if err := reporter.ReportSession(ctx, httpReq); err != nil {
 			return nil, SearchResult{}, err
 		}
-		return inner(ctx, req, args)
+		callResult, result, err := inner(ctx, req, args)
+		if err == nil && result.PIIChecked {
+			if reportErr := reporter.ReportPIICheck(ctx, httpReq); reportErr != nil {
+				log.WithError(reportErr).Error("failed to report privacy filter usage")
+			}
+		}
+		return callResult, result, err
 	}
 }
 
