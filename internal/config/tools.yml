@@ -9,6 +9,10 @@ tools:
       point offsets in the original query: start inclusive, end exclusive).
       Removed text is not repeated. Masking does not block the search; an
       empty remaining query skips the provider and returns no results.
+      pii_filter_requests reports endpoint-confirmed billable filter requests
+      (0 or 1); null means the billing outcome is unknown. This field also
+      accompanies tool errors after a filter attempt and is independent of
+      whether PII was found or the subsequent search succeeded.
       Accepted arguments:
       query (required, string); max_results (int, 1-30);
       user_location_country (ISO country code); allowed_domains ([]string);

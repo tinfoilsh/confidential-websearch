@@ -88,6 +88,9 @@ func TestMCPPreservesEndpointBillingOnSearchFailure(t *testing.T) {
 			if !tc.disabled && filter.authorization != "Bearer tk_customer" {
 				t.Fatal("customer credential not forwarded")
 			}
+			if tc.disabled && filter.authorization != "" {
+				t.Fatal("disabled privacy filter was invoked")
+			}
 			if strings.Contains(response.Body.String(), "private") || strings.Contains(response.Body.String(), "tk_customer") {
 				t.Fatal("response leaked credentials or backend errors")
 			}
