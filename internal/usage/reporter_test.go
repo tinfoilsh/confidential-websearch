@@ -100,6 +100,74 @@ func TestReportSessionDefersToParentWhenContextSetsBillCustomerRequestFalse(t *t
 	}
 }
 
+func TestReportPIICheckBillsEveryRunRegardlessOfParentContext(t *testing.T) {
+	reporter, batches, closeServer := newTestReporter(t, "secret")
+	defer closeServer()
+	defer reporter.Close(context.Background())
+
+	req := newUsageRequest("request-1")
+	if err := usagereporting.SetHeaders(req.Header, usagereporting.Context{
+		ContextID:           "context-1",
+		RootRequestID:       "root-request-1",
+		ParentService:       usagereporting.ServiceRouter,
+		APIKeyHash:          usagereporting.HashAPIKey("tk_test"),
+		Depth:               1,
+		BillCustomerRequest: false,
+		IssuedAt:            time.Now().UTC(),
+	}, "secret"); err != nil {
+		t.Fatalf("set usage context headers: %v", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		if err := reporter.ReportPIICheck(context.Background(), req); err != nil {
+			t.Fatalf("report pii check %d: %v", i, err)
+		}
+	}
+	reporter.client.Flush(context.Background())
+
+	batch := singleBatch(t, batches)
+	if len(batch.Events) != 2 {
+		t.Fatalf("expected one event per privacy filter run, got %d", len(batch.Events))
+	}
+	if batch.Events[0].RequestID == batch.Events[1].RequestID {
+		t.Fatal("privacy filter runs must not share a request ID, or they would be deduplicated")
+	}
+	for _, event := range batch.Events {
+		if event.Operation.Service != usagereporting.ServicePIIFilter || event.Operation.Name != usagereporting.OperationPIIFilterRedact {
+			t.Fatalf("operation mismatch: got %+v", event.Operation)
+		}
+		if event.CustomerRequests != 1 {
+			t.Fatalf("privacy filter must bill even when the parent set BillCustomerRequest=false, got %d", event.CustomerRequests)
+		}
+		if got := event.Attributes["root_request_id"]; got != "root-request-1" {
+			t.Fatalf("root request attribute mismatch: got %q", got)
+		}
+		if got := event.Attributes["parent_service"]; got != usagereporting.ServiceRouter {
+			t.Fatalf("parent service attribute mismatch: got %q", got)
+		}
+	}
+}
+
+func TestReportPIICheckRejectsInvalidUsageContext(t *testing.T) {
+	reporter, batches, closeServer := newTestReporter(t, "secret")
+	defer closeServer()
+	defer reporter.Close(context.Background())
+
+	req := newUsageRequest("request-1")
+	if err := usagereporting.SetHeaders(req.Header, usagereporting.Context{
+		APIKeyHash: usagereporting.HashAPIKey("tk_test"),
+		IssuedAt:   time.Now().UTC(),
+	}, "wrong-secret"); err != nil {
+		t.Fatalf("set usage context headers: %v", err)
+	}
+
+	if err := reporter.ReportPIICheck(context.Background(), req); err == nil {
+		t.Fatal("expected a tampered usage context to be rejected")
+	}
+	reporter.client.Flush(context.Background())
+	expectNoBatch(t, batches)
+}
+
 func TestReportSessionRejectsInvalidUsageContext(t *testing.T) {
 	reporter, batches, closeServer := newTestReporter(t, "secret")
 	defer closeServer()
