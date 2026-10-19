@@ -27,7 +27,7 @@ export USAGE_CONTEXT_SECRET="your-usage-context-secret"
 go run ./cmd/websearch-mcp
 ```
 
-Set `LOCAL_TEST_MODE=1` to serve deterministic fixtures instead of calling Exa; add `-v` for debug logs. See [`docs/local_testing.md`](./docs/local_testing.md) for the full runbook, including the eval harness and running behind the model router.
+Set `LOCAL_TEST_MODE=1` to serve deterministic fixtures instead of calling Exa; add `-v` for debug logs. See [DEVELOPMENT.md](DEVELOPMENT.md) for tests, probes, and the eval harness.
 
 ## Architecture Overview
 
