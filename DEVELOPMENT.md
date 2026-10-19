@@ -6,10 +6,10 @@ Run the unit tests:
 go test -race ./...
 ```
 
-Run the integration tests against Exa and Tinfoil:
+Run the Exa integration tests:
 
 ```bash
-EXA_API_KEY=... TINFOIL_API_KEY=... go test -tags=integration -timeout 10m ./...
+EXA_API_KEY=... go test -tags=integration -timeout 10m ./...
 ```
 
 Start the server with deterministic fixtures instead of Exa. Logs are enabled only in this mode; add `-v` for debug logs:
