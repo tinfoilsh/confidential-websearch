@@ -22,7 +22,7 @@ Start the server against Exa with secrets from `.env` (see [.env.example](.env.e
 
 ```bash
 set -a && . ./.env && set +a
-PII_ENCLAVE=pii-filter.tinfoil.sh LISTEN_ADDR=127.0.0.1:8091 go run ./cmd/websearch-mcp
+LISTEN_ADDR=127.0.0.1:8091 go run ./cmd/websearch-mcp
 ```
 
 Probe the health check and the `search` and `fetch` tools (fixture URLs live under `https://local.test/cats/`):
