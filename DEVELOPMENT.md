@@ -18,11 +18,11 @@ Start the server with deterministic fixtures instead of Exa. Logs are enabled on
 LOCAL_TEST_MODE=1 LISTEN_ADDR=127.0.0.1:8091 go run ./cmd/websearch-mcp
 ```
 
-Start the server against Exa with secrets from `.env` (see [.env.example](.env.example)):
+Start the server against Exa with secrets from `.env` (see [.env.example](.env.example)) and the production privacy filter:
 
 ```bash
 set -a && . ./.env && set +a
-LISTEN_ADDR=127.0.0.1:8091 go run ./cmd/websearch-mcp
+PII_ENCLAVE=pii-filter.tinfoil.sh LISTEN_ADDR=127.0.0.1:8091 go run ./cmd/websearch-mcp
 ```
 
 Probe the health check and the `search` and `fetch` tools (fixture URLs live under `https://local.test/cats/`):
