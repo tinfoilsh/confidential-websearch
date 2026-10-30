@@ -78,7 +78,10 @@ func main() {
 		if cfg.TinfoilAPIKey == "" {
 			log.Fatal("TINFOIL_API_KEY is required")
 		}
-		client, err := tinfoil.NewClient(option.WithAPIKey(cfg.TinfoilAPIKey))
+		client, err := tinfoil.NewClientWithOptions(
+			tinfoil.WithTransport(tinfoil.TransportTLS),
+			tinfoil.WithOpenAIOptions(option.WithAPIKey(cfg.TinfoilAPIKey)),
+		)
 		if err != nil {
 			log.Fatalf("Failed to create Tinfoil client: %v", err)
 		}
