@@ -64,7 +64,7 @@ type mockPIIRedactor struct {
 	calls      int
 }
 
-func (m *mockPIIRedactor) Redact(_ context.Context, content string, _ string) (safeguard.PIIRedactionResult, error) {
+func (m *mockPIIRedactor) Redact(_ context.Context, content string, _ string, _ http.Header) (safeguard.PIIRedactionResult, error) {
 	m.calls++
 	if m.err != nil {
 		return safeguard.PIIRedactionResult{}, m.err

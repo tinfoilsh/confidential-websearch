@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -48,7 +49,8 @@ type Options struct {
 	MaxContentCharacters int
 	ContentMode          search.ContentMode
 	PIICheckEnabled      bool
-	PIIAuthorization     string `json:"-"`
+	PIIAuthorization     string      `json:"-"`
+	PIIUsageContext      http.Header `json:"-"`
 	// InjectionCheckEnabled is the resolved decision for prompt-injection
 	// filtering on this request: nil means "use the operator default and let
 	// the service skip top-bucket domains", a non-nil pointer is an explicit
@@ -102,7 +104,7 @@ func (s *Service) Search(ctx context.Context, query string, opts Options) (Searc
 	outcome := SearchOutcome{PIIRedactions: []safeguard.PIIRedaction{}, PIIFilterRequests: &noFilterRequests}
 	searchQuery := query
 	if opts.PIICheckEnabled && s.piiRedactor != nil {
-		redaction, err := s.piiRedactor.Redact(ctx, query, opts.PIIAuthorization)
+		redaction, err := s.piiRedactor.Redact(ctx, query, opts.PIIAuthorization, opts.PIIUsageContext)
 		outcome.PIIFilterRequests = redaction.BillableRequests
 		if err != nil {
 			return outcome, fmt.Errorf("PII check failed: %w", err)

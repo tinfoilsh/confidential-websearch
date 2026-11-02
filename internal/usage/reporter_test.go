@@ -286,6 +286,77 @@ func TestReportSessionBillsDirectCallerPerRequestDespiteRequestID(t *testing.T) 
 	}
 }
 
+func TestChildUsageContextNestsUnderWebsearch(t *testing.T) {
+	reporter, _, closeServer := newTestReporter(t, "secret")
+	defer closeServer()
+	defer reporter.Close(context.Background())
+
+	for _, tc := range []struct {
+		name     string
+		parent   usagereporting.Context
+		wantRoot string
+	}{
+		{name: "router session", parent: usagereporting.Context{ContextID: "session-1", RootRequestID: "root-request-1", ParentService: usagereporting.ServiceRouter, Depth: 1, BillCustomerRequest: true}, wantRoot: "root-request-1"},
+		{name: "parent without a root request", parent: usagereporting.Context{ContextID: "session-1", ParentService: "harness", Depth: 1}, wantRoot: "session-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := newUsageRequest("request-1")
+			parent := tc.parent
+			parent.APIKeyHash = usagereporting.HashAPIKey("tk_test")
+			parent.IssuedAt = time.Now().UTC()
+			if err := usagereporting.SetHeaders(req.Header, parent, "secret"); err != nil {
+				t.Fatalf("set usage context headers: %v", err)
+			}
+
+			header, err := reporter.ChildUsageContext(req)
+			if err != nil {
+				t.Fatalf("child usage context: %v", err)
+			}
+			child, signed, err := usagereporting.FromHeaders(header, "secret", time.Now(), usageContextMaxSkew)
+			if !signed || err != nil {
+				t.Fatalf("child usage context does not verify: signed=%v err=%v", signed, err)
+			}
+			want := usagereporting.Context{
+				ContextID:     "session-1",
+				RootRequestID: tc.wantRoot,
+				ParentService: usagereporting.ServiceWebsearch,
+				APIKeyHash:    usagereporting.HashAPIKey("tk_test"),
+				Depth:         2,
+				IssuedAt:      child.IssuedAt,
+			}
+			if child != want {
+				t.Fatalf("child usage context = %+v, want %+v", child, want)
+			}
+		})
+	}
+}
+
+func TestChildUsageContextRequiresVerifiedParent(t *testing.T) {
+	reporter, _, closeServer := newTestReporter(t, "secret")
+	defer closeServer()
+	defer reporter.Close(context.Background())
+
+	header, err := reporter.ChildUsageContext(newUsageRequest("request-1"))
+	if err != nil || header != nil {
+		t.Fatalf("direct call got a child usage context: %v, %v", header, err)
+	}
+
+	forged := newUsageRequest("request-1")
+	if err := usagereporting.SetHeaders(forged.Header, usagereporting.Context{
+		ContextID:     "session-1",
+		ParentService: usagereporting.ServiceRouter,
+		APIKeyHash:    usagereporting.HashAPIKey("tk_test"),
+		Depth:         1,
+		IssuedAt:      time.Now().UTC(),
+	}, "wrong-secret"); err != nil {
+		t.Fatalf("set usage context headers: %v", err)
+	}
+	header, err = reporter.ChildUsageContext(forged)
+	if err == nil || header != nil {
+		t.Fatalf("forged parent got a child usage context: %v, %v", header, err)
+	}
+}
+
 func newTestReporter(t *testing.T, secret string) (*Reporter, <-chan usagereporting.Batch, func()) {
 	t.Helper()
 	batches := make(chan usagereporting.Batch, 4)

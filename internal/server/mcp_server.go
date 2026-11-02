@@ -78,13 +78,21 @@ func permissiveSchema[T any]() (*jsonschema.Schema, error) {
 	return schema, nil
 }
 
+// piiUsageContextKey carries the privacy filter's usage context from the
+// usage wrapper to the search handler it wraps.
+type piiUsageContextKey struct{}
+
 func newSearchHandlerWithUsage(svc *tools.Service, cfg *config.Config, reporter *usage.Reporter, httpReq *http.Request) mcp.ToolHandlerFor[SearchArgs, SearchResult] {
 	inner := newSearchHandler(svc, cfg, httpReq)
 	return func(ctx context.Context, req *mcp.CallToolRequest, args SearchArgs) (*mcp.CallToolResult, SearchResult, error) {
 		if err := reporter.ReportSession(ctx, httpReq); err != nil {
 			return nil, SearchResult{}, err
 		}
-		return inner(ctx, req, args)
+		piiUsageContext, err := reporter.ChildUsageContext(httpReq)
+		if err != nil {
+			return nil, SearchResult{}, err
+		}
+		return inner(context.WithValue(ctx, piiUsageContextKey{}, piiUsageContext), req, args)
 	}
 }
 
