@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/http"
@@ -33,7 +34,8 @@ type Reporter struct {
 // reporterSecret authenticates outbound usage batches to the controlplane,
 // while usageContextSecret verifies inbound signed billing context attached
 // by upstream services (e.g. the model router) so this service knows whether
-// the call has already been counted as a customer-billable request.
+// the call has already been counted as a customer-billable request, and signs
+// the context this service passes on to the metered services it calls.
 func NewReporter(endpoint, reporterID, reporterSecret, usageContextSecret string) (*Reporter, error) {
 	if err := validateReporterEndpoint(endpoint); err != nil {
 		return nil, err
@@ -174,6 +176,35 @@ func (r *Reporter) verifiedContext(req *http.Request, rc requestContext, now tim
 		attributes["depth"] = strconv.Itoa(usageCtx.Depth)
 	}
 	return &usageCtx, attributes, nil
+}
+
+// ChildUsageContext returns the signed usage-context headers for a metered
+// service websearch calls while serving req. A call that arrived inside a
+// verified usage context passes it on one level deeper, nested under
+// websearch and counting no customer request of its own, since the parent
+// has already decided whether the call is one. A call without one gets none,
+// so the downstream service bills it as it would a direct call.
+func (r *Reporter) ChildUsageContext(req *http.Request) (http.Header, error) {
+	if r == nil || req == nil {
+		return nil, nil
+	}
+	now := time.Now().UTC()
+	parent, _, err := r.verifiedContext(req, contextFromRequest(req), now)
+	if err != nil || parent == nil {
+		return nil, err
+	}
+	header := make(http.Header)
+	if err := usagereporting.SetHeaders(header, usagereporting.Context{
+		ContextID:     parent.ContextID,
+		RootRequestID: cmp.Or(parent.RootRequestID, parent.ContextID),
+		ParentService: usagereporting.ServiceWebsearch,
+		APIKeyHash:    parent.APIKeyHash,
+		Depth:         parent.Depth + 1,
+		IssuedAt:      now,
+	}, r.usageContextSecret); err != nil {
+		return nil, fmt.Errorf("sign child usage context: %w", err)
+	}
+	return header, nil
 }
 
 func (r *Reporter) Close(ctx context.Context) {

@@ -152,12 +152,14 @@ func newSearchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Requ
 		if httpReq != nil {
 			authorization = httpReq.Header.Get("Authorization")
 		}
+		piiUsageContext, _ := ctx.Value(piiUsageContextKey{}).(http.Header)
 		outcome, err := svc.Search(ctx, args.Query, tools.Options{
 			MaxResults:            args.MaxResults,
 			MaxContentCharacters:  args.MaxContentChars,
 			ContentMode:           contentMode,
 			PIICheckEnabled:       resolveSafetyFlag(httpReq, headerPIICheck, cfg.EnablePIICheck),
 			PIIAuthorization:      authorization,
+			PIIUsageContext:       piiUsageContext,
 			InjectionCheckEnabled: resolveInjectionCheck(httpReq, cfg.EnableSearchInjectionCheck),
 			UserLocationCountry:   strings.ToUpper(strings.TrimSpace(args.UserLocationCountry)),
 			AllowedDomains:        normalizeDomains(args.AllowedDomains),

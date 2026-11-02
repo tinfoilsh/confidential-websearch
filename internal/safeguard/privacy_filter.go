@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"sort"
 	"strings"
@@ -39,7 +40,7 @@ var pfPersonPairRedact = map[string]bool{
 }
 
 type PIIRedactor interface {
-	Redact(ctx context.Context, content, authorization string) (PIIRedactionResult, error)
+	Redact(ctx context.Context, content, authorization string, usageContext http.Header) (PIIRedactionResult, error)
 }
 
 type PIIRedactionResult struct {
@@ -120,9 +121,10 @@ func (c *PrivacyFilterClient) currentHTTPClient() *http.Client {
 }
 
 // Redact sends the content to /redact and masks spans selected by the
-// deterministic PII policy in code.
-func (c *PrivacyFilterClient) Redact(ctx context.Context, content, authorization string) (PIIRedactionResult, error) {
-	spans, billable, err := c.redact(ctx, content, authorization)
+// deterministic PII policy in code. usageContext holds the signed
+// usage-context headers, if any, that the filter bills the call under.
+func (c *PrivacyFilterClient) Redact(ctx context.Context, content, authorization string, usageContext http.Header) (PIIRedactionResult, error) {
+	spans, billable, err := c.redact(ctx, content, authorization, usageContext)
 	if err != nil {
 		return PIIRedactionResult{BillableRequests: billable}, err
 	}
@@ -132,7 +134,7 @@ func (c *PrivacyFilterClient) Redact(ctx context.Context, content, authorization
 }
 
 // redact calls the privacy filter /redact endpoint and returns the detected spans.
-func (c *PrivacyFilterClient) redact(ctx context.Context, text, authorization string) ([]pfSpan, *int, error) {
+func (c *PrivacyFilterClient) redact(ctx context.Context, text, authorization string, usageContext http.Header) ([]pfSpan, *int, error) {
 	unbilled := 0
 	parts := strings.Fields(authorization)
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
@@ -153,6 +155,7 @@ func (c *PrivacyFilterClient) redact(ctx context.Context, text, authorization st
 	}
 	req.Header.Set("Authorization", authorization)
 	req.Header.Set("Content-Type", "application/json")
+	maps.Copy(req.Header, usageContext)
 
 	resp, err := c.currentHTTPClient().Do(req)
 	if err != nil {
@@ -169,6 +172,7 @@ func (c *PrivacyFilterClient) redact(ctx context.Context, text, authorization st
 				fmt.Sprintf("https://%s/redact", c.enclave), bytes.NewReader(body))
 			req.Header.Set("Authorization", authorization)
 			req.Header.Set("Content-Type", "application/json")
+			maps.Copy(req.Header, usageContext)
 			resp, err = retryClient.Do(req)
 		}
 		if err != nil {

@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	usagereporting "github.com/tinfoilsh/usage-reporting-go"
 )
 
 func TestPrivacyFilterCustomerAttributionAndReceipt(t *testing.T) {
@@ -33,7 +35,7 @@ func TestPrivacyFilterCustomerAttributionAndReceipt(t *testing.T) {
 				}
 				return &http.Response{StatusCode: tc.status, Header: http.Header{billableRequestsHeader: []string{tc.header}}, Body: io.NopCloser(strings.NewReader(tc.body))}, nil
 			})})
-			got, err := client.Redact(context.Background(), "hiking", "Bearer tk_customer")
+			got, err := client.Redact(context.Background(), "hiking", "Bearer tk_customer", nil)
 			if (err != nil) != tc.wantError {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -50,6 +52,29 @@ func TestPrivacyFilterCustomerAttributionAndReceipt(t *testing.T) {
 	}
 }
 
+func TestPrivacyFilterSendsUsageContext(t *testing.T) {
+	usageContext := http.Header{
+		usagereporting.HeaderContext:               []string{"encoded-context"},
+		usagereporting.HeaderUsageContextSignature: []string{"signature"},
+	}
+	for _, sent := range []http.Header{usageContext, nil} {
+		var got http.Header
+		client := &PrivacyFilterClient{enclave: "privacy.example.com"}
+		client.httpClient.Store(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			got = req.Header.Clone()
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{billableRequestsHeader: []string{"1"}}, Body: io.NopCloser(strings.NewReader(`{"detected_spans":[]}`))}, nil
+		})})
+		if _, err := client.Redact(context.Background(), "hiking", "Bearer tk_customer", sent); err != nil {
+			t.Fatal(err)
+		}
+		for key := range usageContext {
+			if got.Get(key) != sent.Get(key) {
+				t.Fatalf("%s = %q, want %q", key, got.Get(key), sent.Get(key))
+			}
+		}
+	}
+}
+
 func TestPrivacyFilterDoesNotFallbackToServiceCredential(t *testing.T) {
 	client := &PrivacyFilterClient{enclave: "privacy.example.com"}
 	called := false
@@ -57,11 +82,11 @@ func TestPrivacyFilterDoesNotFallbackToServiceCredential(t *testing.T) {
 		called = true
 		return nil, errors.New("connection lost")
 	})})
-	result, err := client.Redact(context.Background(), "query", "")
+	result, err := client.Redact(context.Background(), "query", "", nil)
 	if err == nil || called || result.BillableRequests == nil || *result.BillableRequests != 0 {
 		t.Fatal("missing credential was not rejected before inference")
 	}
-	result, err = client.Redact(context.Background(), "query", "Bearer tk_customer")
+	result, err = client.Redact(context.Background(), "query", "Bearer tk_customer", nil)
 	if err == nil || result.BillableRequests != nil {
 		t.Fatal("network failure must leave billing unknown")
 	}
