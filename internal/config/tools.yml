@@ -26,5 +26,12 @@ tools:
     description: >-
       Fetch one or more web pages and return the rendered markdown content
       for deeper reading after search. Accepted arguments: urls (required,
-      []string, max 20); allowed_domains ([]string). Unknown arguments are
-      silently ignored.
+      []string, max 20); allowed_domains ([]string); extras (object with
+      optional per-page counts: links, imageLinks, richLinks, richImageLinks,
+      codeBlocks; each 0-1000, default 0). Rich links include anchor text,
+      rich images include alt text when available, and code blocks include
+      text and source (annotated language). Successful pages include title,
+      author, published_date, image, and favicon when available. Image fields
+      contain URLs, not image data or OCR. Screening rejects pages whose body
+      and serialized metadata exceed 64 KiB. Upstream responses above 8 MiB
+      per batch are rejected. Unknown arguments are silently ignored.

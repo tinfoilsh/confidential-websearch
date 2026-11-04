@@ -3,8 +3,11 @@ package fetch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -41,6 +44,9 @@ func TestFetchURLs_Success(t *testing.T) {
 		if !req.Text {
 			t.Error("expected text=true in request")
 		}
+		if req.Extras != nil {
+			t.Error("extras must be omitted by default")
+		}
 		if req.MaxAgeHours != exaMaxAgeHours {
 			t.Errorf("expected maxAgeHours=%d, got %d", exaMaxAgeHours, req.MaxAgeHours)
 		}
@@ -54,7 +60,7 @@ func TestFetchURLs_Success(t *testing.T) {
 	defer server.Close()
 
 	fetcher := newTestFetcher(server.URL)
-	pages := fetcher.FetchURLs(context.Background(), []string{"https://example.com"})
+	pages := fetcher.FetchURLs(context.Background(), []string{"https://example.com"}, nil)
 
 	if len(pages) != 1 {
 		t.Fatalf("expected 1 page, got %d", len(pages))
@@ -80,7 +86,7 @@ func TestFetchURLResults_PreservesInputOrder(t *testing.T) {
 
 	fetcher := newTestFetcher(server.URL)
 	urls := []string{"https://example.com/a", "https://example.com/b"}
-	results := fetcher.FetchURLResults(context.Background(), urls)
+	results := fetcher.FetchURLResults(context.Background(), urls, nil)
 
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
@@ -104,7 +110,7 @@ func TestFetchURLResults_EmptyTextMarksFailed(t *testing.T) {
 	defer server.Close()
 
 	fetcher := newTestFetcher(server.URL)
-	results := fetcher.FetchURLResults(context.Background(), []string{"https://example.com"})
+	results := fetcher.FetchURLResults(context.Background(), []string{"https://example.com"}, nil)
 
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
@@ -129,7 +135,7 @@ func TestFetchURLs_NonOKStatusMarksAllFailed(t *testing.T) {
 	results := fetcher.FetchURLResults(context.Background(), []string{
 		"https://example.com/a",
 		"https://example.com/b",
-	})
+	}, nil)
 
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
@@ -154,7 +160,7 @@ func TestFetchURLs_MalformedJSONMarksAllFailed(t *testing.T) {
 	defer server.Close()
 
 	fetcher := newTestFetcher(server.URL)
-	pages := fetcher.FetchURLs(context.Background(), []string{"https://example.com"})
+	pages := fetcher.FetchURLs(context.Background(), []string{"https://example.com"}, nil)
 
 	if len(pages) != 0 {
 		t.Fatalf("expected 0 pages on malformed response, got %d", len(pages))
@@ -171,7 +177,7 @@ func TestFetchURLs_ContextCanceled(t *testing.T) {
 	cancel()
 
 	fetcher := newTestFetcher(server.URL)
-	pages := fetcher.FetchURLs(ctx, []string{"https://example.com"})
+	pages := fetcher.FetchURLs(ctx, []string{"https://example.com"}, nil)
 
 	if len(pages) != 0 {
 		t.Fatalf("expected 0 pages for canceled context, got %d", len(pages))
@@ -180,7 +186,7 @@ func TestFetchURLs_ContextCanceled(t *testing.T) {
 
 func TestFetchURLs_EmptyInput(t *testing.T) {
 	fetcher := newTestFetcher("http://unreachable.invalid")
-	results := fetcher.FetchURLResults(context.Background(), nil)
+	results := fetcher.FetchURLResults(context.Background(), nil, nil)
 	if len(results) != 0 {
 		t.Fatalf("expected 0 results for empty input, got %d", len(results))
 	}
@@ -202,5 +208,92 @@ func TestTruncate(t *testing.T) {
 	}
 	if result[maxContentLength:] != "\n\n[content truncated]" {
 		t.Error("expected truncation notice")
+	}
+}
+
+func TestFetchURLs_ExtrasAndMetadata(t *testing.T) {
+	options := &ExtrasOptions{Links: 2, ImageLinks: 2, RichLinks: 2, RichImageLinks: 2, CodeBlocks: 2}
+	want := Metadata{
+		Title: "Example", Author: "Author", PublishedDate: "2026-01-01",
+		Image: "https://example.com/cover.png", Favicon: "https://example.com/favicon.ico",
+		Extras: &Extras{
+			Links:          []string{"https://example.com/reference"},
+			ImageLinks:     []string{"https://example.com/diagram.png"},
+			RichLinks:      []Link{{URL: "https://example.com/reference", Anchor: "Reference"}},
+			RichImageLinks: []ImageLink{{URL: "https://example.com/diagram.png", Alt: "Diagram"}, {URL: "https://example.com/no-alt.png"}},
+			CodeBlocks:     []CodeBlock{{Text: "fmt.Println(1)", Source: "go"}},
+		},
+	}
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var req exaContentsRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Error(err)
+		}
+		if !reflect.DeepEqual(req.Extras, options) || !req.Text || req.MaxAgeHours != exaMaxAgeHours {
+			t.Errorf("unexpected request: %+v", req)
+		}
+		// Use the upstream wire shape to verify camelCase metadata mapping.
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"results":[{"url":"https://example.com","text":" Body ","title":"Example","author":"Author","publishedDate":"2026-01-01","image":"https://example.com/cover.png","favicon":"https://example.com/favicon.ico","extras":{"links":["https://example.com/reference"],"imageLinks":["https://example.com/diagram.png"],"richLinks":[{"url":"https://example.com/reference","anchor":"Reference"}],"richImageLinks":[{"url":"https://example.com/diagram.png","alt":"Diagram"},{"url":"https://example.com/no-alt.png"}],"codeBlocks":[{"text":"fmt.Println(1)","source":"go"}]}},{"url":"https://example.com/empty","text":"","title":"Must not leak"}]}`))
+	}))
+	defer server.Close()
+
+	pages := newTestFetcher(server.URL).FetchURLs(context.Background(), []string{"https://example.com", "https://example.com/empty"}, options)
+	if calls != 1 || len(pages) != 1 || pages[0].Content != "Body" || !reflect.DeepEqual(pages[0].Metadata, want) {
+		t.Fatalf("expected one request and one successful page with metadata, got %d calls, %+v", calls, pages)
+	}
+}
+
+func TestFetchURLResults_MissingMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"results":[{"url":"https://example.com","text":"body","author":null,"publishedDate":null}]}`))
+	}))
+	defer server.Close()
+	results := newTestFetcher(server.URL).FetchURLResults(context.Background(), []string{"https://example.com"}, nil)
+	data, err := json.Marshal(results)
+	if err != nil || string(data) != `[{"url":"https://example.com","status":"completed","content":"body"}]` {
+		t.Fatalf("absent metadata must not alter the response: %s, %v", data, err)
+	}
+}
+
+func TestFetchURLResults_ResponseByteLimit(t *testing.T) {
+	const response = `{"results":[{"url":"https://example.com","text":"body"}]}`
+	for _, size := range []int{maxResponseBytes - 1, maxResponseBytes, maxResponseBytes + 1} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				io.WriteString(w, response)
+				io.WriteString(w, strings.Repeat(" ", size-len(response)))
+			}))
+			defer server.Close()
+			got := newTestFetcher(server.URL).FetchURLResults(context.Background(), []string{"https://example.com"}, nil)
+			if len(got) != 1 {
+				t.Fatalf("expected one URL result, got %d", len(got))
+			}
+			if size <= maxResponseBytes {
+				if got[0].Status != FetchStatusCompleted || got[0].Content != "body" {
+					t.Fatalf("response within limit rejected: %+v", got[0])
+				}
+			} else if got[0].Status != FetchStatusFailed || got[0].Error != errResponseTooLarge.Error() || got[0].Content != "" || got[0].Metadata != (Metadata{}) {
+				t.Fatalf("expected sanitized size error: %+v", got[0])
+			}
+		})
+	}
+}
+
+func TestFetchURLResults_OversizedExtrasFailBatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeExaResponse(w, []exaContentsResult{{
+			URL: "https://example.com/large", Text: "body",
+			Extras: &Extras{CodeBlocks: []CodeBlock{{Text: strings.Repeat("x", maxResponseBytes)}}},
+		}})
+	}))
+	defer server.Close()
+	got := newTestFetcher(server.URL).FetchURLResults(context.Background(), []string{"https://example.com/large", "https://example.com/other"}, &ExtrasOptions{CodeBlocks: 1})
+	for _, result := range got {
+		if result.Status != FetchStatusFailed || result.Error != errResponseTooLarge.Error() || result.Content != "" || result.Metadata != (Metadata{}) {
+			t.Fatalf("expected batch size rejection without content: %+v", result)
+		}
 	}
 }

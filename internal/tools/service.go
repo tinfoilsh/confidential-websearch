@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -30,14 +31,18 @@ const (
 	defaultMaxContentChars = 700
 
 	blockedContentError = "content blocked by safety filters"
+	// Bound the combined body and serialized metadata before constructing a
+	// safeguard input. Oversized pages must not reach the fail-open error path.
+	maxFetchCheckBytes    = 64 * 1024
+	oversizedContentError = "page exceeds safety input size limit"
 )
 
 type URLFetcher interface {
-	FetchURLs(ctx context.Context, urls []string) []fetch.FetchedPage
+	FetchURLs(ctx context.Context, urls []string, extras *fetch.ExtrasOptions) []fetch.FetchedPage
 }
 
 type DetailedURLFetcher interface {
-	FetchURLResults(ctx context.Context, urls []string) []fetch.URLResult
+	FetchURLResults(ctx context.Context, urls []string, extras *fetch.ExtrasOptions) []fetch.URLResult
 }
 
 type SafeguardChecker interface {
@@ -45,6 +50,7 @@ type SafeguardChecker interface {
 }
 
 type Options struct {
+	Extras               *fetch.ExtrasOptions
 	MaxResults           int
 	MaxContentCharacters int
 	ContentMode          search.ContentMode
@@ -174,7 +180,7 @@ func (s *Service) Fetch(ctx context.Context, urls []string, opts Options) []fetc
 		urls = urls[:MaxFetchURLs]
 	}
 
-	pages := s.fetcher.FetchURLs(ctx, urls)
+	pages := s.fetcher.FetchURLs(ctx, urls, opts.Extras)
 	enabled, explicit := resolveInjectionCheck(opts.InjectionCheckEnabled)
 	if enabled && len(pages) > 0 && s.safeguard != nil {
 		pages = filterFetchedPages(ctx, s.safeguard, s.ranker, explicit, pages)
@@ -214,15 +220,16 @@ func (s *Service) FetchDetailed(ctx context.Context, urls []string, opts Options
 			page := queue[0]
 			pagesByURL[rawURL] = queue[1:]
 			results = append(results, fetch.URLResult{
-				URL:     rawURL,
-				Status:  fetch.FetchStatusCompleted,
-				Content: page.Content,
+				URL:      rawURL,
+				Status:   fetch.FetchStatusCompleted,
+				Content:  page.Content,
+				Metadata: page.Metadata,
 			})
 		}
 		return results
 	}
 
-	results := detailedFetcher.FetchURLResults(ctx, urls)
+	results := detailedFetcher.FetchURLResults(ctx, urls, opts.Extras)
 	enabled, explicit := resolveInjectionCheck(opts.InjectionCheckEnabled)
 	if enabled && len(results) > 0 && s.safeguard != nil {
 		results = filterFetchResults(ctx, s.safeguard, s.ranker, explicit, results)
@@ -302,19 +309,21 @@ func filterSearchResults(ctx context.Context, checker SafeguardChecker, ranker d
 func filterFetchedPages(ctx context.Context, checker SafeguardChecker, ranker domainrank.Ranker, explicit bool, pages []fetch.FetchedPage) []fetch.FetchedPage {
 	indexes := make([]int, 0, len(pages))
 	contents := make([]string, 0, len(pages))
+	drop := make(map[int]struct{})
 	for i, page := range pages {
+		content, ok := fetchContentForCheck(page.Content, page.Metadata)
+		if !ok {
+			drop[i] = struct{}{}
+			continue
+		}
 		if shouldSkipForRanker(ranker, explicit, page.URL) {
 			continue
 		}
 		indexes = append(indexes, i)
-		contents = append(contents, page.Content)
-	}
-	if len(contents) == 0 {
-		return pages
+		contents = append(contents, content)
 	}
 
 	checks := safeguard.CheckItems(ctx, checker, contents)
-	drop := make(map[int]struct{})
 	for i, check := range checks {
 		if check.Err != nil {
 			log.Warn("prompt injection safeguard unavailable; keeping fetched page")
@@ -348,11 +357,16 @@ func filterFetchResults(ctx context.Context, checker SafeguardChecker, ranker do
 		if result.Status != fetch.FetchStatusCompleted || result.Content == "" {
 			continue
 		}
+		content, ok := fetchContentForCheck(result.Content, result.Metadata)
+		if !ok {
+			filtered[i] = fetch.URLResult{URL: result.URL, Status: fetch.FetchStatusFailed, Error: oversizedContentError}
+			continue
+		}
 		if shouldSkipForRanker(ranker, explicit, result.URL) {
 			continue
 		}
 		indexes = append(indexes, i)
-		contents = append(contents, result.Content)
+		contents = append(contents, content)
 	}
 	if len(contents) == 0 {
 		return filtered
@@ -371,8 +385,25 @@ func filterFetchResults(ctx context.Context, checker SafeguardChecker, ranker do
 		resultIndex := indexes[i]
 		filtered[resultIndex].Status = fetch.FetchStatusFailed
 		filtered[resultIndex].Content = ""
+		filtered[resultIndex].Metadata = fetch.Metadata{}
 		filtered[resultIndex].Error = blockedContentError
 	}
 
 	return filtered
+}
+
+// Check page details and asset text in the same safeguard call as the body.
+// A false result rejects the entire page, never just its screening input.
+func fetchContentForCheck(content string, metadata fetch.Metadata) (string, bool) {
+	if len(content) > maxFetchCheckBytes {
+		return "", false
+	}
+	if metadata == (fetch.Metadata{}) {
+		return content, true
+	}
+	data, _ := json.Marshal(metadata) // Metadata contains only JSON-safe types.
+	if len(content)+2+len(data) > maxFetchCheckBytes {
+		return "", false
+	}
+	return content + "\n\n" + string(data), true
 }

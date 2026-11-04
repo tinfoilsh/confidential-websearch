@@ -43,6 +43,28 @@ curl -sS -X POST http://127.0.0.1:8091/mcp \
 
 To test through the model router, start a local router with `DEBUG=1` and `LOCAL_MCP_ENDPOINT_WEBSEARCH=http://127.0.0.1:8091/mcp`, following the router's [local testing guide](https://github.com/tinfoilsh/confidential-model-router/blob/main/local_testing.md).
 
+Against Exa, `fetch` can optionally extract structured page assets in the same
+request. Pass `extras` with per-page counts (0–1000, default 0), for example:
+
+```json
+{
+  "urls": ["https://example.com/article"],
+  "extras": {"richLinks": 10, "richImageLinks": 5, "codeBlocks": 5}
+}
+```
+
+Supported extras are `links` (URLs), `imageLinks` (image URLs), `richLinks`
+(`url` and optional `anchor`), `richImageLinks` (`url` and optional `alt`), and
+`codeBlocks` (`text` and `source`, the annotated language). Successful entries
+in both `pages` and `results` also include `title`, `author`, `published_date`,
+`image`, and `favicon` when available. Images are returned as URLs; no image
+download or OCR is performed. Metadata and extras are included in the page's
+existing prompt-injection check. When screening is enabled, a page whose body
+and serialized metadata exceed the 64 KiB input budget is rejected before any
+safeguard call. Exa responses are limited to 8 MiB per batch; larger responses
+fail with an explicit size-limit error. The per-field item counts do not
+override these byte limits. Local fixtures do not extract extras.
+
 Run the end-to-end eval against a local router on port 8090 (`--base` selects another router; results go to `evals/results/<timestamp>/`):
 
 ```bash

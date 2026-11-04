@@ -42,8 +42,9 @@ func (m *mockSearchProvider) Search(ctx context.Context, query string, opts sear
 func (m *mockSearchProvider) Name() string { return "mock" }
 
 type mockFetcher struct {
-	pages   []fetch.FetchedPage
-	results []fetch.URLResult
+	pages      []fetch.FetchedPage
+	results    []fetch.URLResult
+	lastExtras *fetch.ExtrasOptions
 }
 
 type mockSafeguard struct {
@@ -75,7 +76,8 @@ func (m *mockPIIRedactor) Redact(_ context.Context, content string, _ string, _ 
 	return safeguard.PIIRedactionResult{Text: content}, nil
 }
 
-func (m *mockFetcher) FetchURLs(ctx context.Context, urls []string) []fetch.FetchedPage {
+func (m *mockFetcher) FetchURLs(ctx context.Context, urls []string, extras *fetch.ExtrasOptions) []fetch.FetchedPage {
+	m.lastExtras = extras
 	if m.pages != nil {
 		return m.pages
 	}
@@ -86,7 +88,8 @@ func (m *mockFetcher) FetchURLs(ctx context.Context, urls []string) []fetch.Fetc
 	return result
 }
 
-func (m *mockFetcher) FetchURLResults(ctx context.Context, urls []string) []fetch.URLResult {
+func (m *mockFetcher) FetchURLResults(ctx context.Context, urls []string, extras *fetch.ExtrasOptions) []fetch.URLResult {
+	m.lastExtras = extras
 	if m.results != nil {
 		return m.results
 	}
@@ -614,6 +617,23 @@ func TestFetchHandler_PreservesPerURLResultsInOrder(t *testing.T) {
 	}
 }
 
+func newMCPSession(t *testing.T, server *mcp.Server) *mcp.ClientSession {
+	t.Helper()
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(context.Background(), serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	t.Cleanup(func() { serverSession.Close() })
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
+	session, err := client.Connect(context.Background(), clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	t.Cleanup(func() { session.Close() })
+	return session
+}
+
 func TestMCPServer_ToolDiscovery(t *testing.T) {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "test-websearch",
@@ -634,16 +654,7 @@ func TestMCPServer_ToolDiscovery(t *testing.T) {
 		Description: "Fetch web pages",
 	}, newFetchHandler(svc, cfg, nil))
 
-	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "v1"}, nil)
-	clientTransport, serverTransport := mcp.NewInMemoryTransports()
-
-	go server.Connect(context.Background(), serverTransport, nil)
-
-	session, err := client.Connect(context.Background(), clientTransport, nil)
-	if err != nil {
-		t.Fatalf("failed to connect: %v", err)
-	}
-	defer session.Close()
+	session := newMCPSession(t, server)
 
 	result, err := session.ListTools(context.Background(), &mcp.ListToolsParams{})
 	if err != nil {
@@ -691,16 +702,7 @@ func TestMCPServer_SearchToolCall(t *testing.T) {
 		Description: "Search the web",
 	}, newSearchHandler(svc, cfg, nil))
 
-	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "v1"}, nil)
-	clientTransport, serverTransport := mcp.NewInMemoryTransports()
-
-	go server.Connect(context.Background(), serverTransport, nil)
-
-	session, err := client.Connect(context.Background(), clientTransport, nil)
-	if err != nil {
-		t.Fatalf("failed to connect: %v", err)
-	}
-	defer session.Close()
+	session := newMCPSession(t, server)
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
 		Name:      "search",
@@ -743,6 +745,68 @@ func mustJSON(t *testing.T, v any) map[string]any {
 	default:
 		t.Fatalf("unsupported type for mustJSON: %T", v)
 		return nil
+	}
+}
+
+func TestFetchHandler_ExtrasCounts(t *testing.T) {
+	for _, field := range []string{"links", "imageLinks", "richLinks", "richImageLinks", "codeBlocks"} {
+		for _, count := range []int{-1, 0, 1000, 1001} {
+			t.Run(fmt.Sprintf("%s/%d", field, count), func(t *testing.T) {
+				var extras fetch.ExtrasOptions
+				if err := json.Unmarshal([]byte(fmt.Sprintf(`{%q:%d}`, field, count)), &extras); err != nil {
+					t.Fatal(err)
+				}
+				fetcher := &mockFetcher{}
+				handler := newFetchHandler(tools.NewService(nil, fetcher, nil, nil, nil), &config.Config{}, nil)
+				_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, FetchArgs{
+					URLs: []string{"https://example.com"}, Extras: &extras,
+				})
+				invalid := count < 0 || count > 1000
+				if (err != nil) != invalid || (fetcher.lastExtras == nil) != invalid {
+					t.Fatalf("invalid=%v, error=%v, forwarded=%+v", invalid, err, fetcher.lastExtras)
+				}
+			})
+		}
+	}
+}
+
+func TestMCPServer_FetchExtras(t *testing.T) {
+	metadata := fetch.Metadata{
+		Title: "Example", Author: "Author", PublishedDate: "2026-01-01",
+		Extras: &fetch.Extras{RichImageLinks: []fetch.ImageLink{{URL: "https://example.com/diagram.png", Alt: "Diagram"}}},
+	}
+	fetcher := &mockFetcher{results: []fetch.URLResult{{
+		URL: "https://example.com", Status: fetch.FetchStatusCompleted, Content: "Body", Metadata: metadata,
+	}}}
+	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "test"}, nil)
+	svc := tools.NewService(nil, fetcher, nil, nil, nil)
+	mcp.AddTool(server, &mcp.Tool{Name: "fetch"}, newFetchHandler(svc, &config.Config{}, nil))
+	session := newMCPSession(t, server)
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "fetch", Arguments: map[string]any{
+			"urls": []string{"https://example.com"}, "extras": map[string]any{"richImageLinks": 2},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("fetch call failed: %+v", result)
+	}
+	if !reflect.DeepEqual(fetcher.lastExtras, &fetch.ExtrasOptions{RichImageLinks: 2}) {
+		t.Fatalf("extras not forwarded: %+v", fetcher.lastExtras)
+	}
+	// The SDK must expose the embedded metadata in both output views.
+	data, err := json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got FetchResult
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Pages) != 1 || len(got.Results) != 1 || !reflect.DeepEqual(got.Pages[0].Metadata, metadata) || !reflect.DeepEqual(got.Results[0].Metadata, metadata) {
+		t.Fatalf("metadata lost in MCP response: %s", data)
 	}
 }
 
