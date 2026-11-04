@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,6 +30,8 @@ const (
 	exaMaxAgeHours     = 2
 	fetchProviderError = "upstream content fetch failed"
 )
+
+var errResponseTooLarge = errors.New("upstream content response exceeds 8 MiB limit")
 
 // FetchedPage represents a fetched URL and its text content
 type FetchedPage struct {
@@ -119,6 +122,9 @@ func (f *Fetcher) FetchURLResults(ctx context.Context, urls []string, extras *Ex
 		log.Debug("Exa contents call failed")
 		for i := range results {
 			results[i].Error = fetchProviderError
+			if errors.Is(err, errResponseTooLarge) {
+				results[i].Error = errResponseTooLarge.Error()
+			}
 		}
 		return results
 	}
@@ -169,9 +175,12 @@ func (f *Fetcher) callExa(ctx context.Context, urls []string, extras *ExtrasOpti
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return nil, err
+	}
+	if len(body) > maxResponseBytes {
+		return nil, errResponseTooLarge
 	}
 
 	if resp.StatusCode != http.StatusOK {

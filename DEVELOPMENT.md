@@ -59,7 +59,11 @@ Supported extras are `links` (URLs), `imageLinks` (image URLs), `richLinks`
 in both `pages` and `results` also include `title`, `author`, `published_date`,
 `image`, and `favicon` when available. Images are returned as URLs; no image
 download or OCR is performed. Metadata and extras are included in the page's
-existing prompt-injection check. Local fixtures do not extract extras.
+existing prompt-injection check. When screening is enabled, a page whose body
+and serialized metadata exceed the 64 KiB input budget is rejected before any
+safeguard call. Exa responses are limited to 8 MiB per batch; larger responses
+fail with an explicit size-limit error. The per-field item counts do not
+override these byte limits. Local fixtures do not extract extras.
 
 Run the end-to-end eval against a local router on port 8090 (`--base` selects another router; results go to `evals/results/<timestamp>/`):
 

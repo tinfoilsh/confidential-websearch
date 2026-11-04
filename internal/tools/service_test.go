@@ -3,6 +3,7 @@ package tools
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -372,10 +373,14 @@ func TestFetchDetailed_InjectionCheckMarksFailure(t *testing.T) {
 
 type assetSafeguard struct {
 	checked []string
+	err     error
 }
 
 func (s *assetSafeguard) Check(_ context.Context, content string) (*safeguard.CheckResult, error) {
 	s.checked = append(s.checked, content)
+	if s.err != nil {
+		return nil, s.err
+	}
 	return &safeguard.CheckResult{Violation: strings.Contains(content, "injection-sentinel")}, nil
 }
 
@@ -404,6 +409,76 @@ func TestFetch_ChecksMetadataAndExtras(t *testing.T) {
 			}
 			if len(sg.checked) != 1 || !strings.Contains(sg.checked[0], "safe body") || !strings.Contains(sg.checked[0], "injection-sentinel") {
 				t.Fatalf("body and assets must share one check: %+v", sg.checked)
+			}
+		}
+	}
+}
+
+func TestFetchContentForCheck_SizeBudget(t *testing.T) {
+	metadata := fetch.Metadata{Extras: &fetch.Extras{CodeBlocks: []fetch.CodeBlock{{Text: "example", Source: "text"}}}}
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := strings.Repeat("x", maxFetchCheckBytes-len(data)-2)
+	content, ok := fetchContentForCheck(body, metadata)
+	if !ok || len(content) != maxFetchCheckBytes || !strings.HasPrefix(content, body) || !strings.HasSuffix(content, string(data)) {
+		t.Fatal("input at the byte limit must be checked in full")
+	}
+	for _, tc := range []struct {
+		name     string
+		body     string
+		metadata fetch.Metadata
+	}{
+		{"one byte over", body + "x", metadata},
+		{"body only", strings.Repeat("x", maxFetchCheckBytes+1), fetch.Metadata{}},
+		{"UTF-8 bytes", "body", fetch.Metadata{Title: strings.Repeat("界", maxFetchCheckBytes/3)}},
+		{"JSON escaping", "body", fetch.Metadata{Title: strings.Repeat("<", maxFetchCheckBytes/6)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if content, ok := fetchContentForCheck(tc.body, tc.metadata); ok || content != "" {
+				t.Fatal("oversized input must be rejected, not truncated")
+			}
+		})
+	}
+}
+
+func TestFetch_RejectsOversizedAssetsBeforeSafeguard(t *testing.T) {
+	for _, mixed := range []bool{false, true} {
+		for _, detailed := range []bool{false, true} {
+			// Neither component alone exceeds the limit; their sum does.
+			body := strings.Repeat("b", maxFetchCheckBytes/2)
+			metadata := fetch.Metadata{Extras: &fetch.Extras{CodeBlocks: []fetch.CodeBlock{{Text: strings.Repeat("x", maxFetchCheckBytes/2)}}}}
+			results := []fetch.URLResult{{URL: "https://example.com/large", Status: fetch.FetchStatusCompleted, Content: body, Metadata: metadata}}
+			urls := []string{results[0].URL}
+			if mixed {
+				results = append(results, fetch.URLResult{URL: "https://example.com/small", Status: fetch.FetchStatusCompleted, Content: "small"})
+				urls = append(urls, results[1].URL)
+			}
+			// Simulate a failing model: size violations must still fail closed.
+			sg := &assetSafeguard{err: errors.New("model unavailable")}
+			service := NewService(nil, &stubFetcher{results: results}, sg, nil, nil)
+			opts := Options{InjectionCheckEnabled: ptrBool(true)}
+			if detailed {
+				got := service.FetchDetailed(context.Background(), urls, opts)
+				if len(got) != len(results) || got[0].Status != fetch.FetchStatusFailed || got[0].Error != oversizedContentError || got[0].Content != "" || got[0].Metadata != (fetch.Metadata{}) {
+					t.Fatalf("oversized page was not rejected: %+v", got)
+				}
+				if mixed && (got[1].Status != fetch.FetchStatusCompleted || got[1].Content != "small") {
+					t.Fatalf("unrelated safeguard error handling changed: %+v", got[1])
+				}
+			} else {
+				got := service.Fetch(context.Background(), urls, opts)
+				if (!mixed && len(got) != 0) || (mixed && (len(got) != 1 || got[0].Content != "small")) {
+					t.Fatalf("unexpected remaining pages: %+v", got)
+				}
+			}
+			wantChecks := 0
+			if mixed {
+				wantChecks = 1
+			}
+			if len(sg.checked) != wantChecks || (mixed && sg.checked[0] != "small") {
+				t.Fatalf("oversized input reached the safeguard: %d checks", len(sg.checked))
 			}
 		}
 	}

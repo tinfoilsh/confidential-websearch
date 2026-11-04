@@ -617,6 +617,23 @@ func TestFetchHandler_PreservesPerURLResultsInOrder(t *testing.T) {
 	}
 }
 
+func newMCPSession(t *testing.T, server *mcp.Server) *mcp.ClientSession {
+	t.Helper()
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(context.Background(), serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	t.Cleanup(func() { serverSession.Close() })
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
+	session, err := client.Connect(context.Background(), clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	t.Cleanup(func() { session.Close() })
+	return session
+}
+
 func TestMCPServer_ToolDiscovery(t *testing.T) {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "test-websearch",
@@ -637,16 +654,7 @@ func TestMCPServer_ToolDiscovery(t *testing.T) {
 		Description: "Fetch web pages",
 	}, newFetchHandler(svc, cfg, nil))
 
-	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "v1"}, nil)
-	clientTransport, serverTransport := mcp.NewInMemoryTransports()
-
-	go server.Connect(context.Background(), serverTransport, nil)
-
-	session, err := client.Connect(context.Background(), clientTransport, nil)
-	if err != nil {
-		t.Fatalf("failed to connect: %v", err)
-	}
-	defer session.Close()
+	session := newMCPSession(t, server)
 
 	result, err := session.ListTools(context.Background(), &mcp.ListToolsParams{})
 	if err != nil {
@@ -694,16 +702,7 @@ func TestMCPServer_SearchToolCall(t *testing.T) {
 		Description: "Search the web",
 	}, newSearchHandler(svc, cfg, nil))
 
-	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "v1"}, nil)
-	clientTransport, serverTransport := mcp.NewInMemoryTransports()
-
-	go server.Connect(context.Background(), serverTransport, nil)
-
-	session, err := client.Connect(context.Background(), clientTransport, nil)
-	if err != nil {
-		t.Fatalf("failed to connect: %v", err)
-	}
-	defer session.Close()
+	session := newMCPSession(t, server)
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
 		Name:      "search",
@@ -782,14 +781,7 @@ func TestMCPServer_FetchExtras(t *testing.T) {
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	svc := tools.NewService(nil, fetcher, nil, nil, nil)
 	mcp.AddTool(server, &mcp.Tool{Name: "fetch"}, newFetchHandler(svc, &config.Config{}, nil))
-	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
-	clientTransport, serverTransport := mcp.NewInMemoryTransports()
-	go server.Connect(context.Background(), serverTransport, nil)
-	session, err := client.Connect(context.Background(), clientTransport, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer session.Close()
+	session := newMCPSession(t, server)
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
 		Name: "fetch", Arguments: map[string]any{
 			"urls": []string{"https://example.com"}, "extras": map[string]any{"richImageLinks": 2},

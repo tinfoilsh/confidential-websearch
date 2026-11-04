@@ -3,6 +3,8 @@ package fetch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -253,5 +255,45 @@ func TestFetchURLResults_MissingMetadata(t *testing.T) {
 	data, err := json.Marshal(results)
 	if err != nil || string(data) != `[{"url":"https://example.com","status":"completed","content":"body"}]` {
 		t.Fatalf("absent metadata must not alter the response: %s, %v", data, err)
+	}
+}
+
+func TestFetchURLResults_ResponseByteLimit(t *testing.T) {
+	const response = `{"results":[{"url":"https://example.com","text":"body"}]}`
+	for _, size := range []int{maxResponseBytes - 1, maxResponseBytes, maxResponseBytes + 1} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				io.WriteString(w, response)
+				io.WriteString(w, strings.Repeat(" ", size-len(response)))
+			}))
+			defer server.Close()
+			got := newTestFetcher(server.URL).FetchURLResults(context.Background(), []string{"https://example.com"}, nil)
+			if len(got) != 1 {
+				t.Fatalf("expected one URL result, got %d", len(got))
+			}
+			if size <= maxResponseBytes {
+				if got[0].Status != FetchStatusCompleted || got[0].Content != "body" {
+					t.Fatalf("response within limit rejected: %+v", got[0])
+				}
+			} else if got[0].Status != FetchStatusFailed || got[0].Error != errResponseTooLarge.Error() || got[0].Content != "" || got[0].Metadata != (Metadata{}) {
+				t.Fatalf("expected sanitized size error: %+v", got[0])
+			}
+		})
+	}
+}
+
+func TestFetchURLResults_OversizedExtrasFailBatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeExaResponse(w, []exaContentsResult{{
+			URL: "https://example.com/large", Text: "body",
+			Extras: &Extras{CodeBlocks: []CodeBlock{{Text: strings.Repeat("x", maxResponseBytes)}}},
+		}})
+	}))
+	defer server.Close()
+	got := newTestFetcher(server.URL).FetchURLResults(context.Background(), []string{"https://example.com/large", "https://example.com/other"}, &ExtrasOptions{CodeBlocks: 1})
+	for _, result := range got {
+		if result.Status != FetchStatusFailed || result.Error != errResponseTooLarge.Error() || result.Content != "" || result.Metadata != (Metadata{}) {
+			t.Fatalf("expected batch size rejection without content: %+v", result)
+		}
 	}
 }
