@@ -34,6 +34,7 @@ const (
 type FetchedPage struct {
 	URL     string `json:"url"`
 	Content string `json:"content"`
+	Metadata
 }
 
 const (
@@ -46,6 +47,7 @@ type URLResult struct {
 	Status  string `json:"status"`
 	Content string `json:"content,omitempty"`
 	Error   string `json:"error,omitempty"`
+	Metadata
 }
 
 // Fetcher fetches URL contents via the Exa /contents endpoint.
@@ -65,9 +67,10 @@ func NewFetcher(apiKey string) *Fetcher {
 }
 
 type exaContentsRequest struct {
-	URLs        []string `json:"urls"`
-	Text        bool     `json:"text"`
-	MaxAgeHours int      `json:"maxAgeHours"`
+	URLs        []string       `json:"urls"`
+	Text        bool           `json:"text"`
+	MaxAgeHours int            `json:"maxAgeHours"`
+	Extras      *ExtrasOptions `json:"extras,omitempty"`
 }
 
 type exaContentsResponse struct {
@@ -75,27 +78,34 @@ type exaContentsResponse struct {
 }
 
 type exaContentsResult struct {
-	URL  string `json:"url"`
-	Text string `json:"text"`
+	URL           string  `json:"url"`
+	Text          string  `json:"text"`
+	Title         string  `json:"title"`
+	Author        string  `json:"author"`
+	PublishedDate string  `json:"publishedDate"`
+	Image         string  `json:"image"`
+	Favicon       string  `json:"favicon"`
+	Extras        *Extras `json:"extras"`
 }
 
 // FetchURLs fetches the contents of the given URLs in a single batched call.
-func (f *Fetcher) FetchURLs(ctx context.Context, urls []string) []FetchedPage {
-	results := f.FetchURLResults(ctx, urls)
+func (f *Fetcher) FetchURLs(ctx context.Context, urls []string, extras *ExtrasOptions) []FetchedPage {
+	results := f.FetchURLResults(ctx, urls, extras)
 	pages := make([]FetchedPage, 0, len(results))
 	for _, result := range results {
 		if result.Status != FetchStatusCompleted || result.Content == "" {
 			continue
 		}
 		pages = append(pages, FetchedPage{
-			URL:     result.URL,
-			Content: result.Content,
+			URL:      result.URL,
+			Content:  result.Content,
+			Metadata: result.Metadata,
 		})
 	}
 	return pages
 }
 
-func (f *Fetcher) FetchURLResults(ctx context.Context, urls []string) []URLResult {
+func (f *Fetcher) FetchURLResults(ctx context.Context, urls []string, extras *ExtrasOptions) []URLResult {
 	results := make([]URLResult, len(urls))
 	for i, u := range urls {
 		results[i] = URLResult{URL: u, Status: FetchStatusFailed}
@@ -104,7 +114,7 @@ func (f *Fetcher) FetchURLResults(ctx context.Context, urls []string) []URLResul
 		return results
 	}
 
-	contents, err := f.callExa(ctx, urls)
+	contents, err := f.callExa(ctx, urls, extras)
 	if err != nil {
 		log.Debug("Exa contents call failed")
 		for i := range results {
@@ -114,22 +124,32 @@ func (f *Fetcher) FetchURLResults(ctx context.Context, urls []string) []URLResul
 	}
 
 	for i, rawURL := range urls {
-		text := strings.TrimSpace(contents[rawURL])
+		item := contents[rawURL]
+		text := strings.TrimSpace(item.Text)
 		if text == "" {
 			results[i].Error = "empty content returned"
 			continue
 		}
 		results[i].Status = FetchStatusCompleted
 		results[i].Content = truncate(text)
+		results[i].Metadata = Metadata{
+			Title:         item.Title,
+			Author:        item.Author,
+			PublishedDate: item.PublishedDate,
+			Image:         item.Image,
+			Favicon:       item.Favicon,
+			Extras:        item.Extras,
+		}
 	}
 	return results
 }
 
-func (f *Fetcher) callExa(ctx context.Context, urls []string) (map[string]string, error) {
+func (f *Fetcher) callExa(ctx context.Context, urls []string, extras *ExtrasOptions) (map[string]exaContentsResult, error) {
 	reqBody := exaContentsRequest{
 		URLs:        urls,
 		Text:        true,
 		MaxAgeHours: exaMaxAgeHours,
+		Extras:      extras,
 	}
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
@@ -163,9 +183,9 @@ func (f *Fetcher) callExa(ctx context.Context, urls []string) (map[string]string
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
 
-	contents := make(map[string]string, len(exaResp.Results))
+	contents := make(map[string]exaContentsResult, len(exaResp.Results))
 	for _, item := range exaResp.Results {
-		contents[item.URL] = item.Text
+		contents[item.URL] = item
 	}
 	return contents, nil
 }

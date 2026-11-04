@@ -150,8 +150,8 @@ type localTestFetcher struct {
 	recorder *CallRecorder
 }
 
-func (f localTestFetcher) FetchURLs(ctx context.Context, urls []string) []fetch.FetchedPage {
-	results := f.FetchURLResults(ctx, urls)
+func (f localTestFetcher) FetchURLs(ctx context.Context, urls []string, extras *fetch.ExtrasOptions) []fetch.FetchedPage {
+	results := f.FetchURLResults(ctx, urls, extras)
 	pages := make([]fetch.FetchedPage, 0, len(results))
 	for _, result := range results {
 		if result.Status != fetch.FetchStatusCompleted {
@@ -165,7 +165,7 @@ func (f localTestFetcher) FetchURLs(ctx context.Context, urls []string) []fetch.
 	return pages
 }
 
-func (f localTestFetcher) FetchURLResults(_ context.Context, urls []string) []fetch.URLResult {
+func (f localTestFetcher) FetchURLResults(_ context.Context, urls []string, _ *fetch.ExtrasOptions) []fetch.URLResult {
 	if f.recorder != nil {
 		f.recorder.recordFetch(urls)
 	}

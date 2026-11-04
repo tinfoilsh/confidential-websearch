@@ -102,8 +102,9 @@ type SearchResult struct {
 }
 
 type FetchArgs struct {
-	URLs           []string `json:"urls" jsonschema:"One or more HTTP/HTTPS URLs to fetch. Each page is rendered in a headless browser and converted to clean markdown. Maximum 20 URLs per request."`
-	AllowedDomains []string `json:"allowed_domains,omitempty" jsonschema:"If set, reject any URL whose host is not in the list. Maps to OpenAI filters.allowed_domains."`
+	URLs           []string             `json:"urls" jsonschema:"One or more HTTP/HTTPS URLs to fetch. Each page is rendered in a headless browser and converted to clean markdown. Maximum 20 URLs per request."`
+	AllowedDomains []string             `json:"allowed_domains,omitempty" jsonschema:"If set, reject any URL whose host is not in the list. Maps to OpenAI filters.allowed_domains."`
+	Extras         *fetch.ExtrasOptions `json:"extras,omitempty" jsonschema:"Optional per-page counts for links, imageLinks, richLinks, richImageLinks, and codeBlocks. All default to 0 (disabled)."`
 }
 
 type FetchResult struct {
@@ -195,6 +196,9 @@ func newFetchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Reque
 		if len(args.URLs) > tools.MaxFetchURLs {
 			return nil, FetchResult{}, fmt.Errorf("'urls' must contain at most %d entries", tools.MaxFetchURLs)
 		}
+		if err := args.Extras.Validate(); err != nil {
+			return nil, FetchResult{}, err
+		}
 
 		urls, rejected := splitAllowedURLs(args.URLs, normalizeDomains(args.AllowedDomains))
 		if len(urls) == 0 {
@@ -202,6 +206,7 @@ func newFetchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Reque
 		}
 
 		results := svc.FetchDetailed(ctx, urls, tools.Options{
+			Extras:                args.Extras,
 			PIICheckEnabled:       false,
 			InjectionCheckEnabled: resolveInjectionCheck(httpReq, cfg.EnableFetchInjectionCheck),
 		})
@@ -213,8 +218,9 @@ func newFetchHandler(svc *tools.Service, cfg *config.Config, httpReq *http.Reque
 				continue
 			}
 			pages = append(pages, fetch.FetchedPage{
-				URL:     result.URL,
-				Content: result.Content,
+				URL:      result.URL,
+				Content:  result.Content,
+				Metadata: result.Metadata,
 			})
 		}
 

@@ -37,19 +37,19 @@ type stubFetcher struct {
 	results []fetch.URLResult
 }
 
-func (f *stubFetcher) FetchURLs(_ context.Context, urls []string) []fetch.FetchedPage {
+func (f *stubFetcher) FetchURLs(_ context.Context, urls []string, _ *fetch.ExtrasOptions) []fetch.FetchedPage {
 	pages := make([]fetch.FetchedPage, 0, len(urls))
 	for _, u := range urls {
 		for _, r := range f.results {
 			if r.URL == u && r.Status == fetch.FetchStatusCompleted {
-				pages = append(pages, fetch.FetchedPage{URL: r.URL, Content: r.Content})
+				pages = append(pages, fetch.FetchedPage{URL: r.URL, Content: r.Content, Metadata: r.Metadata})
 			}
 		}
 	}
 	return pages
 }
 
-func (f *stubFetcher) FetchURLResults(_ context.Context, _ []string) []fetch.URLResult {
+func (f *stubFetcher) FetchURLResults(_ context.Context, _ []string, _ *fetch.ExtrasOptions) []fetch.URLResult {
 	return f.results
 }
 
@@ -367,6 +367,45 @@ func TestFetchDetailed_InjectionCheckMarksFailure(t *testing.T) {
 	}
 	if results[1].Error != blockedContentError {
 		t.Fatalf("expected sanitized block error, got %q", results[1].Error)
+	}
+}
+
+type assetSafeguard struct {
+	checked []string
+}
+
+func (s *assetSafeguard) Check(_ context.Context, content string) (*safeguard.CheckResult, error) {
+	s.checked = append(s.checked, content)
+	return &safeguard.CheckResult{Violation: strings.Contains(content, "injection-sentinel")}, nil
+}
+
+func TestFetch_ChecksMetadataAndExtras(t *testing.T) {
+	for _, metadata := range []fetch.Metadata{
+		{Title: "injection-sentinel"},
+		{Author: "injection-sentinel"},
+		{Extras: &fetch.Extras{RichLinks: []fetch.Link{{URL: "https://example.com", Anchor: "injection-sentinel"}}}},
+		{Extras: &fetch.Extras{RichImageLinks: []fetch.ImageLink{{URL: "https://example.com/image.png", Alt: "injection-sentinel"}}}},
+		{Extras: &fetch.Extras{CodeBlocks: []fetch.CodeBlock{{Text: "injection-sentinel", Source: "text"}}}},
+	} {
+		for _, detailed := range []bool{false, true} {
+			sg := &assetSafeguard{}
+			fetcher := &stubFetcher{results: []fetch.URLResult{{
+				URL: "https://example.com", Status: fetch.FetchStatusCompleted, Content: "safe body", Metadata: metadata,
+			}}}
+			service := NewService(nil, fetcher, sg, nil, nil)
+			opts := Options{InjectionCheckEnabled: ptrBool(true)}
+			if detailed {
+				got := service.FetchDetailed(context.Background(), []string{"https://example.com"}, opts)
+				if len(got) != 1 || got[0].Status != fetch.FetchStatusFailed || got[0].Content != "" || got[0].Metadata != (fetch.Metadata{}) {
+					t.Fatalf("blocked result exposed content or metadata: %+v", got)
+				}
+			} else if got := service.Fetch(context.Background(), []string{"https://example.com"}, opts); len(got) != 0 {
+				t.Fatalf("blocked page returned: %+v", got)
+			}
+			if len(sg.checked) != 1 || !strings.Contains(sg.checked[0], "safe body") || !strings.Contains(sg.checked[0], "injection-sentinel") {
+				t.Fatalf("body and assets must share one check: %+v", sg.checked)
+			}
+		}
 	}
 }
 
