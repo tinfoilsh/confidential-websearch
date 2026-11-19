@@ -73,12 +73,12 @@ var checkResultSchema = map[string]any{
 
 // PromptInjectionClient checks content for prompt injection via the safeguard LLM.
 type PromptInjectionClient struct {
-	tinfoil *tinfoil.Client
+	tinfoil *tinfoil.RouterOpenAIClient
 	model   string
 }
 
 // NewPromptInjectionClient creates a prompt injection checker backed by the safeguard LLM.
-func NewPromptInjectionClient(tinfoil *tinfoil.Client, model string) *PromptInjectionClient {
+func NewPromptInjectionClient(tinfoil *tinfoil.RouterOpenAIClient, model string) *PromptInjectionClient {
 	if model == "" {
 		model = DefaultModel
 	}
