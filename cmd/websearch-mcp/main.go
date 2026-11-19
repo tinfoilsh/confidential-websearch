@@ -66,7 +66,7 @@ func main() {
 	if localTestMode {
 		var piiRedactor safeguard.PIIRedactor
 		if cfg.PIIEnclave != "" {
-			pf, err := safeguard.NewPrivacyFilterClient(cfg.PIIEnclave, cfg.PIIRepo)
+			pf, err := safeguard.NewPrivacyFilterClient(context.Background(), cfg.PIIEnclave, cfg.PIIRepo)
 			if err != nil {
 				log.Fatalf("Failed to create privacy filter PII client: %v", err)
 			}
@@ -78,9 +78,9 @@ func main() {
 		if cfg.TinfoilAPIKey == "" {
 			log.Fatal("TINFOIL_API_KEY is required")
 		}
-		client, err := tinfoil.NewClientWithOptions(
-			tinfoil.WithTransport(tinfoil.TransportTLS),
-			tinfoil.WithOpenAIOptions(option.WithAPIKey(cfg.TinfoilAPIKey)),
+		client, err := tinfoil.NewRouterOpenAIClient(context.Background(),
+			&tinfoil.RouterOptions{TransportMode: tinfoil.TransportModeTLS},
+			option.WithAPIKey(cfg.TinfoilAPIKey),
 		)
 		if err != nil {
 			log.Fatalf("Failed to create Tinfoil client: %v", err)
@@ -100,7 +100,7 @@ func main() {
 		if cfg.PIIEnclave == "" {
 			log.Fatal("PII_ENCLAVE is required")
 		}
-		pf, err := safeguard.NewPrivacyFilterClient(cfg.PIIEnclave, cfg.PIIRepo)
+		pf, err := safeguard.NewPrivacyFilterClient(context.Background(), cfg.PIIEnclave, cfg.PIIRepo)
 		if err != nil {
 			log.Fatalf("Failed to create privacy filter PII client: %v", err)
 		}

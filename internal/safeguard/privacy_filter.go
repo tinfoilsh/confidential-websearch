@@ -18,13 +18,11 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"unicode"
 	"unicode/utf8"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/tinfoilsh/tinfoil-go/verifier/client"
+	"github.com/tinfoilsh/tinfoil-go"
 )
 
 var pfAlwaysRedact = map[string]bool{
@@ -60,28 +58,25 @@ type PIIRedaction struct {
 }
 
 type PrivacyFilterClient struct {
-	enclave      string
-	httpClient   atomic.Pointer[http.Client]
-	secureClient *client.SecureClient
-	mu           sync.Mutex
+	enclave    string
+	httpClient *http.Client
 }
 
 // NewPrivacyFilterClient creates a client that calls the privacy filter enclave at the given
 // domain. The repo is used for attestation verification (code measurement
-// pinned to the GitHub repo's signed release).
-func NewPrivacyFilterClient(enclave, repo string) (*PrivacyFilterClient, error) {
-	sc := client.NewSecureClient(enclave, repo)
-	httpClient, err := sc.HTTPClient()
+// pinned to the GitHub repo's signed release). The returned client pins its
+// connections to the attested TLS key and verifies the enclave again by itself
+// when the verification expires or the enclave rotates its key.
+func NewPrivacyFilterClient(ctx context.Context, enclave, repo string) (*PrivacyFilterClient, error) {
+	verified, err := tinfoil.NewEnclaveHTTPClient(ctx, enclave, tinfoil.Pin{Repo: repo}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify privacy filter enclave: %w", err)
 	}
 	log.WithField("enclave", enclave).Info("privacy filter PII checker verified")
-	privacyClient := &PrivacyFilterClient{
-		enclave:      enclave,
-		secureClient: sc,
-	}
-	privacyClient.httpClient.Store(httpClient)
-	return privacyClient, nil
+	return &PrivacyFilterClient{
+		enclave:    enclave,
+		httpClient: verified.Client,
+	}, nil
 }
 
 type pfRedactRequest struct {
@@ -97,27 +92,6 @@ type pfSpan struct {
 
 type pfRedactResponse struct {
 	DetectedSpans []pfSpan `json:"detected_spans"`
-}
-
-// reverify re-runs attestation verification and returns a fresh HTTP client
-// bound to the new TLS public key. Serialized on mu so concurrent retries
-// don't race while refreshing SecureClient ground truth.
-func (c *PrivacyFilterClient) reverify() (*http.Client, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if _, err := c.secureClient.Verify(); err != nil {
-		return nil, err
-	}
-	newClient, err := c.secureClient.HTTPClient()
-	if err != nil {
-		return nil, err
-	}
-	c.httpClient.Store(newClient)
-	return newClient, nil
-}
-
-func (c *PrivacyFilterClient) currentHTTPClient() *http.Client {
-	return c.httpClient.Load()
 }
 
 // Redact sends the content to /redact and masks spans selected by the
@@ -157,27 +131,9 @@ func (c *PrivacyFilterClient) redact(ctx context.Context, text, authorization st
 	req.Header.Set("Content-Type", "application/json")
 	maps.Copy(req.Header, usageContext)
 
-	resp, err := c.currentHTTPClient().Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		// Re-verify attestation on TLS errors (enclave may have rotated
-		// its certificate after a restart) and retry once. Concurrent retries
-		// serialize on mu while refreshing attestation state.
-		if errors.Is(err, client.ErrCertMismatch) || errors.Is(err, client.ErrNoTLS) {
-			log.WithError(err).Warn("privacy filter cert mismatch, re-verifying enclave")
-			retryClient, rerr := c.reverify()
-			if rerr != nil {
-				return nil, &unbilled, fmt.Errorf("privacy filter re-verification failed: %w", rerr)
-			}
-			req, _ = http.NewRequestWithContext(ctx, "POST",
-				fmt.Sprintf("https://%s/redact", c.enclave), bytes.NewReader(body))
-			req.Header.Set("Authorization", authorization)
-			req.Header.Set("Content-Type", "application/json")
-			maps.Copy(req.Header, usageContext)
-			resp, err = retryClient.Do(req)
-		}
-		if err != nil {
-			return nil, nil, fmt.Errorf("privacy filter /redact request: %w", err)
-		}
+		return nil, nil, fmt.Errorf("privacy filter /redact request: %w", err)
 	}
 	defer resp.Body.Close()
 	charged := 0

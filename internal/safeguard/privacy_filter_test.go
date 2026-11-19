@@ -24,7 +24,7 @@ func TestPrivacyFilterRedactAppliesRequestTimeout(t *testing.T) {
 	client := &PrivacyFilterClient{
 		enclave: "privacy.example.com",
 	}
-	client.httpClient.Store(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	client.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		deadline, ok := req.Context().Deadline()
 		hasDeadline = ok
 		if ok {
@@ -35,7 +35,7 @@ func TestPrivacyFilterRedactAppliesRequestTimeout(t *testing.T) {
 			Body:       io.NopCloser(strings.NewReader(`{"detected_spans":[]}`)),
 			Header:     make(http.Header),
 		}, nil
-	})})
+	})}
 
 	redacted, err := client.Redact(context.Background(), "public search", "Bearer tk_customer", nil)
 	if err != nil {
@@ -53,7 +53,7 @@ func TestPrivacyFilterRedactAppliesRequestTimeout(t *testing.T) {
 func TestPrivacyFilterRedactReturnsRemovedSpans(t *testing.T) {
 	const query = "john@example.com hiking trails"
 	client := &PrivacyFilterClient{enclave: "privacy.example.com"}
-	client.httpClient.Store(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	client.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.Method != http.MethodPost || req.URL.Path != "/redact" {
 			t.Fatalf("unexpected privacy filter request: %s %s", req.Method, req.URL)
 		}
@@ -69,7 +69,7 @@ func TestPrivacyFilterRedactReturnsRemovedSpans(t *testing.T) {
 			Body:       io.NopCloser(strings.NewReader(`{"detected_spans":[{"label":"private_email","start":0,"end":16,"text":"john@example.com"}]}`)),
 			Header:     make(http.Header),
 		}, nil
-	})})
+	})}
 	got, err := client.Redact(context.Background(), query, "Bearer tk_customer", nil)
 	if err != nil {
 		t.Fatal(err)
